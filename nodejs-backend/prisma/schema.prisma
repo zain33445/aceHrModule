@@ -1,0 +1,211 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Shift {
+  id          Int     @id @default(autoincrement())
+  shiftid     String  @unique
+  checkin     String  // Format: HH:MM (e.g., "09:00")
+  checkout    String  // Format: HH:MM (e.g., "17:00")
+  latetiming  String  // Format: HH:MM - time limit to mark as late (e.g., "09:15")
+  halfday     String  // Format: HH:MM - early checkout time for half day (e.g., "13:00")
+
+  departments Department[]
+
+  @@map("shifts")
+}
+
+model Department {
+  id       Int     @id @default(autoincrement())
+  name     String  @unique
+  shift_id Int?
+  
+  shift    Shift?  @relation(fields: [shift_id], references: [id], onDelete: SetNull)
+  users    User[]
+
+  @@map("departments")
+}
+
+model User {
+  id             String    @id @unique // The ZKTeco device user_id (e.g., '6', '1')
+  name           String
+  role           String    @default("employee") // admin or employee
+  email          String?   @unique
+  password_hash  String?
+  monthly_salary Float     @default(0.0)
+  leave_bank     Int       @default(5) // Total allowed leaves (don't update this)
+  department_id  Int?
+  department     Department? @relation(fields: [department_id], references: [id])
+  created_at     DateTime  @default(now())
+  
+  attendance_logs AttendanceLog[]
+  salaries        Salary[]
+  deductions      Deduction[]
+  commissions     Commission[]
+  disputes_req    Dispute[] @relation("DisputeRequester")
+  disputes_app    Dispute[] @relation("DisputeApprover")
+  attendance_records AttendanceRecord[]
+  leaveBank       LeaveBank?
+  notifications   Notification[]
+  leave_requests  LeaveRequest[] @relation("LeaveRequester")
+  leave_reviews   LeaveRequest[] @relation("LeaveReviewer")
+  audit_logs      AuditLog[]
+  
+  @@map("users")
+}
+
+model AttendanceLog {
+  id        Int      @id @default(autoincrement())
+  user_id   String
+  timestamp DateTime
+  status    Int
+  
+  user      User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, timestamp, status]) // Prevent duplicate logs from the device
+  @@map("attendance_logs")
+}
+
+model Salary {
+  id              Int      @id @default(autoincrement())
+  user_id         String
+  paid_salary     Float    @default(0.0)      // Actual amount paid after deductions
+  payable_salary  Float    @default(0.0)      // Salary before deductions
+  deduction       Float    @default(0.0)      // Amount deducted
+  deduction_reason String? @default("absence") // absence, late, half-day, etc.
+  dispute_id      Int?                         // Link to dispute if this salary deduction is from a dispute
+  date            DateTime
+  
+  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  dispute         Dispute? @relation(fields: [dispute_id], references: [id], onDelete: SetNull)
+
+  @@map("salaries")
+}
+
+model Commission {
+  id         Int      @id @default(autoincrement())
+  user_id    String
+  commission Float
+  date       DateTime
+  
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("commissions")
+}
+
+model Dispute {
+  id              Int       @id @default(autoincrement())
+  req_by          String
+  approved_by     String?
+  category        String    // "late", "absent", "half-day", "leave"
+  description     String?
+  dispute_date    DateTime  // The date being disputed
+  remarks         String?
+  date_of_req     DateTime
+  date_of_approve DateTime?
+  status          String    @default("pending") // pending, approved, rejected
+  
+  requester       User      @relation("DisputeRequester", fields: [req_by], references: [id], onDelete: Cascade)
+  approver        User?     @relation("DisputeApprover", fields: [approved_by], references: [id], onDelete: SetNull)
+  salaries        Salary[]  // Salary records linked to this dispute
+  deductions      Deduction[]
+
+  @@map("disputes")
+}
+
+model AttendanceRecord {
+  id              Int       @id @default(autoincrement())
+  user_id         String
+  date            DateTime
+  check_in_time   String?   @db.VarChar(5)  // Format: HH:MM (e.g., "09:05")
+  check_out_time  String?   @db.VarChar(5)  // Format: HH:MM (e.g., "17:30")
+  status          String    // "present", "absent", "leave", "late", "halfday"
+  is_late         Boolean   @default(false)
+  is_halfday      Boolean   @default(false)
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, date]) // Prevent duplicate records for same user on same date
+  @@map("attendance_records")
+}
+
+model LeaveBank {
+  id               Int     @id @default(autoincrement())
+  user_id          String  @unique
+  leaves_remaining Int     @default(0)
+  last_reset_month String? // Format: "YYYY-MM" — tracks last month the bank was reset
+  
+  user             User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("leave_bank")
+}
+
+model Deduction {
+  id              Int       @id @default(autoincrement())
+  user_id         String
+  date            DateTime
+  type            String    // "absent", "late", "half-day", "leave"
+  amount          Float
+  dispute_id      Int?
+  
+  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  dispute         Dispute?  @relation(fields: [dispute_id], references: [id], onDelete: SetNull)
+
+  @@map("deductions")
+}
+
+model Notification {
+  id         Int      @id @default(autoincrement())
+  user_id    String
+  type       String   // "dispute_approved", "dispute_rejected", "new_dispute"
+  message    String
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+  
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@map("notifications")
+}
+
+model Holiday {
+  id        Int      @id @default(autoincrement())
+  name      String
+  date      DateTime @unique
+  @@map("holidays")
+}
+
+model LeaveRequest {
+  id          Int      @id @default(autoincrement())
+  user_id     String
+  start_date  DateTime
+  end_date    DateTime
+  reason      String
+  status      String   @default("pending") // pending, approved, rejected
+  reviewed_by String?
+  created_at  DateTime @default(now())
+
+  user        User     @relation("LeaveRequester", fields: [user_id], references: [id], onDelete: Cascade)
+  reviewer    User?    @relation("LeaveReviewer", fields: [reviewed_by], references: [id], onDelete: SetNull)
+
+  @@map("leave_requests")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  user_id     String?
+  action      String
+  details     String?  // JSON string
+  created_at  DateTime @default(now())
+
+  user        User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
