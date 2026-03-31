@@ -19,6 +19,7 @@ import holidayRoutes from './routes/holiday.routes';
 import leaveRequestRoutes from './routes/leave-request.routes';
 import auditRoutes from './routes/audit.routes';
 import exportRoutes from './routes/export.routes';
+import monitoringRoutes from './routes/monitoring.routes';
 
 import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
@@ -69,6 +70,7 @@ app.use('/api/holidays', holidayRoutes);
 app.use('/api/leave-requests', leaveRequestRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 app.get('/', (req, res) => {
   res.send('Node.js Attendance API is running.');
@@ -88,4 +90,25 @@ app.listen(PORT, () => {
       console.error(`[Cron] 5-minute sync failed`, err);
     }
   }, 5 * 60 * 1000);
+
+  // Hourly cron for 3-day MonitoringLog retention policy
+  setInterval(async () => {
+    try {
+      const threeDaysAgo = new Date();
+      threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+      
+      const { count } = await prisma.monitoringLog.deleteMany({
+        where: {
+          timestamp: {
+            lt: threeDaysAgo
+          }
+        }
+      });
+      if (count > 0) {
+        console.log(`[Cron] Deleted ${count} old monitoring logs (older than 3 days)`);
+      }
+    } catch (err) {
+      console.error(`[Cron] 3-day retention cleanup failed`, err);
+    }
+  }, 60 * 60 * 1000); // Run every hour
 });

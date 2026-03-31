@@ -14,6 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const prisma_1 = __importDefault(require("../prisma"));
+const absence_service_1 = require("../services/absence.service");
 const router = (0, express_1.Router)();
 // /api/webhooks/attendance
 // Python microservice posts data here
@@ -49,7 +50,12 @@ router.post('/attendance', (req, res) => __awaiter(void 0, void 0, void 0, funct
             // Duplicate logs or similar constraints are ignored
         }
     }
-    res.json({ message: "Webhook received", inserted: insertedCount });
+    const syncedUserIds = [...new Set(logs.map((log) => String(log.user_id)))];
+    if (syncedUserIds.length > 0) {
+        // Fire off the live sync asynchronously in the background so it doesn't block the webhook response
+        absence_service_1.AbsenceService.processLiveSync(syncedUserIds, new Date()).catch(console.error);
+    }
+    res.json({ message: "Webhook received", inserted: insertedCount, liveSyncedIds: syncedUserIds.length });
 }));
 router.post('/users', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const users = req.body;
@@ -72,10 +78,13 @@ router.post('/users', (req, res) => __awaiter(void 0, void 0, void 0, function* 
                     }
                 });
                 // Create leave bank record for new user
+                const now = new Date();
+                const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
                 yield prisma_1.default.leaveBank.create({
                     data: {
                         user_id: String(user.user_id),
-                        leaves_remaining: newUser.leave_bank // Use default from user table
+                        leaves_remaining: newUser.leave_bank, // Use default from user table
+                        last_reset_month: currentMonth
                     }
                 });
             }

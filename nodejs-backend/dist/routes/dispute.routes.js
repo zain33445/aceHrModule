@@ -74,31 +74,54 @@ router.get('/requested/:userId', (req, res) => __awaiter(void 0, void 0, void 0,
         res.status(500).json({ error: "Failed to fetch user disputes" });
     }
 }));
-// Get disputes for a specific user (alias for /requested/:userId)
+// Get disputes for a specific user with pagination and filters
 router.get('/user/:userId', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { userId } = req.params;
+    const { startDate, endDate, category, page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+    const take = Number(limit);
+    const where = { req_by: userId };
+    if (startDate && endDate) {
+        where.dispute_date = {
+            gte: new Date(startDate),
+            lte: new Date(endDate)
+        };
+    }
+    if (category && category !== 'all') {
+        where.category = category;
+    }
     try {
-        const disputes = yield prisma_1.default.dispute.findMany({
-            where: { req_by: userId },
-            include: {
-                requester: {
-                    select: {
-                        id: true,
-                        name: true
+        const [disputes, total] = yield Promise.all([
+            prisma_1.default.dispute.findMany({
+                where,
+                include: {
+                    requester: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
+                    },
+                    approver: {
+                        select: {
+                            id: true,
+                            name: true
+                        }
                     }
                 },
-                approver: {
-                    select: {
-                        id: true,
-                        name: true
-                    }
-                }
-            },
-            orderBy: {
-                date_of_req: 'desc'
-            }
+                orderBy: {
+                    date_of_req: 'desc'
+                },
+                skip,
+                take
+            }),
+            prisma_1.default.dispute.count({ where })
+        ]);
+        res.json({
+            records: disputes,
+            total,
+            page: Number(page),
+            limit: Number(limit)
         });
-        res.json(disputes);
     }
     catch (error) {
         res.status(500).json({ error: "Failed to fetch user disputes" });
@@ -147,6 +170,7 @@ router.get('/pending', (req, res) => __awaiter(void 0, void 0, void 0, function*
 }));
 // Create a dispute
 router.post('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
     const { user_id, req_by, description, dispute_date, category, date_of_req, status } = req.body;
     try {
         const userId = user_id || req_by;
@@ -158,6 +182,22 @@ router.post('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             description,
             status: status || 'pending'
         });
+        // Notify all admin users about the new dispute
+        const admins = yield prisma_1.default.user.findMany({
+            where: { role: 'admin' },
+            select: { id: true }
+        });
+        const disputeDateStr = new Date(dispute_date).toLocaleDateString();
+        const employeeName = ((_a = dispute.requester) === null || _a === void 0 ? void 0 : _a.name) || `Employee #${userId}`;
+        for (const admin of admins) {
+            yield prisma_1.default.notification.create({
+                data: {
+                    user_id: admin.id,
+                    type: 'new_dispute',
+                    message: `${employeeName} filed a new ${disputeCategory} dispute for ${disputeDateStr}.`
+                }
+            });
+        }
         res.json(dispute);
     }
     catch (error) {

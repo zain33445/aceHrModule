@@ -10,10 +10,6 @@ export const Tabs = ({
 }) => {
   const [activeTab, setActiveTab] = useState(defaultTab);
 
-  React.useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
-
   const handleTabChange = (index) => {
     setActiveTab(index);
     onChange?.(index, tabs[index].id);

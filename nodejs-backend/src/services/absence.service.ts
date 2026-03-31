@@ -5,7 +5,7 @@ export class AbsenceService {
   /**
    * Helper function to convert time HH:MM to comparable format
    */
-  private static timeToMinutes(timeStr: string): number {
+  public static timeToMinutes(timeStr: string): number {
     if (!timeStr) return 0;
     
     // Normalize string: lowercase and remove extra spaces
@@ -314,7 +314,7 @@ export class AbsenceService {
    * Day shift: check-in in morning/early afternoon (08:00-12:00)
    * Night shift: check-in in evening/night (18:00-23:59)
    */
-  private static determineShiftType(checkInTime: string, shift: any): 'day' | 'night' {
+  public static determineShiftType(checkInTime: string, shift: any): 'day' | 'night' {
     const checkInMinutes = this.timeToMinutes(checkInTime);
     
     // If check-in is before 13:00 (1 PM), it's day shift
@@ -324,7 +324,7 @@ export class AbsenceService {
     return 'night';
   }
 
-  private static getAdjustedMinutes(timeStr: string, shiftType: 'day' | 'night'): number {
+  public static getAdjustedMinutes(timeStr: string, shiftType: 'day' | 'night'): number {
     const minutes = this.timeToMinutes(timeStr);
     // For night shift, early morning hours (00:00 to 11:59 AM) logically occur AFTER the evening check-in time.
     if (shiftType === 'night' && minutes < 720) { 
@@ -333,7 +333,7 @@ export class AbsenceService {
     return minutes;
   }
 
-  private static determineAttendanceStatus(checkInTime: string | null, shift: any, shiftType: 'day' | 'night'): string {
+  public static determineAttendanceStatus(checkInTime: string | null, shift: any, shiftType: 'day' | 'night'): string {
     if (!checkInTime) return 'present'; // Fallback for punch anomalies
     
     const checkInMins = this.getAdjustedMinutes(checkInTime, shiftType);
@@ -372,28 +372,27 @@ export class AbsenceService {
     // Check if it's a weekend BEFORE deducting leaves or marking absent
     const dayOfWeek = date.getDay();
     if (dayOfWeek === 0 || dayOfWeek === 6) {
-      await prisma.attendanceRecord.upsert({
-        where: {
-          user_id_date: {
-            user_id: userId,
-            date: date
-          }
-        },
-        update: {
-          status: 'holiday',
-          check_in_time: null,
-          check_out_time: null,
-          is_late: false,
-          is_halfday: false
-        },
-        create: {
-          user_id: userId,
-          status: 'holiday',
-          date: date,
-          is_late: false,
-          is_halfday: false
-        }
+      const weekendRec = await prisma.attendanceRecord.findUnique({
+        where: { user_id_date: { user_id: userId, date: date } }
       });
+
+      if (!weekendRec) {
+        await prisma.attendanceRecord.create({
+          data: {
+            user_id: userId,
+            status: 'holiday',
+            date: date,
+            is_late: false,
+            is_halfday: false
+          }
+        });
+      } else if (weekendRec.check_in_time === null && weekendRec.check_out_time === null) {
+        await prisma.attendanceRecord.update({
+          where: { id: weekendRec.id },
+          data: { status: 'holiday', is_late: false, is_halfday: false }
+        });
+      }
+      // If check_in/out already set (employee worked on weekend), preserve them.
       return; // Skip leave deduction and absence marking entirely
     }
 
@@ -425,29 +424,39 @@ export class AbsenceService {
       status = 'absent';
     }
 
-    // Create or update attendance record
-    await prisma.attendanceRecord.upsert({
-      where: {
-        user_id_date: {
-          user_id: userId,
-          date: date
-        }
-      },
-      update: {
-        status: status,
-        check_in_time: null,
-        check_out_time: null,
-        is_late: false,
-        is_halfday: false
-      },
-      create: {
-        user_id: userId,
-        status: status,
-        date: date,
-        is_late: false,
-        is_halfday: false
-      }
+    // Create or update attendance record — but PRESERVE existing check-in/out times
+    // (set by the Electron desktop monitor) if they already exist.
+    const existingRec = await prisma.attendanceRecord.findUnique({
+      where: { user_id_date: { user_id: userId, date: date } }
     });
+
+    if (!existingRec) {
+      // No record at all — create a fresh one
+      await prisma.attendanceRecord.create({
+        data: {
+          user_id: userId,
+          status: status,
+          date: date,
+          is_late: false,
+          is_halfday: false
+        }
+      });
+    } else {
+      // Record exists. Only update status if check_in_time is still null
+      // (meaning the Electron monitor hasn't set it yet).
+      // If the monitor already set check_in_time, do NOT overwrite anything.
+      if (existingRec.check_in_time === null && existingRec.check_out_time === null) {
+        await prisma.attendanceRecord.update({
+          where: { id: existingRec.id },
+          data: {
+            status: status,
+            is_late: false,
+            is_halfday: false
+          }
+        });
+      }
+      // If check_in_time or check_out_time already has a value, leave the record untouched.
+    }
 
     if (status === 'absent') {
       const amount = DisputeService.calculateDeductionAmount('absent', monthlySalary, date);

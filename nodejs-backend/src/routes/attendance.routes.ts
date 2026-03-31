@@ -35,15 +35,22 @@ router.get('/report/salary-report', async (req, res) => {
   const { start_date, end_date } = req.query;
   
   try {
-    // Fetch users and join LeaveBank for actual leaves_remaining
+    // Fetch users and join LeaveBank and AttendanceRecords
     const users = await prisma.user.findMany({
       include: {
-        attendance_logs: true,
-        leaveBank: true // correct relation name for LeaveBank
+        attendance_records: {
+            where: start_date && end_date ? {
+                date: {
+                    gte: new Date(start_date as string),
+                    lte: new Date(end_date as string)
+                }
+            } : undefined
+        },
+        leaveBank: true
       }
     });
 
-    // 0. Pre-fetch all deductions grouped by user in a single query (fixes N+1 query issue)
+    // 0. Pre-fetch all deductions grouped by user
     const deductionWhere: any = {};
     if (start_date && end_date) {
       deductionWhere.date = {
@@ -59,63 +66,26 @@ router.get('/report/salary-report', async (req, res) => {
     const deductionMap = new Map(groupedDeductions.map(d => [d.user_id, d._sum.amount || 0]));
 
     const report = await Promise.all(users.map(async (user) => {
-      // 1. Smart Pivot: Group logs by day
-      const logsByDay: Record<string, { checkIn: Date; checkOut: Date }> = {};
+      const records = user.attendance_records;
       
-      user.attendance_logs.forEach(log => {
-        const dateStr = log.timestamp.toISOString().split('T')[0];
-        
-        let startBound = start_date ? new Date(start_date as string) : new Date('2000-01-01');
-        let endBound = end_date ? new Date(end_date as string) : new Date('2100-01-01');
-        endBound.setHours(23, 59, 59, 999);
+      // Filter for worked days (present, late, halfday)
+      const workedRecords = records.filter(r => ['present', 'late', 'halfday'].includes(r.status));
+      const daysWorked = workedRecords.length;
 
-        if (log.timestamp >= startBound && log.timestamp <= endBound) {
-            if (!logsByDay[dateStr]) {
-                logsByDay[dateStr] = { checkIn: log.timestamp, checkOut: log.timestamp };
-            } else {
-                if (log.timestamp < logsByDay[dateStr].checkIn) {
-                    logsByDay[dateStr].checkIn = log.timestamp;
-                }
-                if (log.timestamp > logsByDay[dateStr].checkOut) {
-                    logsByDay[dateStr].checkOut = log.timestamp;
-                }
-            }
-        }
-      });
-
-      const daysWorked = Object.keys(logsByDay).length;
-      // Use actual leaves_remaining from LeaveBank if available
       const totalAllowedLeaves = user.leave_bank;
       const remainingLeaves = user.leaveBank && typeof user.leaveBank.leaves_remaining === 'number'
         ? user.leaveBank.leaves_remaining
         : totalAllowedLeaves;
       const paidLeavesUsed = totalAllowedLeaves - remainingLeaves;
 
-      // Calculate Absences (for stats only, not for leave logic)
-      let absentDays = 0;
-      let paidLeaveDates: string[] = [];
-      let unpaidAbsenceDates: string[] = [];
-      if (start_date && end_date) {
-        let current = new Date(start_date as string);
-        const end = new Date(end_date as string);
-        while (current <= end) {
-          if (current.getDay() !== 0) {
-            const currentStr = current.toISOString().split('T')[0];
-            if (!logsByDay[currentStr] && current < new Date()) {
-              absentDays++;
-              // For display only, not for leave logic
-              if (paidLeavesUsed > paidLeaveDates.length) {
-                paidLeaveDates.push(currentStr);
-              } else {
-                unpaidAbsenceDates.push(currentStr);
-              }
-            }
-          }
-          current.setDate(current.getDate() + 1);
-        }
-      }
+      // Identify absences and paid leaves from records
+      const absentDays = records.filter(r => r.status === 'absent').length;
+      const leaveDays = records.filter(r => r.status === 'leave').length;
 
-      // Financials — get total deductions from pre-fetched map
+      const paidLeaveDates = records.filter(r => r.status === 'leave').map(r => r.date.toISOString().split('T')[0]);
+      const unpaidAbsenceDates = records.filter(r => r.status === 'absent').map(r => r.date.toISOString().split('T')[0]);
+
+      // Financials
       const deductions = deductionMap.get(user.id) || 0;
       const totalSalary = Math.max(0, user.monthly_salary - deductions);
 
@@ -125,7 +95,7 @@ router.get('/report/salary-report', async (req, res) => {
         monthly_salary: user.monthly_salary,
         leave_bank: totalAllowedLeaves,
         days_worked: daysWorked,
-        absent_days: unpaidAbsenceDates.length + paidLeaveDates.length,
+        absent_days: absentDays + leaveDays,
         paid_leave_dates: paidLeaveDates,
         unpaid_absence_dates: unpaidAbsenceDates,
         paid_leaves_used: paidLeavesUsed,

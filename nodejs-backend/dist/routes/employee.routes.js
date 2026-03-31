@@ -40,10 +40,13 @@ router.post('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             }
         });
         // Create leave bank record with the same number of leaves as allowed
+        const now = new Date();
+        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         yield prisma_1.default.leaveBank.create({
             data: {
                 user_id: String(user_id),
-                leaves_remaining: leave_bank || 5
+                leaves_remaining: leave_bank || 5,
+                last_reset_month: currentMonth
             }
         });
         res.json({ message: "Employee created manually", user });
@@ -82,9 +85,22 @@ router.post('/update-employee', (req, res) => __awaiter(void 0, void 0, void 0, 
 router.post('/update-leaves', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { user_id, leave_bank } = req.body;
     try {
+        const newTotal = parseInt(leave_bank);
         yield prisma_1.default.user.update({
             where: { id: String(user_id) },
-            data: { leave_bank: parseInt(leave_bank) }
+            data: { leave_bank: newTotal }
+        });
+        // Upsert leave bank to match new total directly
+        yield prisma_1.default.leaveBank.upsert({
+            where: { user_id: String(user_id) },
+            create: {
+                user_id: String(user_id),
+                leaves_remaining: newTotal,
+                last_reset_month: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+            },
+            update: {
+                leaves_remaining: newTotal
+            }
         });
         res.json({ message: "Leave bank updated" });
     }

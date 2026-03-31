@@ -15,11 +15,13 @@ const router = (0, express_1.Router)();
 // Get all attendance records
 router.get('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, status, userId, page, limit } = req.query;
         const start = startDate ? new Date(startDate) : undefined;
         const end = endDate ? new Date(endDate) : undefined;
-        const records = yield absence_service_1.AbsenceService.getAllAttendances(start, end);
-        res.json(records);
+        const p = page ? parseInt(page) : 1;
+        const l = limit ? parseInt(limit) : 20;
+        const result = yield absence_service_1.AbsenceService.getAllAttendances(start, end, status, userId, p, l);
+        res.json(result);
     }
     catch (error) {
         res.status(500).json({ error: "Failed to fetch attendance records" });
@@ -28,12 +30,14 @@ router.get('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
 // Get attendance records for a specific user
 router.get('/user/:userId', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { userId } = req.params;
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, status, page, limit } = req.query;
     try {
         const start = startDate ? new Date(startDate) : undefined;
         const end = endDate ? new Date(endDate) : undefined;
-        const records = yield absence_service_1.AbsenceService.getUserAttendances(userId, start, end);
-        res.json(records);
+        const p = page ? parseInt(page) : 1;
+        const l = limit ? parseInt(limit) : 20;
+        const result = yield absence_service_1.AbsenceService.getUserAttendances(userId, start, end, status, p, l);
+        res.json(result);
     }
     catch (error) {
         res.status(500).json({ error: "Failed to fetch user attendance records" });
@@ -51,6 +55,18 @@ router.get('/user/:userId/stats', (req, res) => __awaiter(void 0, void 0, void 0
     }
     catch (error) {
         res.status(500).json({ error: "Failed to fetch attendance statistics" });
+    }
+}));
+// Manually sync attendance for today (Live Manual Sync)
+router.post('/sync-today', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const result = yield absence_service_1.AbsenceService.processDailyAbsences(tomorrow);
+        res.json(result);
+    }
+    catch (error) {
+        res.status(500).json({ error: "Failed to sync today's attendance" });
     }
 }));
 // Process attendance for yesterday (daily cron job endpoint)

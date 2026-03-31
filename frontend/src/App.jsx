@@ -52,11 +52,21 @@ function App() {
     if (auth?.role === 'admin') {
       fetchData();
     }
+    
+    // Pass user ID to Electron Desktop Monitor if available
+    if (auth && auth.user_id && window.electronAPI) {
+      window.electronAPI.setUserId(auth.user_id);
+    }
   }, [auth, fetchData]);
 
   const handleLoginSuccess = (authData) => {
     setAuth(authData);
     localStorage.setItem('bio_auth', JSON.stringify(authData));
+    
+    // Pass user ID to Electron Desktop Monitor immediately on login
+    if (authData && authData.user_id && window.electronAPI) {
+      window.electronAPI.setUserId(authData.user_id);
+    }
   };
 
   const handleLogout = () => {

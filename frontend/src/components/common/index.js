@@ -12,6 +12,6 @@ export { Spinner } from './Spinner';
 export { Alert } from './Alert';
 export { Select } from './Select';
 export { Skeleton } from './Skeleton';
+export { Toast } from './Toast';
 export { Textarea } from './Textarea';
 export { Pagination } from './Pagination';
-export { Toast } from './Toast';

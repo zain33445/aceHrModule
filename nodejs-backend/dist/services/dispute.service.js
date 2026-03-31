@@ -15,17 +15,31 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DisputeService = void 0;
 const prisma_1 = __importDefault(require("../prisma"));
 class DisputeService {
+    // Helper to get active working days in a month (excluding weekends)
+    static getWorkingDaysInMonth(year, month) {
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        let workingDays = 0;
+        for (let i = 1; i <= daysInMonth; i++) {
+            const dayOfWeek = new Date(year, month, i).getDay();
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                workingDays++;
+            }
+        }
+        // Fallback in case of 0 to avoid Infinity
+        return workingDays > 0 ? workingDays : 30;
+    }
     // Calculate deduction amount based on category
-    static calculateDeductionAmount(category, employeeSalary) {
+    static calculateDeductionAmount(category, employeeSalary, date) {
+        const workingDays = this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
         switch (category) {
             case 'absent':
-                return employeeSalary / 30; // 1 day deduction
+                return employeeSalary / workingDays; // 1 day deduction
             case 'late':
-                return (employeeSalary / 30) * 0.25; // 25% of daily salary for late
+                return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for late
             case 'half-day':
-                return (employeeSalary / 30) * 0.5; // 50% of daily salary for half-day
+                return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for half-day
             case 'leave':
-                return employeeSalary / 30; // 1 day deduction if unauthorized
+                return employeeSalary / workingDays; // 1 day deduction if unauthorized
             default:
                 return 0;
         }
@@ -95,7 +109,7 @@ class DisputeService {
                 throw new Error('Dispute not found');
             }
             // Calculate deduction that should be restored
-            const deductionAmount = this.calculateDeductionAmount(dispute.category, dispute.requester.monthly_salary);
+            const deductionAmount = this.calculateDeductionAmount(dispute.category, dispute.requester.monthly_salary, new Date(dispute.dispute_date));
             // Update dispute status
             const updatedDispute = yield prisma_1.default.dispute.update({
                 where: { id: disputeId },
@@ -111,42 +125,51 @@ class DisputeService {
                     }
                 }
             });
-            // Find salary record for the disputed date and restore deduction
+            // Find deduction record for the disputed date and remove it
             // Create date range for the disputed date (start of day to end of day)
             const startOfDay = new Date(dispute.dispute_date);
             startOfDay.setHours(0, 0, 0, 0);
             const endOfDay = new Date(dispute.dispute_date);
             endOfDay.setHours(23, 59, 59, 999);
-            const salaryRecord = yield prisma_1.default.salary.findFirst({
+            const deductionRecord = yield prisma_1.default.deduction.findFirst({
                 where: {
                     user_id: dispute.req_by,
                     date: {
                         gte: startOfDay,
                         lte: endOfDay
-                    }
+                    },
+                    type: dispute.category
                 }
             });
-            if (salaryRecord) {
-                // Restore the deduction by reducing the deduction field and increasing payable_salary
-                yield prisma_1.default.salary.update({
-                    where: { id: salaryRecord.id },
-                    data: {
-                        deduction: Math.max(0, (salaryRecord.deduction || 0) - deductionAmount),
-                        payable_salary: (salaryRecord.payable_salary || 0) + deductionAmount,
-                        dispute_id: disputeId
-                    }
+            if (deductionRecord) {
+                // If we found a deduction record, we remove it because the dispute is approved
+                yield prisma_1.default.deduction.delete({
+                    where: { id: deductionRecord.id }
                 });
+                console.log(`Deduction record ${deductionRecord.id} removed for user ${dispute.req_by} on ${dispute.dispute_date} due to approved dispute.`);
             }
             else {
-                console.warn(`No salary record found for user ${dispute.req_by} on date ${dispute.dispute_date}. Deduction not restored.`);
+                console.log(`No matching deduction record found for user ${dispute.req_by} on ${dispute.dispute_date}. Nothing to remove.`);
             }
+            // Create notification for the employee
+            const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
+            yield prisma_1.default.notification.create({
+                data: {
+                    user_id: dispute.req_by,
+                    type: 'dispute_approved',
+                    message: `Your ${dispute.category} dispute for ${disputeDateStr} has been approved.${remarks ? ' Remarks: ' + remarks : ''}`
+                }
+            });
             return updatedDispute;
         });
     }
     // Reject a dispute
     static rejectDispute(disputeId_1) {
         return __awaiter(this, arguments, void 0, function* (disputeId, remarks = '') {
-            return prisma_1.default.dispute.update({
+            const dispute = yield prisma_1.default.dispute.findUnique({
+                where: { id: disputeId }
+            });
+            const updatedDispute = yield prisma_1.default.dispute.update({
                 where: { id: disputeId },
                 data: {
                     status: 'rejected',
@@ -160,6 +183,18 @@ class DisputeService {
                     }
                 }
             });
+            // Create notification for the employee
+            if (dispute) {
+                const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
+                yield prisma_1.default.notification.create({
+                    data: {
+                        user_id: dispute.req_by,
+                        type: 'dispute_rejected',
+                        message: `Your ${dispute.category} dispute for ${disputeDateStr} has been rejected.${remarks ? ' Remarks: ' + remarks : ''}`
+                    }
+                });
+            }
+            return updatedDispute;
         });
     }
 }

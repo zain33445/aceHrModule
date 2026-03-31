@@ -53,7 +53,21 @@ router.get('/report/salary-report', (req, res) => __awaiter(void 0, void 0, void
                 leaveBank: true // correct relation name for LeaveBank
             }
         });
-        const report = users.map(user => {
+        // 0. Pre-fetch all deductions grouped by user in a single query (fixes N+1 query issue)
+        const deductionWhere = {};
+        if (start_date && end_date) {
+            deductionWhere.date = {
+                gte: new Date(start_date),
+                lte: new Date(end_date)
+            };
+        }
+        const groupedDeductions = yield prisma_1.default.deduction.groupBy({
+            by: ['user_id'],
+            where: deductionWhere,
+            _sum: { amount: true }
+        });
+        const deductionMap = new Map(groupedDeductions.map(d => [d.user_id, d._sum.amount || 0]));
+        const report = yield Promise.all(users.map((user) => __awaiter(void 0, void 0, void 0, function* () {
             // 1. Smart Pivot: Group logs by day
             const logsByDay = {};
             user.attendance_logs.forEach(log => {
@@ -106,9 +120,8 @@ router.get('/report/salary-report', (req, res) => __awaiter(void 0, void 0, void
                     current.setDate(current.getDate() + 1);
                 }
             }
-            // Financials
-            const perDaySalary = user.monthly_salary > 0 ? user.monthly_salary / 30.0 : 0;
-            const deductions = unpaidAbsenceDates.length * perDaySalary;
+            // Financials — get total deductions from pre-fetched map
+            const deductions = deductionMap.get(user.id) || 0;
             const totalSalary = Math.max(0, user.monthly_salary - deductions);
             return {
                 id: user.id,
@@ -128,10 +141,11 @@ router.get('/report/salary-report', (req, res) => __awaiter(void 0, void 0, void
                     end: end_date || 'N/A'
                 }
             };
-        });
+        })));
         res.json(report);
     }
     catch (error) {
+        console.error('Error generating salary report:', error);
         res.status(500).json({ error: "Failed to generate salary report" });
     }
 }));

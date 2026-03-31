@@ -1,6 +1,6 @@
 import axios from "axios";
 
-const API_BASE = "http://localhost:5000/api";
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
 
 const api = {
   // Existing methods...
@@ -145,6 +145,12 @@ const api = {
 
   // Bulk Pay
   processBulkSalary: (date) => axios.post(`${API_BASE}/salaries/bulk-pay`, { date }),
+
+  // Monitoring
+  getMonitoringLogs: (params) => {
+    const query = new URLSearchParams(params).toString();
+    return axios.get(`${API_BASE}/monitoring/logs?${query}`);
+  },
 
   // Export URLs (these return files so often handled via window.open instead of axios, but keeping paths here)
   getExportAttendanceUrl: (startDate, endDate) => 
