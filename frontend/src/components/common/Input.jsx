@@ -12,9 +12,9 @@ export const Input = React.forwardRef(({
   ...props
 }, ref) => {
   const sizes = {
-    sm: 'px-3 py-2 text-sm',
-    md: 'px-4 py-3 text-base',
-    lg: 'px-4 py-4 text-lg',
+    sm: 'px-4 py-3 text-sm',
+    md: 'px-8 py-5 text-base',
+    lg: 'px-10 py-6 text-lg',
   };
 
   const baseStyles = 'w-full border border-neutral-300 rounded-md bg-white text-neutral-900 placeholder-neutral-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-500';
@@ -38,7 +38,7 @@ export const Input = React.forwardRef(({
           ref={ref}
           type={type}
           disabled={disabled}
-          className={`${baseStyles} ${errorStyles} ${disabledStyles} ${Icon ? 'pl-10' : ''} ${className}`}
+          className={`${baseStyles} p-2 ${errorStyles} ${disabledStyles} ${Icon ? 'pl-10' : ''} ${className}`}
           {...props}
         />
       </div>

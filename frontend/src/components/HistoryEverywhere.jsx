@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { AttendanceFilters } from './common/AttendanceFilters';
+import { formatTime12h } from '../utils/formatters';
 
 function HistoryEverywhere({ report, attendance }) {
   const [selectedUserId, setSelectedUserId] = useState(null);
@@ -144,7 +145,7 @@ function HistoryEverywhere({ report, attendance }) {
                       <td>
                         {record.check_in_time ? (
                           <span className={`badge ${record.is_late ? 'badge-warning' : 'badge-success'}`}>
-                            {record.check_in_time} {record.is_late && '(Late)'}
+                            {formatTime12h(record.check_in_time)} {record.is_late && '(Late)'}
                           </span>
                         ) : (
                           <span style={{ color: '#94a3b8' }}>--:--</span>
@@ -153,7 +154,7 @@ function HistoryEverywhere({ report, attendance }) {
                       <td>
                         {record.check_out_time ? (
                           <span className={`badge ${record.is_halfday ? 'badge-warning' : 'badge-info'}`}>
-                            {record.check_out_time} {record.is_halfday && '(Half-day)'}
+                            {formatTime12h(record.check_out_time)} {record.is_halfday && '(Half-day)'}
                           </span>
                         ) : (
                           <span style={{ color: '#94a3b8' }}>--:--</span>

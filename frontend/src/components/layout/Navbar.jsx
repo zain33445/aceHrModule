@@ -32,17 +32,19 @@ export const Navbar = ({
       ref={navRef}
       initial={{ y: -20, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      className="sticky top-0 z-30 bg-white border-b border-neutral-200 shadow-sm"
+      className="sticky top-0 z-30 bg-white border-b border-neutral-200 shadow-sm h-16 flex items-center"
     >
-      <div className="max-w-full px-4 sm:px-6 lg:px-8 py-3">
+      <div className="max-w-full w-full px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-4">
           {/* Left: Logo + Breadcrumb */}
           <div className="flex items-center gap-4 flex-1 min-w-0">
             {/* Logo */}
             <div className="flex-shrink-0">
-              <div className="w-10 h-10 bg-primary-500 rounded-lg flex items-center justify-center text-white font-bold text-lg">
-                A
-              </div>
+              <img 
+                src="/aceLogo.png" 
+                alt="aceLogo" 
+                className="w-10 h-10 object-contain rounded-lg"
+              />
             </div>
 
             {/* Breadcrumb */}
@@ -51,8 +53,8 @@ export const Navbar = ({
                 {breadcrumbs.map((crumb, index) => (
                   <div key={index} className="flex items-center gap-2 flex-shrink-0">
                     {index > 0 && <span className="text-neutral-400">/</span>}
-                    <a
-                      href={crumb.href || '#'}
+                    <button
+                      onClick={() => crumb.label === 'Dashboard' && onTabChange?.('overview')}
                       className={`transition-colors ${
                         crumb.active
                           ? 'text-neutral-900 font-medium'
@@ -60,7 +62,7 @@ export const Navbar = ({
                       }`}
                     >
                       {crumb.label}
-                    </a>
+                    </button>
                   </div>
                 ))}
               </nav>

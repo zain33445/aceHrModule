@@ -17,20 +17,29 @@ router.post('/attendance', async (req, res) => {
 
   for (const log of logs) {
     try {
-      // Attempt to find or create the user implicitly here if wanted,
-      // or assume the user sync has already happened.
+      const userId = String(log.user_id);
+      
+      // Check if user exists in our system
+      const userExists = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (!userExists) {
+        console.warn(`[Webhook] Skipping attendance log for unknown user ID: ${userId}`);
+        continue;
+      }
 
       await prisma.attendanceLog.upsert({
         where: {
           user_id_timestamp_status: {
-            user_id: String(log.user_id),
+            user_id: userId,
             timestamp: new Date(log.timestamp),
             status: Number(log.status)
           }
         },
         update: {},
         create: {
-          user_id: String(log.user_id),
+          user_id: userId,
           timestamp: new Date(log.timestamp),
           status: Number(log.status)
         }
@@ -38,7 +47,6 @@ router.post('/attendance', async (req, res) => {
       insertedCount++;
     } catch (error) {
       console.log(error)
-      // Duplicate logs or similar constraints are ignored
     }
   }
 
@@ -59,48 +67,41 @@ router.post('/users', async (req, res) => {
     return res.status(400).json({ error: "Users must be an array" });
   }
 
+  // Only proceed if the users table is currently empty
+  const currentTotalUsers = await prisma.user.count();
+  if (currentTotalUsers > 0) {
+    return res.json({ 
+      message: "Users sync skipped: user table is not empty", 
+      inserted: 0 
+    });
+  }
+
   let insertedCount = 0;
 
   for (const user of users) {
     try {
-      const userExists = await prisma.user.findUnique({
-        where: { id: String(user.user_id) }
+      const newUser = await prisma.user.create({
+        data: {
+          id: String(user.user_id),
+          name: user.name,
+          role: 'employee',
+          password_hash: '1234'
+        }
       });
 
-
-      if (!userExists) {
-         const newUser = await prisma.user.create({
-            data: {
-               id: String(user.user_id),
-               name: user.name,
-               role: 'employee',
-               password_hash: '1234'
-            }
-         });
-
-         // Create leave bank record for new user
-         const now = new Date();
-         const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-         await prisma.leaveBank.create({
-           data: {
-             user_id: String(user.user_id),
-             leaves_remaining: newUser.leave_bank, // Use default from user table
-             last_reset_month: currentMonth
-           }
-         });
-
-      } else {
-         await prisma.user.update({
-            where: { id: String(user.user_id) },
-            data: {
-               name: user.name,
-            }
-         });
-      }
+      // Create leave bank record for new user
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      await prisma.leaveBank.create({
+        data: {
+          user_id: String(user.user_id),
+          leaves_remaining: newUser.leave_bank,
+          last_reset_month: currentMonth
+        }
+      });
 
       insertedCount++;
     } catch (error) {
-      // Duplicate logs or similar constraints are ignored
       console.log(error)
     }
   }

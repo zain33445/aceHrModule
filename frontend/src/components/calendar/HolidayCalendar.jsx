@@ -121,19 +121,21 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
       {showModal && (
         <Modal isOpen={true} title="Add Holiday" onClose={() => setShowModal(false)}>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <Input
-              label="Holiday Name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-            />
-            <Input
-              label="Date"
-              type="date"
-              value={form.date}
-              onChange={(e) => setForm({ ...form, date: e.target.value })}
-              required
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <Input
+                label="Holiday Name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                required
+              />
+              <Input
+                label="Date"
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm({ ...form, date: e.target.value })}
+                required
+              />
+            </div>
             <div className="flex justify-end gap-3 pt-4">
               <Button type="button" variant="outline" onClick={() => setShowModal(false)}>Cancel</Button>
               <Button type="submit">Save</Button>

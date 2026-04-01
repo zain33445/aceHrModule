@@ -146,6 +146,62 @@ export class AbsenceService {
   }
 
   /**
+   * Scan for any 'pending' records from past dates and finalize them (absent/leave)
+   */
+  static async processMissedAbsences() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const staleRecords = await prisma.attendanceRecord.findMany({
+      where: {
+        status: 'pending',
+        date: { lt: today }
+      },
+      include: {
+        user: {
+          include: {
+            department: {
+              include: { shift: true }
+            }
+          }
+        }
+      }
+    });
+
+    console.log(`[AbsenceService] Found ${staleRecords.length} stale pending records to finalize.`);
+
+    for (const record of staleRecords) {
+      try {
+        console.log(`[AbsenceService] Finalizing past record for user ${record.user_id} on ${record.date.toDateString()}`);
+        
+        // Re-calculate based on existing logs for that date
+        const startOfWindow = new Date(record.date);
+        startOfWindow.setHours(6, 0, 0, 0);
+        const endOfWindow = new Date(record.date);
+        endOfWindow.setDate(endOfWindow.getDate() + 1);
+        endOfWindow.setHours(6, 0, 0, 0);
+
+        const logs = await prisma.attendanceLog.findMany({
+          where: {
+            user_id: record.user_id,
+            timestamp: { gte: startOfWindow, lte: endOfWindow }
+          }
+        });
+
+        if (logs.length > 0) {
+          await this.calculateAndRecordAttendance(record.user_id, record.date, logs, record.user.monthly_salary, record.user.department?.shift);
+        } else {
+          await this.processAttendance(record.user_id, record.date, record.user.monthly_salary, record.user.department?.shift);
+        }
+      } catch (err) {
+        console.error(`Failed to finalize stale record ${record.id}:`, err);
+      }
+    }
+
+    return staleRecords.length;
+  }
+
+  /**
    * Calculate and record attendance status based on check-in/check-out times
    * For each user per day: First timestamp = check-in, Last timestamp = check-out
    */
@@ -240,15 +296,40 @@ export class AbsenceService {
       });
 
       if (existingRecord) {
-        // Update existing record
+        // Merge strategy: Earliest Check-in, Latest Check-out
+        let finalCheckIn = checkInTime;
+        if (existingRecord.check_in_time && checkInTime) {
+          const existingMinutes = this.timeToMinutes(existingRecord.check_in_time);
+          const newMinutes = this.timeToMinutes(checkInTime);
+          finalCheckIn = existingMinutes < newMinutes ? existingRecord.check_in_time : checkInTime;
+        } else if (existingRecord.check_in_time) {
+          finalCheckIn = existingRecord.check_in_time;
+        }
+
+        let finalCheckOut = checkOutTime;
+        if (existingRecord.check_out_time && checkOutTime) {
+          const existingMinutes = this.timeToMinutes(existingRecord.check_out_time);
+          const newMinutes = this.timeToMinutes(checkOutTime);
+          finalCheckOut = existingMinutes > newMinutes ? existingRecord.check_out_time : checkOutTime;
+        } else if (existingRecord.check_out_time) {
+          finalCheckOut = existingRecord.check_out_time;
+        }
+
+        // Recalculate status based on the merged earliest check-in
+        let finalStatus = status;
+        if (finalCheckIn) {
+          const currentShiftType = this.determineShiftType(finalCheckIn, shift);
+          finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType);
+        }
+
         await prisma.attendanceRecord.update({
           where: { id: existingRecord.id },
           data: {
-            check_in_time: checkInTime,
-            check_out_time: checkOutTime,
-            status: status,
-            is_late: isLate,
-            is_halfday: isHalfday
+            check_in_time: finalCheckIn,
+            check_out_time: finalCheckOut,
+            status: finalStatus,
+            is_late: finalStatus === 'late',
+            is_halfday: finalStatus === 'halfday'
           }
         });
       } else {
@@ -565,6 +646,8 @@ export class AbsenceService {
 
     if (status && status !== 'all') {
       whereClause.status = status;
+    } else {
+      whereClause.status = { not: 'pending' };
     }
 
     const skip = (page - 1) * limit;
@@ -610,6 +693,8 @@ export class AbsenceService {
 
     if (status && status !== 'all') {
       whereClause.status = status;
+    } else {
+      whereClause.status = { not: 'pending' };
     }
 
     const skip = (page - 1) * limit;

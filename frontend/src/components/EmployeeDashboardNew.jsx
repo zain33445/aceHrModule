@@ -31,6 +31,7 @@ import { HolidayCalendar } from './calendar/HolidayCalendar';
 import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { SettingsTab } from './dashboard/SettingsTab';
+import { formatTime12h } from '../utils/formatters';
 
 function EmployeeDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -595,7 +596,7 @@ function OverviewTab({ stats, logs, loading }) {
                         {new Date(log.date).toLocaleDateString()}
                       </p>
                       <p className="text-sm text-neutral-600">
-                        {log.check_in_time || 'Not checked in'}
+                        {log.check_in_time ? formatTime12h(log.check_in_time) : 'Not checked in'}
                       </p>
                     </div>
                     <div className="text-right">
@@ -666,8 +667,8 @@ function AttendanceTab({ absences, loading, pagination, onFilterChange, onPageCh
                     {absences?.map((log, idx) => (
                       <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{log.check_in_time || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{log.check_out_time || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(log.check_in_time)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(log.check_out_time)}</td>
                         <td className="px-6 py-4 whitespace-nowrap">{log.total_hours?.toFixed(2) || '-'}</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`badge ${

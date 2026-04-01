@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export const Sidebar = ({ activeTab = 'dashboard', onTabChange, userRole = 'employee' }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
   const normalizedRole = userRole?.toLowerCase() === 'administrator' ? 'admin' : userRole;

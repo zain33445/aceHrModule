@@ -21,6 +21,7 @@ export const LayoutContainer = ({
         breadcrumbs={breadcrumbs}
         notifications={notifications}
         onNotificationClick={onNotificationClick}
+        onTabChange={onTabChange}
       />
 
       {/* Main Container */}

@@ -113,7 +113,7 @@ function App() {
 
   // 3. Admin View - New Design
   if (auth.role === 'admin') {
-    return <AdminDashboardNew employees={employees} report={report} user={auth} onLogout={handleLogout} />;
+    return <AdminDashboardNew employees={employees} report={report} user={auth} onLogout={handleLogout} onRefresh={fetchData} />;
   }
 
   return null;

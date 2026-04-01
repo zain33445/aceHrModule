@@ -8,7 +8,12 @@ export const Tabs = ({
   variant = 'tabs',
   className = '',
 }) => {
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [activeTab, setActiveTab] = React.useState(defaultTab);
+
+  // Sync state if defaultTab prop changes (e.g., via sidebar navigation)
+  React.useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
   const handleTabChange = (index) => {
     setActiveTab(index);

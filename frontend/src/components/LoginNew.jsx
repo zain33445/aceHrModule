@@ -53,9 +53,9 @@ function LoginNew({ onLoginSuccess }) {
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ delay: 0.2, type: 'spring' }}
-              className="w-16 h-16 bg-white/20 rounded-xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm"
+              className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm p-2"
             >
-              <Lock size={32} className="text-white" />
+              <img src="/aceLogo.png" alt="aceLogo" className="w-full h-full object-contain" />
             </motion.div>
 
             <motion.h1
@@ -64,7 +64,7 @@ function LoginNew({ onLoginSuccess }) {
               transition={{ delay: 0.3 }}
               className="text-3xl font-bold text-white mb-1"
             >
-              ACE HR System
+              aceHRM
             </motion.h1>
 
             <motion.p

@@ -12,7 +12,7 @@ export const PayslipPDFButton = ({ employeeName, salaryData, variant = 'ghost' }
     // Header
     doc.setFontSize(22);
     doc.setTextColor(15, 23, 42);
-    doc.text('ACE HR Solutions', 14, 20);
+    doc.text('aceHRM Solutions', 14, 20);
     
     doc.setFontSize(14);
     doc.setTextColor(71, 85, 105);

@@ -3,7 +3,7 @@ import requests
 import datetime
 from zk import ZK, const
 
-DEVICE_IP = '192.168.1.101'
+DEVICE_IP = '192.168.18.101'
 DEVICE_PORT = 4370
 COMM_KEY = 11
 WEBHOOK_URL = 'http://localhost:5000/api/webhooks/attendance'

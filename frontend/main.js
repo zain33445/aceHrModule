@@ -33,6 +33,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    title: 'aceHRM',
+    icon: path.join(__dirname, 'public', 'aceLogo.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -70,18 +72,16 @@ if (isDev) {
 // 2. System Tray Setup
 // ─────────────────────────────────────────
 function createTray() {
-  // Create a simple 16x16 tray icon (a blue square)
-  const icon = nativeImage.createFromBuffer(
-    Buffer.alloc(16 * 16 * 4, 0), // Transparent fallback icon
-    { width: 16, height: 16 }
-  );
+  // Load the logo for the tray icon
+  const iconPath = path.join(__dirname, 'public', 'aceLogo.png');
+  const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
 
   tray = new Tray(icon);
-  tray.setToolTip('ACE HR Monitor');
+  tray.setToolTip('aceHRM Monitor');
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Window',
+      label: 'Show aceHRM',
       click: () => {
         if (mainWindow) {
           mainWindow.show();
@@ -90,7 +90,7 @@ function createTray() {
       },
     },
     {
-      label: 'Hide Window',
+      label: 'Hide aceHRM',
       click: () => {
         if (mainWindow) mainWindow.hide();
       },
@@ -141,7 +141,7 @@ function setupAutoStart() {
 // 4. App Lifecycle
 // ─────────────────────────────────────────
 app.whenReady().then(() => {
-  logger.info('=== ACE HR Electron App Starting ===');
+  logger.info('=== aceHRM Electron App Starting ===');
 
   // Create the main window
   createWindow();

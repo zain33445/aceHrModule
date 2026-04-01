@@ -31,8 +31,9 @@ import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { AuditLogTab } from './audit/AuditLogTab';
 import { DataExportPanel } from './export/DataExportPanel';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
+import { formatTime12h } from '../utils/formatters';
 
-function AdminDashboardNew({ employees = [], report = [], user, onLogout }) {
+function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [absences, setAbsences] = useState([]);
   const [leaveBanks, setLeaveBanks] = useState([]);
@@ -248,10 +249,27 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout }) {
     }
   };
 
+  const getTabLabel = (id) => {
+    const labels = {
+      overview: 'Analytics',
+      departments: 'Departments',
+      employees: 'Staff Management',
+      attendance: 'Attendance',
+      leaves: 'Leave Requests',
+      holidays: 'Holidays',
+      payroll: 'Payroll',
+      disputes: 'Disputes',
+      export: 'Data Export',
+      audit: 'Audit Logs',
+      settings: 'Settings'
+    };
+    return labels[id] || id.charAt(0).toUpperCase() + id.slice(1);
+  };
+
   const breadcrumbs = [
-    { label: 'Dashboard', active: activeTab === 'overview' },
+    { label: 'Dashboard', active: activeTab === 'overview', href: '#' },
     ...(activeTab !== 'overview' 
-      ? [{ label: activeTab.charAt(0).toUpperCase() + activeTab.slice(1) }]
+      ? [{ label: getTabLabel(activeTab), active: true }]
       : []),
   ];
 
@@ -290,11 +308,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout }) {
       label: 'Disputes',
       content: <DisputesTab disputes={disputes} onApprove={handleApproveDispute} onReject={handleRejectDispute} />,
     },
-    {
-      id: 'leaves',
-      label: 'Leave Requests',
-      content: <LeaveRequestHub user={user} isAdmin={true} />,
-    },
+    // {
+    //   id: 'leaves',
+    //   label: 'Leave Requests',
+    //   content: <LeaveRequestHub user={user} isAdmin={true} />,
+    // },
     {
       id: 'holidays',
       label: 'Holidays',
@@ -320,7 +338,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout }) {
             onUpdate={handleUpdateEmployee}
             onShowHistory={handleShowHistory}
             onUpdatePassword={handleUpdatePassword}
-            onRefresh={fetchOverviewData}
+            onRefresh={() => { fetchOverviewData(); if (onRefresh) onRefresh(); }}
           />
         </div>
       ),
@@ -357,43 +375,6 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout }) {
             </Button>
           </div>
         </motion.div>
-
-        {/* Quick Stats */}
-        {activeTab === 'overview' && (
-          <motion.div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <StatCard
-              title="Total Staff"
-              value={stats.total_employees}
-              icon={Users}
-              trend={5}
-              trendLabel="active"
-              variant="default"
-            />
-            <StatCard
-              title="Present Today"
-              value={stats.present_today}
-              icon={CheckCircle2}
-              trend={8}
-              trendLabel="vs yesterday"
-              variant="success"
-            />
-            <StatCard
-              title="Absent"
-              value={stats.absent_today}
-              icon={AlertCircle}
-              trend={-3}
-              trendLabel="reduction"
-              variant="warning"
-            />
-            <StatCard
-              title="On Leave"
-              value={stats.on_leave}
-              icon={Calendar}
-              variant="primary"
-            />
-          </motion.div>
-        )}
-
         {/* Tab Navigation & Content */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -522,8 +503,8 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
                       <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">{record.user?.name || `Employee #${record.user_id}`}</td>
                         <td className="px-6 py-4 whitespace-nowrap">{new Date(record.date).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{record.check_in_time || '-'}</td>
-                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{record.check_out_time || '-'}</td>
+                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(record.check_in_time)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(record.check_out_time)}</td>
                         <td className="px-6 py-4 whitespace-nowrap">{record.total_hours?.toFixed(2) || '-'} hrs</td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <Badge

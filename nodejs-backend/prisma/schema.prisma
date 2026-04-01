@@ -192,7 +192,7 @@ model AuditLog {
   action     String
   details    String?
   created_at DateTime @default(now())
-  user       User?    @relation(fields: [user_id], references: [id])
+  user       User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("audit_logs")
 }
@@ -204,7 +204,7 @@ model MonitoringLog {
   timestamp      DateTime
   screenshot_b64 String?
   created_at     DateTime @default(now())
-  user           User?    @relation(fields: [user_id], references: [id])
+  user           User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("monitoring_logs")
 }

@@ -14,10 +14,10 @@ export const Modal = ({
 }) => {
   const sizes = {
     sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
-    '2xl': 'max-w-2xl',
+    md: 'md:w-1/2 w-[90%]',
+    lg: 'max-w-5xl',
+    xl: 'max-w-6xl',
+    '2xl': 'max-w-7xl',
   };
 
   return (
@@ -33,13 +33,14 @@ export const Modal = ({
             className="fixed inset-0 bg-black/50 z-40"
           />
 
-          {/* Modal */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            className={`fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white rounded-lg shadow-2xl z-50 w-full mx-4 ${sizes[size]}`}
-          >
+          {/* Modal Container */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className={`bg-white rounded-lg shadow-2xl relative w-full ${sizes[size]}`}
+            >
             {/* Header */}
             {(title || closeButton) && (
               <div className="flex items-center justify-between px-6 py-4 border-b border-neutral-200">
@@ -67,7 +68,8 @@ export const Modal = ({
                 {footer}
               </div>
             )}
-          </motion.div>
+            </motion.div>
+          </div>
         </>
       )}
     </AnimatePresence>

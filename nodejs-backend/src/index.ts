@@ -85,7 +85,11 @@ app.listen(PORT, () => {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       await AbsenceService.processDailyAbsences(tomorrow);
-      console.log(`[Cron] 5-minute global sync for today completed`);
+      
+      // Also cleanup any past pending records
+      await AbsenceService.processMissedAbsences();
+      
+      console.log(`[Cron] 5-minute global sync and cleanup completed`);
     } catch(err) {
       console.error(`[Cron] 5-minute sync failed`, err);
     }

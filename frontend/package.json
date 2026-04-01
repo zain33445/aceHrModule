@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "acehrm",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -46,16 +46,19 @@
   },
 
   "build": {
-  "appId": "com.ace.app",
-  "files": [
-    "dist/**/*",
-    "electron/**/*",
-    "main.js",
-    "package.json"
-  ],
-  "asar": true,
-  "win": {
-    "target": "nsis"
+    "appId": "com.ace.app",
+    "productName": "aceHRM",
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "main.js",
+      "package.json"
+    ],
+    "asar": true,
+    "icon": "public/aceLogo.png",
+    "win": {
+      "target": "nsis",
+      "icon": "public/aceLogo.png"
+    }
   }
-}
 }
