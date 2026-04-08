@@ -1,7 +1,7 @@
 {
   "name": "acehrm",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -9,12 +9,14 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron": "electron ."
+    "electron": "electron .",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "axios": "^1.13.6",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^12.36.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
@@ -44,7 +46,6 @@
     "tailwindcss": "^4.2.1",
     "vite": "^6.2.1"
   },
-
   "build": {
     "appId": "com.ace.app",
     "productName": "aceHRM",
@@ -56,9 +57,22 @@
     ],
     "asar": true,
     "icon": "public/aceLogo.png",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "zain33445",
+        "repo": "aceHrModule"
+      }
+    ],
+    "forceCodeSigning": false,
     "win": {
       "target": "nsis",
-      "icon": "public/aceLogo.png"
+      "icon": "public/aceLogo.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
