@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Filter, Calendar, ChevronDown } from 'lucide-react';
 import { Button } from './Button';
+import { formatDateLocal } from '../../utils/formatters';
 
 export const AttendanceFilters = ({ onFilterChange, employees = [], excludeCategories = [], showCategory = true }) => {
   const [category, setCategory] = useState('all');
@@ -26,11 +27,11 @@ export const AttendanceFilters = ({ onFilterChange, employees = [], excludeCateg
     const now = new Date();
 
     if (dateRange === 'current_month') {
-      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     } else if (dateRange === 'last_month') {
-      start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
-      end = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+      start = formatDateLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+      end = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 0));
     } else if (dateRange === 'custom') {
       start = customDates.start;
       end = customDates.end;

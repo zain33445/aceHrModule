@@ -16,3 +16,16 @@ export const formatTime12h = (timeStr) => {
   
   return `${h.toString().padStart(2, '0')}:${m} ${ampm}`;
 };
+
+/**
+ * Formats a Date object to YYYY-MM-DD string in local time
+ * @param {Date} date - Date object
+ * @returns {string} - Formatted date string (e.g., 2026-04-01)
+ */
+export const formatDateLocal = (date) => {
+  if (!date || !(date instanceof Date)) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};

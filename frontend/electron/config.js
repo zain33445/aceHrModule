@@ -9,7 +9,7 @@
 // Add more apps here as needed — just add the process name without .exe
 export const TARGET_APPS = [
   'PlanSwift',
-  'oomaphone',
+  'Ooma Office',
   'chrome',
   'chatgpt'
 ];
@@ -22,11 +22,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, '../.env');
 
-let envApiBase = 'http://localhost:5000/api'; // fallback
+let envApiBase = 'https://api.theaceservices.site/api'; // fallback
 if (fs.existsSync(envPath)) {
   const envContent = fs.readFileSync(envPath, 'utf8');
-  const match = envContent.match(/VITE_API_BASE=(.*)/);
-  if (match) envApiBase = match[1].trim();
+  // Match only lines that are NOT commented out with #
+  const lines = envContent.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('VITE_API_BASE=')) {
+      envApiBase = trimmed.split('=')[1].trim();
+      break;
+    }
+  }
 }
 
 // Backend API endpoint for uploading monitoring data
@@ -41,9 +48,9 @@ export const HOURLY_SCREENSHOT_INTERVAL_MS = 10 * 60 * 1000;
 
 // Retry configuration for failed uploads
 export const RETRY_CONFIG = {
-  maxRetries: 3,
+  maxRetries: 5,
   baseDelayMs: 1000, // exponential backoff: 1s, 2s, 4s
 };
 
-// Default userId — will be overridden from app auth if available
-export const DEFAULT_USER_ID = '15';
+// Default userId — will be null until overridden from app auth
+export const DEFAULT_USER_ID = null;

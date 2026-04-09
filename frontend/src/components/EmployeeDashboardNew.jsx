@@ -31,7 +31,7 @@ import { HolidayCalendar } from './calendar/HolidayCalendar';
 import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { SettingsTab } from './dashboard/SettingsTab';
-import { formatTime12h } from '../utils/formatters';
+import { formatTime12h, formatDateLocal } from '../utils/formatters';
 
 function EmployeeDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -72,23 +72,23 @@ function EmployeeDashboard({ user, onLogout }) {
     totalRecords: 0
   });
   const [attendanceFilters, setAttendanceFilters] = useState({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
+    startDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    endDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
     status: 'all'
   });
   const [salaryPaidFilters, setSalaryPaidFilters] = useState({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
+    startDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    endDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
     type: 'all'
   });
   const [salaryDeductionFilters, setSalaryDeductionFilters] = useState({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
+    startDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    endDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
     type: 'all'
   });
   const [disputeFilters, setDisputeFilters] = useState({
-    startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0],
+    startDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    endDate: formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)),
     category: 'all'
   });
   const [isSyncing, setIsSyncing] = useState(false);
@@ -167,8 +167,8 @@ function EmployeeDashboard({ user, onLogout }) {
     setLoading(true);
     try {
       const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      const start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      const end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
       const [repRes, attRecordsRes] = await Promise.all([
         api.getSalaryReport(start, end),
@@ -370,11 +370,6 @@ function EmployeeDashboard({ user, onLogout }) {
       label: 'Settings',
       content: <SettingsTab user={user} />,
     },
-    {
-      id: 'screenshots',
-      label: 'Screenshots',
-      content: <ScreenshotsTab user={user} />,
-    },
   ];
 
   return (
@@ -533,8 +528,8 @@ function EmployeeDashboard({ user, onLogout }) {
                   className="bg-neutral-50/50"
                   value={disputeForm.dispute_date}
                   onChange={(e) => setDisputeForm({ ...disputeForm, dispute_date: e.target.value })}
-                  min={new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]}
-                  max={new Date().toISOString().split('T')[0]}
+                  min={formatDateLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
+                  max={formatDateLocal(new Date())}
                 />
                 <div className="w-full">
                   <label className="block text-sm font-medium text-neutral-700 mb-2">Category Detail</label>
@@ -922,140 +917,5 @@ function DisputesTab({ disputes, loading, pagination, onFilterChange, onPageChan
   );
 }
 
-// Screenshots Tab Component
-function ScreenshotsTab({ user }) {
-  const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState('today');
-
-  useEffect(() => {
-    fetchLogs();
-  }, [filter]);
-
-  const fetchLogs = async () => {
-    setLoading(true);
-    try {
-      let startDate, endDate;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-
-      const beforeYesterday = new Date(today);
-      beforeYesterday.setDate(beforeYesterday.getDate() - 2);
-
-      if (filter === 'today') {
-        startDate = today.toISOString();
-        endDate = new Date(today.getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
-      } else if (filter === 'yesterday') {
-        startDate = yesterday.toISOString();
-        endDate = new Date(yesterday.getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
-      } else if (filter === 'beforeYesterday') {
-        startDate = beforeYesterday.toISOString();
-        endDate = new Date(beforeYesterday.getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
-      }
-      
-      const res = await api.getMonitoringLogs({ 
-        userId: user.user_id, 
-        startDate, 
-        endDate, 
-        includeScreenshot: true,
-        limit: 100 
-      });
-      // Only keep records that actually have a screenshot
-      const logsWithImages = (res.data.logs || []).filter(log => log.screenshot_b64);
-      setLogs(logsWithImages);
-    } catch (err) {
-      console.error('Failed to fetch screenshots', err);
-    }
-    setLoading(false);
-  };
-
-  return (
-    <SlideUp>
-      <Card>
-        <CardHeader className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <h3 className="text-lg font-semibold text-neutral-900 flex items-center gap-2">
-            <ImageIcon size={20} className="text-primary-600" />
-            My Screenshots
-          </h3>
-          <div className="flex bg-neutral-100 p-1 rounded-lg overflow-x-auto w-full sm:w-auto">
-            {[
-              { id: 'today', label: 'Today' },
-              { id: 'yesterday', label: 'Yesterday' },
-              { id: 'beforeYesterday', label: 'Day Before Yesterday' },
-              { id: 'all', label: 'All Time' }
-            ].map(f => (
-              <button
-                key={f.id}
-                onClick={() => setFilter(f.id)}
-                className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-all whitespace-nowrap ${
-                  filter === f.id ? 'bg-white text-primary-600 shadow-sm' : 'text-neutral-500 hover:text-neutral-700 hover:bg-neutral-200/50'
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </CardHeader>
-        <CardBody>
-          {loading ? (
-            <div className="text-center py-12 text-neutral-500">Loading screenshots...</div>
-          ) : logs.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {logs.map((log) => (
-                <motion.div 
-                  key={log.id}
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="rounded-lg overflow-hidden border border-neutral-200 bg-white group cursor-pointer shadow-sm hover:shadow-md transition-all"
-                  onClick={() => {
-                    if (log.screenshot_b64) {
-                      const win = window.open();
-                      win.document.write(`<body style="margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh;"><img src="data:image/jpeg;base64,${log.screenshot_b64}" style="max-width:100%;max-height:100vh;object-fit:contain;" /></body>`);
-                    }
-                  }}
-                >
-                  <div className="aspect-video bg-neutral-100 flex items-center justify-center overflow-hidden relative">
-                    {log.screenshot_b64 ? (
-                      <img 
-                        src={`data:image/jpeg;base64,${log.screenshot_b64}`} 
-                        alt="Screenshot" 
-                        loading="lazy"
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                    ) : (
-                      <span className="text-neutral-400">No Image Data</span>
-                    )}
-                    <div className="absolute top-2 right-2 px-2 py-1 text-xs font-semibold rounded bg-black/60 text-white backdrop-blur-sm">
-                      {log.app_name}
-                    </div>
-                  </div>
-                  <div className="p-3 bg-neutral-50 border-t border-neutral-100 flex justify-between items-center">
-                    <p className="text-sm font-semibold text-neutral-800">
-                      {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                    {filter === 'all' && (
-                      <p className="text-xs text-neutral-500">
-                        {new Date(log.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                      </p>
-                    )}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12 text-neutral-500 bg-neutral-50/50 rounded-lg border border-dashed border-neutral-200">
-              <ImageIcon size={48} className="mx-auto text-neutral-300 mb-3" />
-              <p className="font-medium text-neutral-600">No screenshots found</p>
-              <p className="text-sm text-neutral-400 mt-1">There are no monitoring records for the selected period.</p>
-            </div>
-          )}
-        </CardBody>
-      </Card>
-    </SlideUp>
-  );
-}
 
 export default EmployeeDashboard;

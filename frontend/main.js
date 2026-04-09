@@ -10,7 +10,8 @@
 
 import electronPkg from 'electron';
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog } = electronPkg;
-import { autoUpdater } from 'electron-updater';
+import electronUpdaterPkg from 'electron-updater';
+const { autoUpdater } = electronUpdaterPkg;
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -77,7 +78,7 @@ if (isDev) {
     mainWindow = null;
   });
 
-  mainWindow.webContents.openDevTools(); // optional for debugging
+  // mainWindow.webContents.openDevTools(); // optional for debugging
 }
 
 // ─────────────────────────────────────────

@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Bell, ChevronDown, LogOut } from 'lucide-react';
 import Avatar from '../common/Avatar';
+import aceLogo from '../../assets/aceLogo.png';
+
 
 export const Navbar = ({
   user,
@@ -41,7 +43,7 @@ export const Navbar = ({
             {/* Logo */}
             <div className="flex-shrink-0">
               <img 
-                src="/aceLogo.png" 
+                src={aceLogo} 
                 alt="aceLogo" 
                 className="w-10 h-10 object-contain rounded-lg"
               />

@@ -4,8 +4,11 @@ import { Lock, LogIn, AlertCircle, Hammer } from 'lucide-react';
 import { Button } from './common/Button';
 import { Input } from './common/Input';
 import api from '../services/api';
+import aceLogo from '../assets/aceLogo.png';
+
 
 function LoginNew({ onLoginSuccess }) {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -15,7 +18,7 @@ function LoginNew({ onLoginSuccess }) {
     setLoading(true);
     setError('');
     try {
-      const res = await api.login(password);
+      const res = await api.login(username, password);
       onLoginSuccess(res.data);
     } catch (err) {
       setError(err.response?.data?.detail || 'Invalid access key');
@@ -24,7 +27,7 @@ function LoginNew({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center bg-gradient-to-br from-neutral-50 to-neutral-100 overflow-hidden p-4">
+    <div className="min-h-screen relative flex items-center justify-center bg-gradient-to-br from-neutral-50 to-neutral-100 overflow-hidden">
 
       {/* Diagonal Lines Only */}
       <div className="absolute inset-0 z-0 pointer-events-none opacity-20">
@@ -45,17 +48,17 @@ function LoginNew({ onLoginSuccess }) {
         transition={{ duration: 0.4 }}
         className="relative z-10 w-full"
       >
-        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-neutral-200">
+        <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-neutral-200 w-1/2 m-auto">
 
           {/* Header */}
-          <div className="bg-gradient-to-r from-primary-500 to-primary-600 px-8 pt-12 pb-10 text-center">
+          <div className="bg-gradient-to-r from-primary-500 to-primary-600  pt-12 pb-10 text-center">
             <motion.div
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ delay: 0.2, type: 'spring' }}
-              className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm p-2"
+              className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-sm p-2"
             >
-              <img src="/aceLogo.png" alt="aceLogo" className="w-full h-full object-contain" />
+              <img src={aceLogo} alt="aceLogo" className="w-full h-full object-contain" />
             </motion.div>
 
             <motion.h1
@@ -64,7 +67,7 @@ function LoginNew({ onLoginSuccess }) {
               transition={{ delay: 0.3 }}
               className="text-3xl font-bold text-white mb-1"
             >
-              aceHRM
+              ACE-HRM
             </motion.h1>
 
             <motion.p
@@ -73,7 +76,7 @@ function LoginNew({ onLoginSuccess }) {
               transition={{ delay: 0.4 }}
               className="text-primary-100 text-sm font-medium"
             >
-              Building Better Teams
+              Building Better Future
             </motion.p>
           </div>
 
@@ -86,14 +89,23 @@ function LoginNew({ onLoginSuccess }) {
           >
             <form onSubmit={handleSubmit} className="space-y-6">
               <Input
-                label="Access Key"
+                label="Username"
+                type="text"
+                placeholder="Enter your username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                icon={LogIn} // Using LogIn as a placeholder for user icon or similar
+                autoFocus
+              />
+
+              <Input
+                label="Password"
                 type="password"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 icon={Lock}
                 error={error || undefined}
-                autoFocus
               />
 
               {error && (
@@ -128,22 +140,22 @@ function LoginNew({ onLoginSuccess }) {
             >
               <div className="flex items-center justify-center gap-1 mb-2">
                 <Hammer size={14} className="text-primary-500" />
-                <span>Construction Company HR Portal</span>
+                <span>The ACE Services HR Portal</span>
               </div>
-              <p>Secure access • Built for teams • 2026</p>
+              {/* <p>Secure access • Built for teams • 2026</p> */}
             </motion.div>
           </motion.div>
         </div>
 
         {/* Demo Hint */}
-        <motion.div
+        {/* <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.8 }}
           className="mt-6 text-center text-xs text-neutral-600"
         >
           <p>For demo: try any password</p>
-        </motion.div>
+        </motion.div> */}
       </motion.div>
     </div>
   );

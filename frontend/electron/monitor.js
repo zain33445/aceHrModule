@@ -8,6 +8,13 @@
  * 4. On close → Send 'check-out' (ends attendance mark)
  */
 
+import electronPkg from 'electron';
+const { Notification, app } = electronPkg;
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 import { getRunningTargetApps } from './detector.js';
 import { captureScreen } from './capture.js';
 import { uploadScreenshot } from './uploader.js';
@@ -52,7 +59,7 @@ export function startMonitor() {
 
   logger.info('=== Desktop Monitor & Attendance Sync Started ===');
   logger.info(`Polling interval: ${POLL_INTERVAL_MS}ms`);
-  logger.info(`Hourly screenshot interval: ${HOURLY_SCREENSHOT_INTERVAL_MS}ms`);
+  logger.info(`10-MIN screenshot interval: ${HOURLY_SCREENSHOT_INTERVAL_MS}ms`);
 
   pollTimer = setInterval(pollCycle, POLL_INTERVAL_MS);
 }
@@ -79,7 +86,7 @@ export function stopMonitor() {
 async function pollCycle() {
   try {
     const runningApps = await getRunningTargetApps();
-    logger.debug(`[MONITOR] Running apps detected: ${runningApps.join(', ')}`);
+    // logger.debug(`[MONITOR] Running apps detected: ${runningApps.join(', ')}`);
     const now = Date.now();
     const CHECKOUT_THRESHOLD = 15; // Grace period threshold (15 polls/seconds)
 
@@ -91,6 +98,12 @@ async function pollCycle() {
       const normalizedName = runningNormalized[i];
 
       if (!activeSessions.has(normalizedName)) {
+        // --- GUARD: Only check-in if we have a valid authenticated user ID ---
+        if (!currentUserId || currentUserId === '0' || currentUserId === '15') {
+          logger.debug(`[MONITOR] App ${appName} detected but waiting for authenticated user...`);
+          continue; 
+        }
+
         const startTime = new Date();
         activeSessions.set(normalizedName, { 
             startTime, 
@@ -101,8 +114,17 @@ async function pollCycle() {
 
         logger.info(`[ATTENDANCE] Check-in detected [User: ${currentUserId}]: ${appName} started at ${startTime.toISOString()}`);
         
+        // Desktop Notification
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Attendance Logged',
+            body: `Monitoring started for ${appName}. Your attendance has been recorded.`,
+            icon: path.join(__dirname, '..', app.isPackaged ? 'dist' : 'public', 'aceLogo.png')
+          }).show();
+        }
+        
         // Initial screenshot + Check-in event
-        // Delayed by 2 seconds to allow the application window to fully render
+        // Delayed by 10 seconds to allow the application window to fully render
         setTimeout(() => {
           handleScreenshotEvent(appName, startTime, 'check-in');
         }, 10000);
@@ -115,9 +137,9 @@ async function pollCycle() {
         session.missingCount = 0;
 
         if (now - session.lastScreenshotTime >= HOURLY_SCREENSHOT_INTERVAL_MS) {
-            logger.info(`[MONITOR] Hourly screenshot trigger for ${session.originalName}`);
+            logger.info(`[MONITOR] 10-MIN screenshot trigger for ${session.originalName}`);
             session.lastScreenshotTime = now;
-            handleScreenshotEvent(session.originalName, new Date(now), 'hourly');
+            handleScreenshotEvent(session.originalName, new Date(now), 'PERIODIC');
         }
       }
     }

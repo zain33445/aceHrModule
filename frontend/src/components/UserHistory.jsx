@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Clock, Calendar } from 'lucide-react';
 import api from '../services/api';
-import { formatTime12h } from '../utils/formatters';
+import { formatTime12h, formatDateLocal } from '../utils/formatters';
 
 function UserHistory({ user, onBack }) {
   const [logs, setLogs] = useState([]);
@@ -21,11 +21,11 @@ function UserHistory({ user, onBack }) {
 
       const now = new Date();
       if (filterType === 'current') {
-        start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-        end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+        start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+        end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
       } else if (filterType === 'previous') {
-        start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
-        end = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+        start = formatDateLocal(new Date(now.getFullYear(), now.getMonth() - 1, 1));
+        end = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 0));
       } else if (filterType === 'custom' && customRange.start && customRange.end) {
         start = customRange.start;
         end = customRange.end;

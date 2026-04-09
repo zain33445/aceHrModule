@@ -1,12 +1,67 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trash2, UserPlus, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import api from '../services/api';
 
 function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, onRefresh }) {
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newEmp, setNewEmp] = useState({ id: '', name: '', monthly_salary: 0, leave_bank: 5, password: '1234' });
+  const [newEmp, setNewEmp] = useState({ id: '', username: '', name: '', monthly_salary: 0, leave_bank: 5, password: '1234', role: 'employee', department_id: '' });
+  const [departments, setDepartments] = useState([]);
   const [showPasswords, setShowPasswords] = useState({});
   const [error, setError] = useState('');
+  const [editedValues, setEditedValues] = useState({});
+  const [ribbon, setRibbon] = useState({ type: '', text: '', show: false });
+
+  useEffect(() => {
+    fetchDepartments();
+  }, []);
+
+  const fetchDepartments = async () => {
+    try {
+      const res = await api.getDepartments();
+      setDepartments(res.data || []);
+    } catch (err) {
+      console.error("Failed to fetch departments", err);
+    }
+  };
+
+  const handleEdit = (id, field, value) => {
+    setEditedValues(prev => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const handleApply = async (emp) => {
+    const edits = editedValues[emp.id] || {};
+    try {
+      if (edits.monthly_salary !== undefined) {
+        await api.updateEmployee(emp.id, edits.monthly_salary);
+      }
+      if (edits.leave_bank !== undefined) {
+        await api.updateLeaves(emp.id, edits.leave_bank);
+      }
+      
+      setRibbon({ type: 'success', text: 'Parameters updated successfully', show: true });
+      setTimeout(() => setRibbon({ type: '', text: '', show: false }), 2000);
+      
+      setEditedValues(prev => {
+        const next = { ...prev };
+        delete next[emp.id];
+        return next;
+      });
+
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      setRibbon({ 
+        type: 'error', 
+        text: err.response?.data?.detail || err.response?.data?.error || err.message || 'Failed to update', 
+        show: true 
+      });
+    }
+  };
 
   const togglePassword = (id) => {
     setShowPasswords(prev => ({ ...prev, [id]: !prev[id] }));
@@ -22,7 +77,7 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
     try {
       await api.createEmployee(newEmp);
       setShowAddForm(false);
-      setNewEmp({ id: '', name: '', monthly_salary: 0, leave_bank: 5, password: '1234' });
+      setNewEmp({ id: '', username: '', name: '', monthly_salary: 0, leave_bank: 5, password: '1234', role: 'employee', department_id: '' });
       window.location.reload();
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create employee');
@@ -42,6 +97,23 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      {/* Ribbon Notification */}
+      {ribbon.show && (
+        <div style={{
+          position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999,
+          padding: '12px 24px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '12px',
+          background: ribbon.type === 'success' ? '#10b981' : '#ef4444', color: '#fff',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+        }}>
+          <span>{ribbon.text}</span>
+          {ribbon.type === 'error' && (
+            <button onClick={() => setRibbon({ show: false })} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '18px', lineHeight: '1' }}>
+              &times;
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Add Employee Form Toggle */}
       <div className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
@@ -76,11 +148,42 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
               />
             </div>
             <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Username</label>
+              <input
+                type="text" className="input-field" placeholder="johndoe"
+                value={newEmp.username} onChange={e => setNewEmp({ ...newEmp, username: e.target.value })}
+              />
+            </div>
+            <div>
               <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Login Password</label>
               <input
                 type="text" className="input-field" placeholder="1234"
                 value={newEmp.password} onChange={e => setNewEmp({ ...newEmp, password: e.target.value })}
               />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Role</label>
+              <select 
+                className="input-field" 
+                value={newEmp.role} 
+                onChange={e => setNewEmp({ ...newEmp, role: e.target.value })}
+              >
+                <option value="employee">Employee</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Department</label>
+              <select 
+                className="input-field" 
+                value={newEmp.department_id} 
+                onChange={e => setNewEmp({ ...newEmp, department_id: e.target.value })}
+              >
+                <option value="">Select Department</option>
+                {departments.map(dep => (
+                  <option key={dep.id} value={dep.id}>{dep.name}</option>
+                ))}
+              </select>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Create Record</button>
@@ -115,19 +218,19 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
                     <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Rs.</span>
                     <input
                       type="number"
-                      className="input-field"
+                      className="input-field no-spinners"
                       defaultValue={emp.monthly_salary}
-                      onBlur={(e) => onUpdate(emp.id, e.target.value, 'monthly_salary')}
-                      style={{ width: '100px' }}
+                      onChange={(e) => handleEdit(emp.id, 'monthly_salary', e.target.value)}
+                      style={{ width: '150px' }}
                     />
                   </div>
                 </td>
                 <td>
                   <input
                     type="number"
-                    className="input-field"
+                    className="input-field no-spinners"
                     defaultValue={emp.leave_bank}
-                    onBlur={(e) => onUpdate(emp.id, e.target.value, 'leave_bank')}
+                    onChange={(e) => handleEdit(emp.id, 'leave_bank', e.target.value)}
                     style={{ width: '80px' }}
                   />
                 </td>
@@ -154,9 +257,9 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
                     <button
                       className="btn btn-primary"
                       style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
-                      onClick={() => onShowHistory(emp)}
+                      onClick={() => handleApply(emp)}
                     >
-                      History
+                      Apply
                     </button>
                     <button
                       className="btn"

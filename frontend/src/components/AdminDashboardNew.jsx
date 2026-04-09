@@ -30,6 +30,7 @@ import { HolidayCalendar } from './calendar/HolidayCalendar';
 import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { AuditLogTab } from './audit/AuditLogTab';
 import { DataExportPanel } from './export/DataExportPanel';
+import ScreenshotsTab from './dashboard/ScreenshotsTab';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { formatTime12h } from '../utils/formatters';
 
@@ -327,6 +328,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       id: 'audit',
       label: 'Audit Logs',
       content: <AuditLogTab />,
+    },
+    {
+      id: 'screenshots',
+      label: 'Screenshots',
+      content: <ScreenshotsTab isAdmin={true} employees={employees} />,
     },
     {
       id: 'employees',

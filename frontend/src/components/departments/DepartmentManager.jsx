@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Building2, Plus, Edit2, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Button } from '../common/Button';
-import { Modal, Input } from '../common';
+import { Modal, Input, Badge } from '../common';
 import api from '../../services/api';
 
 export const DepartmentManager = () => {
@@ -12,6 +12,7 @@ export const DepartmentManager = () => {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ name: '', shift_id: '' });
   const [editingId, setEditingId] = useState(null);
+  const [selectedDept, setSelectedDept] = useState(null);
 
   const fetchDepartments = async () => {
     try {
@@ -81,17 +82,27 @@ export const DepartmentManager = () => {
           <p className="text-neutral-500 col-span-3">No departments found.</p>
         ) : (
           departments.map((dept) => (
-            <Card key={dept.id} className="relative group">
+            <Card 
+              key={dept.id} 
+              className="relative group cursor-pointer hover:ring-2 hover:ring-primary-500 transition-all"
+              onClick={() => setSelectedDept(dept)}
+            >
               <CardBody className="p-6">
                 <div className="flex justify-between items-start mb-4">
                   <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
                     <Building2 className="w-6 h-6 text-primary-600" />
                   </div>
                   <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(dept)} className="p-1.5 text-neutral-400 hover:text-blue-600 transition-colors">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); openEdit(dept); }} 
+                      className="p-1.5 text-neutral-400 hover:text-blue-600 transition-colors"
+                    >
                       <Edit2 size={16} />
                     </button>
-                    <button onClick={() => handleDelete(dept.id)} className="p-1.5 text-neutral-400 hover:text-red-600 transition-colors">
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDelete(dept.id); }} 
+                      className="p-1.5 text-neutral-400 hover:text-red-600 transition-colors"
+                    >
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -136,6 +147,39 @@ export const DepartmentManager = () => {
               <Button type="submit">Save</Button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {selectedDept && (
+        <Modal
+          isOpen={true}
+          title={`Employees in ${selectedDept.name}`}
+          onClose={() => setSelectedDept(null)}
+        >
+          <div className="space-y-4">
+            {selectedDept.users && selectedDept.users.length > 0 ? (
+              <div className="divide-y divide-neutral-100">
+                {selectedDept.users.map((user) => (
+                  <div key={user.id} className="py-3 flex justify-between items-center">
+                    <div>
+                      <p className="font-medium text-neutral-900">{user.name}</p>
+                      <p className="text-xs text-neutral-500 uppercase tracking-wider">{user.role}</p>
+                    </div>
+                    <Badge variant={user.role === 'admin' ? 'primary' : 'neutral'}>
+                      {user.id}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <p className="text-neutral-500">No employees assigned to this department.</p>
+              </div>
+            )}
+            <div className="flex justify-end pt-4">
+              <Button variant="outline" onClick={() => setSelectedDept(null)}>Close</Button>
+            </div>
+          </div>
         </Modal>
       )}
     </motion.div>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Activity, LayoutDashboard, Users, DollarSign, Clock, LogOut } from 'lucide-react';
 import api from './services/api';
+import { formatDateLocal } from './utils/formatters';
+
 import StaffManager from './components/StaffManager';
 import PayrollExpert from './components/PayrollExpert';
 import UserHistory from './components/UserHistory';
@@ -26,10 +28,9 @@ function App() {
       let start = null;
       let end = null;
 
-      const now = new Date();
       // Set default to current month
-      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-      end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
       if (activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'salary') {
         const [empRes, repRes] = await Promise.all([

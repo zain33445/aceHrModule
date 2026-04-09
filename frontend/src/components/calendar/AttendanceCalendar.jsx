@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Button } from '../common/Button';
+import { formatDateLocal } from '../../utils/formatters';
 
 // Utility to get calendar grid days
 const getDaysInMonth = (year, month) => {
@@ -36,19 +37,19 @@ export const AttendanceCalendar = ({ logs = [], holidays = [], absences = [] }) 
   
   // map logs (late, present, halfday)
   (logs || []).forEach(log => {
-    const d = new Date(log.timestamp).toISOString().split('T')[0];
+    const d = formatDateLocal(new Date(log.timestamp));
     dateStatusMap[d] = log.status || 'present';
   });
 
   // map absences (absent, leave)
   (absences || []).forEach(abs => {
-    const d = new Date(abs.date).toISOString().split('T')[0];
+    const d = formatDateLocal(new Date(abs.date));
     dateStatusMap[d] = abs.category === 'leave' ? 'leave' : 'absent';
   });
 
   // map holidays
   (holidays || []).forEach(hol => {
-    const d = new Date(hol.date).toISOString().split('T')[0];
+    const d = formatDateLocal(new Date(hol.date));
     dateStatusMap[d] = 'holiday';
   });
 
@@ -98,8 +99,8 @@ export const AttendanceCalendar = ({ logs = [], holidays = [], absences = [] }) 
               <div key={`pad-${i}`} className="aspect-square rounded-xl bg-neutral-50/50"></div>
             ))}
             {daysInMonth.map((day) => {
-              const dateStr = day.toISOString().split('T')[0];
-              const isToday = new Date().toISOString().split('T')[0] === dateStr;
+              const dateStr = formatDateLocal(day);
+              const isToday = formatDateLocal(new Date()) === dateStr;
               const status = dateStatusMap[dateStr];
               
               return (
