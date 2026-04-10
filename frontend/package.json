@@ -1,7 +1,7 @@
 {
   "name": "acehrm",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -50,11 +50,14 @@
     "appId": "com.ace.app",
     "productName": "aceHRM",
     "files": [
-      "dist/**/*",
+      "dist_build/**/*",
       "electron/**/*",
       "main.js",
       "package.json"
     ],
+    "directories": {
+      "output": "release"
+    },
     "asar": true,
     "icon": "public/aceLogo.png",
     "publish": [

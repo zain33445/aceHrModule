@@ -11,6 +11,7 @@ export const Navbar = ({
   breadcrumbs = [],
   notifications = [],
   onNotificationClick,
+  onTabChange,
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);

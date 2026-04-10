@@ -15,16 +15,18 @@ router.get('/', async (req, res) => {
 
 // Create an employee
 router.post('/', async (req, res) => {
-  const { user_id, name, monthly_salary, leave_bank, password } = req.body;
+  const { user_id, username, name, monthly_salary, leave_bank, password, role, department_id } = req.body;
   try {
     const user = await prisma.user.create({
       data: {
         id: String(user_id),
+        username: username || String(user_id),
         name,
-        monthly_salary: monthly_salary || 0.0,
-        leave_bank: leave_bank || 5,
+        monthly_salary: parseFloat(monthly_salary) || 0.0,
+        leave_bank: parseInt(leave_bank) || 5,
         password_hash: password || '1234',
-        role: 'employee'
+        role: role || 'employee',
+        department_id: department_id ? parseInt(department_id) : null
       }
     });
 

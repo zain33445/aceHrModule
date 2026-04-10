@@ -8,10 +8,8 @@
 // List of process names to monitor (case-insensitive matching)
 // Add more apps here as needed — just add the process name without .exe
 export const TARGET_APPS = [
-  'PlanSwift',
+  'Plan Swift',
   'Ooma Office',
-  'chrome',
-  'chatgpt'
 ];
 
 import fs from 'fs';

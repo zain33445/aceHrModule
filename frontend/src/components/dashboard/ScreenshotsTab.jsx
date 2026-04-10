@@ -98,15 +98,12 @@ const ScreenshotsTab = ({ user, isAdmin = false, employees = [] }) => {
                 <div className="relative">
                   <Select
                     value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    onChange={setSelectedUserId}
                     className="w-full"
                     icon={User}
-                  >
-                    <option value="">Choose an employee...</option>
-                    {employees.map(emp => (
-                      <option key={emp.id} value={emp.id}>{emp.name} ({emp.id})</option>
-                    ))}
-                  </Select>
+                    placeholder="Choose an employee..."
+                    options={employees.map(emp => ({ value: emp.id, label: `${emp.name} (${emp.id})` }))}
+                  />
                 </div>
               </div>
               <Button 

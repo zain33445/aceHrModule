@@ -5,14 +5,17 @@ const router = Router();
 
 // Basic login logic compatible with the old Python API
 router.post('/login', async (req, res) => {
-  const { password } = req.body;
+  const { username, password } = req.body;
   try {
     const user = await prisma.user.findFirst({
-      where: { password_hash: password }
+      where: { 
+        username: username,
+        password_hash: password 
+      }
     });
     
     if (!user) {
-      return res.status(401).json({ detail: "Invalid password" });
+      return res.status(401).json({ detail: "Invalid username or password" });
     }
 
     res.json({

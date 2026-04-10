@@ -412,9 +412,9 @@ function OverviewTab({ stats, absences, loading }) {
           <CardBody>
             {loading ? (
               <div className="text-center py-8">Loading...</div>
-            ) : absences?.length > 0 ? (
+            ) : absences?.filter(record => record.status !== 'weekend').length > 0 ? (
               <div className="space-y-3">
-                {absences.slice(0, 6).map((record, idx) => (
+                {absences.filter(record => record.status !== 'weekend').slice(0, 6).map((record, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, x: -20 }}
@@ -505,7 +505,7 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
-                    {absences?.map((record, idx) => (
+                    {absences?.filter(record => record.status !== 'weekend').map((record, idx) => (
                       <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">{record.user?.name || `Employee #${record.user_id}`}</td>
                         <td className="px-6 py-4 whitespace-nowrap">{new Date(record.date).toLocaleDateString()}</td>

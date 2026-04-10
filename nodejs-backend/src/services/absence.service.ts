@@ -263,7 +263,7 @@ export class AbsenceService {
       let shiftType: 'day' | 'night' = 'day';
 
       if (isWeekend) {
-        status = 'holiday';
+        status = 'weekend';
       } else if (!checkInTime && !checkOutTime) {
         // Rule 1 & 2 Logic (No punches)
         if (isToday) {
@@ -296,24 +296,10 @@ export class AbsenceService {
       });
 
       if (existingRecord) {
-        // Merge strategy: Earliest Check-in, Latest Check-out
-        let finalCheckIn = checkInTime;
-        if (existingRecord.check_in_time && checkInTime) {
-          const existingMinutes = this.timeToMinutes(existingRecord.check_in_time);
-          const newMinutes = this.timeToMinutes(checkInTime);
-          finalCheckIn = existingMinutes < newMinutes ? existingRecord.check_in_time : checkInTime;
-        } else if (existingRecord.check_in_time) {
-          finalCheckIn = existingRecord.check_in_time;
-        }
-
-        let finalCheckOut = checkOutTime;
-        if (existingRecord.check_out_time && checkOutTime) {
-          const existingMinutes = this.timeToMinutes(existingRecord.check_out_time);
-          const newMinutes = this.timeToMinutes(checkOutTime);
-          finalCheckOut = existingMinutes > newMinutes ? existingRecord.check_out_time : checkOutTime;
-        } else if (existingRecord.check_out_time) {
-          finalCheckOut = existingRecord.check_out_time;
-        }
+        // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
+        let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
+        
+        let finalCheckOut = checkOutTime ? checkOutTime : existingRecord.check_out_time;
 
         // Recalculate status based on the merged earliest check-in
         let finalStatus = status;
@@ -461,7 +447,7 @@ export class AbsenceService {
         await prisma.attendanceRecord.create({
           data: {
             user_id: userId,
-            status: 'holiday',
+            status: 'weekend',
             date: date,
             is_late: false,
             is_halfday: false
@@ -470,7 +456,7 @@ export class AbsenceService {
       } else if (weekendRec.check_in_time === null && weekendRec.check_out_time === null) {
         await prisma.attendanceRecord.update({
           where: { id: weekendRec.id },
-          data: { status: 'holiday', is_late: false, is_halfday: false }
+          data: { status: 'weekend', is_late: false, is_halfday: false }
         });
       }
       // If check_in/out already set (employee worked on weekend), preserve them.

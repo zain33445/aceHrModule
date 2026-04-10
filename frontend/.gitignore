@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+dist_build
+release
+win-unpacked
 
 # Editor directories and files
 .vscode/*

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { 
+import import { Modal, Input, Select, Textarea, Pagination } from './common';
+{ 
   Clock, 
   DollarSign, 
   AlertCircle, 
@@ -23,7 +24,6 @@ import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
 import { SlideUp, StaggerChildren } from './animations';
 import api from '../services/api';
 import { AttendanceFilters } from './common/AttendanceFilters';
-import { Modal, Input, Select, Textarea, Pagination } from './common';
 import { Send, Calendar as CalendarIcon, Tag, MessageSquare, Info, AlertOctagon, Watch, Sunset, Home, Image as ImageIcon } from 'lucide-react';
 
 import { AttendanceCalendar } from './calendar/AttendanceCalendar';
@@ -576,9 +576,9 @@ function OverviewTab({ stats, logs, loading }) {
           <CardBody>
             {loading ? (
               <div className="text-center py-8 text-neutral-500">Loading...</div>
-            ) : logs?.length > 0 ? (
+            ) : logs?.filter(log => log.status !== 'weekend').length > 0 ? (
               <div className="space-y-4">
-                {logs.slice(0, 5).map((log, idx) => (
+                {logs.filter(log => log.status !== 'weekend').slice(0, 5).map((log, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, x: -20 }}
@@ -659,7 +659,7 @@ function AttendanceTab({ absences, loading, pagination, onFilterChange, onPageCh
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
-                    {absences?.map((log, idx) => (
+                    {absences?.filter(log => log.status !== 'weekend').map((log, idx) => (
                       <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
                         <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(log.check_in_time)}</td>

@@ -27,6 +27,7 @@ function App() {
     try {
       let start = null;
       let end = null;
+      const now = new Date();
 
       // Set default to current month
       start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
