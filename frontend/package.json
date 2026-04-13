@@ -1,7 +1,7 @@
 {
   "name": "acehrm",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "main": "main.js",
   "scripts": {
@@ -13,6 +13,7 @@
     "dist": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@emotion/is-prop-valid": "^1.4.0",
     "axios": "^1.13.6",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
