@@ -85,10 +85,10 @@ const api = {
   getPendingDisputes: () => axios.get(`${API_BASE}/disputes/pending`),
   getAdminDisputes: () => axios.get(`${API_BASE}/disputes/pending`),
   getAllDisputes: () => axios.get(`${API_BASE}/disputes`),
-  approveDispute: (disputeId, remarks) =>
-    axios.put(`${API_BASE}/disputes/${disputeId}/approve`, { remarks }),
-  rejectDispute: (disputeId, remarks) =>
-    axios.put(`${API_BASE}/disputes/${disputeId}/reject`, { remarks }),
+  approveDispute: (disputeId, remarks, approvedBy) =>
+    axios.put(`${API_BASE}/disputes/${disputeId}/approve`, { remarks, approved_by: approvedBy }),
+  rejectDispute: (disputeId, remarks, approvedBy) =>
+    axios.put(`${API_BASE}/disputes/${disputeId}/reject`, { remarks, approved_by: approvedBy }),
 
   // Salary History
   getUserSalaryHistory: (userId, startDate, endDate, page = 1, limit = 20) => {

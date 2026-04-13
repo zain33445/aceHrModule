@@ -91,9 +91,13 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       const res = await api.getNotifications(user.user_id);
       setNotifications((res.data || []).map(n => ({
         id: n.id,
+        type: n.type,
         title: n.type === 'new_dispute' ? 'New Dispute' :
                n.type === 'dispute_approved' ? 'Dispute Approved' :
-               n.type === 'dispute_rejected' ? 'Dispute Rejected' : 'Notification',
+               n.type === 'dispute_rejected' ? 'Dispute Rejected' : 
+               n.type === 'new_leave_request' ? 'New Leave Request' :
+               n.type === 'leave_approved' ? 'Leave Approved' :
+               n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
         message: n.message,
         read: n.is_read,
         created_at: n.created_at
@@ -117,6 +121,13 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       } catch (err) {
         console.error('Error marking notification as read:', err);
       }
+    }
+    
+    // Switch tab based on notification type
+    if (notif.type === 'new_dispute' || notif.type === 'dispute_approved' || notif.type === 'dispute_rejected') {
+      setActiveTab('disputes');
+    } else if (notif.type === 'new_leave_request' || notif.type === 'leave_approved' || notif.type === 'leave_rejected') {
+      setActiveTab('leaves');
     }
   };
 
@@ -203,7 +214,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
   const handleApproveDispute = async (id) => {
     if (!window.confirm('Are you sure you want to approve this dispute?')) return;
     try {
-      await api.approveDispute(id, 'Approved by Admin');
+      await api.approveDispute(id, 'Approved by Admin', user.user_id);
       fetchDisputeData();
     } catch (err) {
       alert('Failed to approve dispute');
@@ -214,7 +225,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     const remarks = window.prompt('Enter rejection remarks:');
     if (remarks === null) return;
     try {
-      await api.rejectDispute(id, remarks);
+      await api.rejectDispute(id, remarks, user.user_id);
       fetchDisputeData();
     } catch (err) {
       alert('Failed to reject dispute');
@@ -412,9 +423,9 @@ function OverviewTab({ stats, absences, loading }) {
           <CardBody>
             {loading ? (
               <div className="text-center py-8">Loading...</div>
-            ) : absences?.filter(record => record.status !== 'weekend').length > 0 ? (
+            ) : (Array.isArray(absences) ? absences : []).filter(record => record.status !== 'weekend').length > 0 ? (
               <div className="space-y-3">
-                {absences.filter(record => record.status !== 'weekend').slice(0, 6).map((record, idx) => (
+                {(Array.isArray(absences) ? absences : []).filter(record => record.status !== 'weekend').slice(0, 6).map((record, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, x: -20 }}

@@ -8,9 +8,12 @@ router.post('/login', async (req, res) => {
   const { username, password } = req.body;
   try {
     const user = await prisma.user.findFirst({
-      where: { 
-        username: username,
-        password_hash: password 
+      where: {
+        OR: [
+          { username: username },
+          { id: username }
+        ],
+        password_hash: password
       }
     });
     

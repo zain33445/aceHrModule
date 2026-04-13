@@ -38,7 +38,7 @@ const getIconPath = () => {
   } else {
     // In production, assets are typically next to the app or in resources
     // Depending on builder config, but usually dist contains it.
-    return path.join(__dirname, 'dist', 'aceLogo.png');
+    return path.join(__dirname, 'dist_build', 'aceLogo.png');
   }
 };
 
@@ -61,7 +61,7 @@ if (isDev) {
   mainWindow.loadURL('http://localhost:5173');
 } else {
   // Production: load from ASAR
-  const indexPath = path.join(__dirname, 'dist', 'index.html'); 
+  const indexPath = path.join(__dirname, 'dist_build', 'index.html'); 
   mainWindow.loadFile(indexPath);
 }
 

@@ -87,7 +87,7 @@ export class DisputeService {
   }
 
   // Approve a dispute and restore salary deductions
-  static async approveDispute(disputeId: number, remarks: string = '') {
+  static async approveDispute(disputeId: number, approvedBy: string, remarks: string = '') {
     const dispute = await prisma.dispute.findUnique({
       where: { id: disputeId },
       include: {
@@ -113,7 +113,7 @@ export class DisputeService {
       where: { id: disputeId },
       data: {
         status: 'approved',
-        approved_by: 'admin',
+        approved_by: approvedBy,
         remarks,
         date_of_approve: new Date()
       },
@@ -167,7 +167,7 @@ export class DisputeService {
   }
 
   // Reject a dispute
-  static async rejectDispute(disputeId: number, remarks: string = '') {
+  static async rejectDispute(disputeId: number, approvedBy: string, remarks: string = '') {
     const dispute = await prisma.dispute.findUnique({
       where: { id: disputeId }
     });
@@ -176,7 +176,7 @@ export class DisputeService {
       where: { id: disputeId },
       data: {
         status: 'rejected',
-        approved_by: 'admin',
+        approved_by: approvedBy,
         remarks,
         date_of_approve: new Date()
       },

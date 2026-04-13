@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import import { Modal, Input, Select, Textarea, Pagination } from './common';
-{ 
+import { 
   Clock, 
   DollarSign, 
   AlertCircle, 
@@ -24,6 +23,7 @@ import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
 import { SlideUp, StaggerChildren } from './animations';
 import api from '../services/api';
 import { AttendanceFilters } from './common/AttendanceFilters';
+import { Modal, Input, Select, Textarea, Pagination } from './common';
 import { Send, Calendar as CalendarIcon, Tag, MessageSquare, Info, AlertOctagon, Watch, Sunset, Home, Image as ImageIcon } from 'lucide-react';
 
 import { AttendanceCalendar } from './calendar/AttendanceCalendar';
@@ -135,8 +135,11 @@ function EmployeeDashboard({ user, onLogout }) {
       const res = await api.getNotifications(user.user_id);
       setNotifications((res.data || []).map(n => ({
         id: n.id,
+        type: n.type,
         title: n.type === 'dispute_approved' ? 'Dispute Approved' :
-               n.type === 'dispute_rejected' ? 'Dispute Rejected' : 'Notification',
+               n.type === 'dispute_rejected' ? 'Dispute Rejected' : 
+               n.type === 'leave_approved' ? 'Leave Approved' :
+               n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
         message: n.message,
         read: n.is_read,
         created_at: n.created_at
@@ -160,6 +163,13 @@ function EmployeeDashboard({ user, onLogout }) {
       } catch (err) {
         console.error('Error marking notification as read:', err);
       }
+    }
+
+    // Switch tab based on notification type
+    if (notif.type === 'dispute_approved' || notif.type === 'dispute_rejected') {
+      setActiveTab('disputes');
+    } else if (notif.type === 'leave_approved' || notif.type === 'leave_rejected') {
+      setActiveTab('attendance'); // Or a separate 'leaves' tab if one exists
     }
   };
 
@@ -576,9 +586,9 @@ function OverviewTab({ stats, logs, loading }) {
           <CardBody>
             {loading ? (
               <div className="text-center py-8 text-neutral-500">Loading...</div>
-            ) : logs?.filter(log => log.status !== 'weekend').length > 0 ? (
+            ) : (Array.isArray(logs) ? logs : []).filter(log => log.status !== 'weekend').length > 0 ? (
               <div className="space-y-4">
-                {logs.filter(log => log.status !== 'weekend').slice(0, 5).map((log, idx) => (
+                {(Array.isArray(logs) ? logs : []).filter(log => log.status !== 'weekend').slice(0, 5).map((log, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, x: -20 }}
@@ -659,7 +669,7 @@ function AttendanceTab({ absences, loading, pagination, onFilterChange, onPageCh
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
-                    {absences?.filter(log => log.status !== 'weekend').map((log, idx) => (
+                    {(Array.isArray(absences) ? absences : []).filter(log => log.status !== 'weekend').map((log, idx) => (
                       <tr key={idx} className="hover:bg-neutral-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
                         <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(log.check_in_time)}</td>

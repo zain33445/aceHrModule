@@ -277,6 +277,7 @@ router.put('/:id/approve', async (req, res) => {
   try {
     const dispute = await DisputeService.approveDispute(
       parseInt(id),
+      approved_by || 'admin',
       remarks || ''
     );
 
@@ -294,6 +295,7 @@ router.put('/:id/reject', async (req, res) => {
   try {
     const dispute = await DisputeService.rejectDispute(
       parseInt(id),
+      approved_by || 'admin',
       remarks || ''
     );
 
