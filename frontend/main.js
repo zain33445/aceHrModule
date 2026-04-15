@@ -207,6 +207,11 @@ function setupAutoUpdater() {
 // 4. App Lifecycle
 // ─────────────────────────────────────────
 app.whenReady().then(() => {
+  // Set the AppUserModelId for Windows taskbar icon grouping
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.ace.app');
+  }
+
   logger.info('=== aceHRM Electron App Starting ===');
 
   // Create the main window
