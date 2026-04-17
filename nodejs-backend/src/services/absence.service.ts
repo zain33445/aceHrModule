@@ -207,9 +207,9 @@ export class AbsenceService {
    */
   private static async calculateAndRecordAttendance(userId: string, targetDateRaw: Date, attendanceLogs: any[], monthlySalary: number, userShift?: any) {
     try {
-      // FORCE absolute pure YYYY-MM-DD midnight UTC representation to mathematically prevent ms-precision duplicates entirely.
+      // FORCE absolute pure YYYY-MM-DD noon UTC representation to mathematically prevent ms-precision duplicates entirely.
       const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-      const date = new Date(localDateStr + "T00:00:00.000Z");
+      const date = new Date(localDateStr + "T12:00:00.000Z");
       
       // Use provided shift or fallback to first shift
       const shift = userShift || await prisma.shift.findFirst();
@@ -420,9 +420,9 @@ export class AbsenceService {
    * Process absence for a specific user on a specific date (no attendance logs)
    */
   private static async processAttendance(userId: string, targetDateRaw: Date, monthlySalary: number, userShift?: any) {
-    // FORCE absolute pure YYYY-MM-DD midnight UTC representation
+    // FORCE absolute pure YYYY-MM-DD noon UTC representation
     const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    const date = new Date(localDateStr + "T00:00:00.000Z");
+    const date = new Date(localDateStr + "T12:00:00.000Z");
     
     // Use provided shift or fallback to first shift
     const shift = userShift || await prisma.shift.findFirst();
