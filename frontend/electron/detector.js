@@ -1,9 +1,8 @@
 /**
  * detector.js — Active Window Detection Module
  * 
- * Uses PowerShell + Win32 API to detect the currently active foreground window.
- * Also queries all running processes to find target apps.
- * No external npm dependencies required.
+ * Uses the native Windows `tasklist` command for lightweight process detection.
+ * Avoids spawning heavy PowerShell instances on every poll cycle.
  */
 
 import { exec } from 'child_process';
@@ -11,8 +10,64 @@ import { TARGET_APPS } from './config.js';
 import { logger } from './logger.js';
 
 /**
+ * Check all running processes and return which target apps are currently running.
+ * Uses the native `tasklist` command (fast, lightweight) instead of PowerShell.
+ * @returns {Promise<string[]>} Array of running target app names
+ */
+export function getRunningTargetApps() {
+  return new Promise((resolve) => {
+    // tasklist is a native Windows command — much lighter than PowerShell
+    // /FO CSV = CSV format for easy parsing
+    // /NH = No header row
+    exec(
+      'tasklist /FO CSV /NH',
+      { timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true },
+      (err, stdout) => {
+        if (err) {
+          logger.error(`Detector tasklist error: ${err.message}`);
+          resolve([]);
+          return;
+        }
+
+        // Parse CSV output: each line is like "processname.exe","PID","Session","SessionNum","MemUsage"
+        const runningProcesses = stdout
+          .split(/\r?\n/)
+          .map(line => {
+            const match = line.match(/^"([^"]+)"/);
+            if (match) {
+              // Remove .exe extension for matching
+              return match[1].replace(/\.exe$/i, '');
+            }
+            return null;
+          })
+          .filter(Boolean);
+
+        // Match against target apps (case-insensitive)
+        const matched = [];
+        const seen = new Set();
+
+        for (const processName of runningProcesses) {
+          for (const target of TARGET_APPS) {
+            if (
+              processName.toLowerCase() === target.toLowerCase() &&
+              !seen.has(target.toLowerCase())
+            ) {
+              seen.add(target.toLowerCase());
+              matched.push(target);
+            }
+          }
+        }
+
+        resolve(matched);
+      }
+    );
+  });
+}
+
+/**
  * Get the name of the currently active foreground window process.
  * Uses PowerShell to call Win32 GetForegroundWindow.
+ * NOTE: This is only called on-demand for specific events, not every poll cycle.
  * @returns {Promise<string|null>} Process name (e.g., "Zoom") or null
  */
 export function getActiveWindowProcess() {
@@ -36,7 +91,7 @@ export function getActiveWindowProcess() {
 
     exec(
       `powershell -NoProfile -Command "${psScript}"`,
-      { timeout: 3000 },
+      { timeout: 3000, windowsHide: true },
       (err, stdout) => {
         if (err) {
           logger.error(`Detector exec error: ${err.message}`);
@@ -45,41 +100,6 @@ export function getActiveWindowProcess() {
         }
         const processName = stdout.trim();
         resolve(processName || null);
-      }
-    );
-  });
-}
-
-/**
- * Check all running processes and return which target apps are currently running.
- * @returns {Promise<string[]>} Array of running target app names
- */
-export function getRunningTargetApps() {
-  return new Promise((resolve) => {
-    const names = TARGET_APPS.map(app => `'${app}'`).join(',');
-    const psCommand = `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Process -Name ${names} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessName -Unique"`;
-
-    exec(
-      psCommand,
-      { timeout: 5000, maxBuffer: 1024 * 1024 }, // 1MB buffer
-      (err, stdout, stderr) => {
-        if (err && !stdout) {
-          // err is non-null if no processes matched (exit code 1), 
-          // but we only care if it's a real execution error.
-          // Get-Process -ErrorAction SilentlyContinue returns exit code 1 if NOTHING matches.
-          if (stderr) {
-            logger.error(`Detector process list error: ${stderr}`);
-          }
-          resolve([]);
-          return;
-        }
-
-        const matchedApps = stdout
-          .split(/\r?\n/)
-          .map((p) => p.trim())
-          .filter(Boolean);
-
-        resolve(matchedApps);
       }
     );
   });

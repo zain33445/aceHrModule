@@ -47,9 +47,11 @@ export function getActiveSessions() {
 }
 
 let pollTimer = null;
+let isPolling = false; // Guard against overlapping poll cycles
 
 /**
  * Start the monitoring loop.
+ * Uses recursive setTimeout to ensure only one poll runs at a time.
  */
 export function startMonitor() {
   if (pollTimer) {
@@ -61,13 +63,33 @@ export function startMonitor() {
   logger.info(`Polling interval: ${POLL_INTERVAL_MS}ms`);
   logger.info(`10-MIN screenshot interval: ${HOURLY_SCREENSHOT_INTERVAL_MS}ms`);
 
-  pollTimer = setInterval(pollCycle, POLL_INTERVAL_MS);
+  schedulePoll();
+}
+
+/** Schedule the next poll cycle after the current one completes */
+function schedulePoll() {
+  pollTimer = setTimeout(async () => {
+    if (!isPolling) {
+      isPolling = true;
+      try {
+        await pollCycle();
+      } catch (err) {
+        logger.error(`Poll cycle error: ${err.message}`);
+      } finally {
+        isPolling = false;
+      }
+    }
+    // Schedule next poll only after this one is done
+    if (pollTimer !== null) {
+      schedulePoll();
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 /** Stop the monitoring loop. */
 export function stopMonitor() {
   if (pollTimer) {
-    clearInterval(pollTimer);
+    clearTimeout(pollTimer);
     pollTimer = null;
 
     // Log and send check-outs for any remaining active sessions
@@ -88,7 +110,7 @@ async function pollCycle() {
     const runningApps = await getRunningTargetApps();
     // logger.debug(`[MONITOR] Running apps detected: ${runningApps.join(', ')}`);
     const now = Date.now();
-    const CHECKOUT_THRESHOLD = 15; // Grace period threshold (15 polls/seconds)
+    const CHECKOUT_THRESHOLD = 3; // Grace period: 3 polls × 5s = 15s
 
     const runningNormalized = runningApps.map(app => app.toLowerCase());
 

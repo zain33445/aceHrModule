@@ -38,8 +38,8 @@ if (fs.existsSync(envPath)) {
 export const API_BASE = envApiBase;
 export const UPLOAD_ENDPOINT = `${API_BASE}/monitoring/screenshot`;
 
-// Polling interval in milliseconds (1 second)
-export const POLL_INTERVAL_MS = 1000;
+// Polling interval in milliseconds (5 seconds — reduced from 1s to prevent process spam)
+export const POLL_INTERVAL_MS = 5000;
 
 // Interval for repeating screenshots while an app is active (10 minutes)
 export const HOURLY_SCREENSHOT_INTERVAL_MS = 10 * 60 * 1000;

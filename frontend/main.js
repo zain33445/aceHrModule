@@ -22,6 +22,25 @@ import { logger } from './electron/logger.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ─────────────────────────────────────────
+// 0. Single Instance Lock
+// ─────────────────────────────────────────
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // Another instance is already running — quit immediately
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Someone tried to launch a second instance — focus our window instead
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
 let mainWindow = null;
 let tray = null;
 
