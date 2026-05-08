@@ -6,46 +6,67 @@ const router = Router();
 
 // Export Attendance
 router.get('/attendance', async (req, res) => {
-  const { start_date, end_date } = req.query;
+  const { start_date, end_date, user_id } = req.query;
   
   try {
     const where: any = {};
-    if (start_date && end_date) {
-      where.timestamp = {
-        gte: new Date(start_date as string),
-        lte: new Date(end_date as string)
-      };
+
+    if (start_date || end_date) {
+      where.date = {};
+      if (start_date) where.date.gte = new Date(start_date as string);
+      if (end_date) where.date.lte = new Date(end_date as string);
     }
 
-    const logs = await prisma.attendanceLog.findMany({
+    if (user_id && user_id !== 'all') {
+      where.user_id = user_id as string;
+    }
+
+    // Exclude weekend records from the export
+    where.status = { not: 'weekend' };
+
+    const records = await prisma.attendanceRecord.findMany({
       where,
       include: { user: { select: { name: true, role: true } } },
-      orderBy: { timestamp: 'desc' }
+      orderBy: { date: 'desc' }
     });
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Attendance');
     
     worksheet.columns = [
-      { header: 'Date', key: 'date', width: 20 },
-      { header: 'Time', key: 'time', width: 15 },
-      { header: 'Employee', key: 'name', width: 25 },
-      { header: 'Role', key: 'role', width: 15 },
-      { header: 'Status Code', key: 'status', width: 15 }
+      { header: 'Employee', key: 'name',          width: 25 },
+      { header: 'Date',     key: 'date',          width: 18 },
+      { header: 'Check In', key: 'check_in',      width: 15 },
+      { header: 'Check Out',key: 'check_out',     width: 15 },
+      { header: 'Status',   key: 'status',        width: 15 },
+      { header: 'Late',     key: 'is_late',       width: 10 },
+      { header: 'Half Day', key: 'is_halfday',    width: 12 },
     ];
 
-    logs.forEach(log => {
-      worksheet.addRow({
-        date: log.timestamp.toLocaleDateString(),
-        time: log.timestamp.toLocaleTimeString(),
-        name: log.user.name,
-        role: log.user.role,
-        status: log.status
+    // Style header
+    worksheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+    worksheet.autoFilter = 'A1:G1';
+
+    records.forEach(r => {
+      const row = worksheet.addRow({
+        name:        r.user.name,
+        date:        new Date(r.date).toLocaleDateString(),
+        check_in:    r.check_in_time || '-',
+        check_out:   r.check_out_time || '-',
+        status:      r.status,
+        is_late:     r.is_late ? 'Yes' : 'No',
+        is_halfday:  r.is_halfday ? 'Yes' : 'No',
       });
+      if (r.status === 'absent') row.getCell('status').font = { color: { argb: 'FFDC2626' } };
+      if (r.is_late) row.getCell('is_late').font = { color: { argb: 'FFCA8A04' } };
     });
 
+    // Dynamic filename
+    const suffix = user_id && user_id !== 'all' ? `_user${user_id}` : '';
+    const dateRange = start_date ? `_${(start_date as string).slice(0, 10)}` : '';
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=attendance_export.xlsx');
+    res.setHeader('Content-Disposition', `attachment; filename=attendance${dateRange}${suffix}.xlsx`);
     
     await workbook.xlsx.write(res);
     res.end();
@@ -54,6 +75,7 @@ router.get('/attendance', async (req, res) => {
     res.status(500).json({ error: 'Failed to export attendance data' });
   }
 });
+
 
 // Export Payroll Report (rich: per-employee with attendance stats)
 router.get('/salary', async (req, res) => {
