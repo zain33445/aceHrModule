@@ -32,6 +32,7 @@ import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { SettingsTab } from './dashboard/SettingsTab';
 import { formatTime12h, formatDateLocal } from '../utils/formatters';
+import { LeadDisputeDashboard } from './LeadDisputeDashboard';
 
 function EmployeeDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState('overview');
@@ -381,6 +382,15 @@ function EmployeeDashboard({ user, onLogout }) {
       content: <SettingsTab user={user} />,
     },
   ];
+
+  // Add Team Disputes tab for leads
+  if (user?.is_lead) {
+    tabsConfig.splice(4, 0, {
+      id: 'team_disputes',
+      label: 'Team Disputes',
+      content: <LeadDisputeDashboard user={user} />,
+    });
+  }
 
   return (
     <>

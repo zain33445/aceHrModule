@@ -4,319 +4,143 @@ import prisma from '../prisma';
 
 const router = Router();
 
-// Get all disputes (including pending and resolved)
+// Get all disputes (Admin View)
 router.get('/', async (req, res) => {
+  const { page = 1, limit = 20 } = req.query;
   try {
-    const disputes = await prisma.dispute.findMany({
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true
-          }
-        },
-        approver: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-      orderBy: {
-        date_of_req: 'desc'
-      }
+    const result = await DisputeService.getAdminDisputes(Number(page), Number(limit));
+    res.json({
+      success: true,
+      message: "Disputes fetched successfully",
+      data: result
     });
-    res.json(disputes);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch disputes" });
+    res.status(500).json({ success: false, error: "Failed to fetch disputes" });
   }
 });
 
-// Get disputes requested by a specific user
-router.get('/requested/:userId', async (req, res) => {
-  const { userId } = req.params;
+// Get team disputes (Lead View)
+router.get('/team', async (req, res) => {
+  const { leadId, page = 1, limit = 20 } = req.query;
+  if (!leadId) return res.status(400).json({ success: false, error: "leadId is required" });
+  
   try {
-    const disputes = await prisma.dispute.findMany({
-      where: { req_by: userId },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true
-          }
-        },
-        approver: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-      orderBy: {
-        date_of_req: 'desc'
-      }
+    const result = await DisputeService.getTeamDisputes(leadId as string, Number(page), Number(limit));
+    res.json({
+      success: true,
+      message: "Team disputes fetched successfully",
+      data: result
     });
-    res.json(disputes);
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch user disputes" });
+    res.status(500).json({ success: false, error: "Failed to fetch team disputes" });
   }
 });
 
-// Get disputes for a specific user with pagination and filters
+// Get disputes for a specific user
 router.get('/user/:userId', async (req, res) => {
   const { userId } = req.params;
-  const { startDate, endDate, category, page = 1, limit = 20 } = req.query;
-
-  const skip = (Number(page) - 1) * Number(limit);
-  const take = Number(limit);
-
-  const where: any = { req_by: userId };
-  
-  if (startDate && endDate) {
-    where.dispute_date = {
-      gte: new Date(startDate as string),
-      lte: new Date(endDate as string)
-    };
-  }
-
-  if (category && category !== 'all') {
-    where.category = category;
-  }
-
   try {
-    const [disputes, total] = await Promise.all([
-      prisma.dispute.findMany({
-        where,
-        include: {
-          requester: {
-            select: {
-              id: true,
-              name: true
-            }
-          },
-          approver: {
-            select: {
-              id: true,
-              name: true
-            }
-          }
-        },
-        orderBy: {
-          date_of_req: 'desc'
-        },
-        skip,
-        take
-      }),
-      prisma.dispute.count({ where })
-    ]);
-
+    const disputes = await DisputeService.getUserDisputes(userId);
     res.json({
-      records: disputes,
-      total,
-      page: Number(page),
-      limit: Number(limit)
+      success: true,
+      message: "User disputes fetched successfully",
+      data: disputes
     });
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch user disputes" });
-  }
-});
-
-// Get disputes approved by a specific user
-router.get('/approved/:userId', async (req, res) => {
-  const { userId } = req.params;
-  try {
-    const disputes = await prisma.dispute.findMany({
-      where: { approved_by: userId },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true
-          }
-        },
-        approver: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-      orderBy: {
-        date_of_req: 'desc'
-      }
-    });
-    res.json(disputes);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch approved disputes" });
-  }
-});
-
-// Get all pending disputes (for admin) - returns all disputes for filtering
-router.get('/pending', async (req, res) => {
-  try {
-    const disputes = await DisputeService.getPendingDisputes();
-    res.json(disputes);
-  } catch (error) {
-    console.error('Error fetching pending disputes:', error);
-    res.status(500).json({ error: "Failed to fetch pending disputes" });
+    res.status(500).json({ success: false, error: "Failed to fetch user disputes" });
   }
 });
 
 // Create a dispute
 router.post('/', async (req, res) => {
-  const { user_id, req_by, description, dispute_date, category, date_of_req, status } = req.body;
+  const { user_id, req_by, description, dispute_date, category } = req.body;
   try {
     const userId = user_id || req_by;
-    const disputeCategory = category || 'other';
-
     const dispute = await DisputeService.createDispute({
       user_id: userId,
       dispute_date: new Date(dispute_date),
-      dispute_category: disputeCategory,
-      description,
-      status: status || 'pending'
+      category,
+      description
     });
 
-    // Notify all admin users about the new dispute
-    const admins = await prisma.user.findMany({
-      where: { role: 'admin' },
-      select: { id: true }
+    // Notify Leads of the department
+    const employee = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { department_id: true, name: true }
     });
 
-    const disputeDateStr = new Date(dispute_date).toLocaleDateString();
-    const employeeName = dispute.requester?.name || `Employee #${userId}`;
-    
-    for (const admin of admins) {
-      await prisma.notification.create({
-        data: {
-          user_id: admin.id,
-          type: 'new_dispute',
-          message: `${employeeName} filed a new ${disputeCategory} dispute for ${disputeDateStr}.`
-        }
+    if (employee?.department_id) {
+      const dept = await prisma.department.findUnique({
+        where: { id: employee.department_id },
+        select: { lead_id: true }
       });
+
+      if (dept?.lead_id) {
+        await prisma.notification.create({
+          data: {
+            user_id: dept.lead_id,
+            type: 'new_dispute',
+            message: `${employee.name} filed a new dispute for ${new Date(dispute_date).toLocaleDateString()}.`
+          }
+        });
+      }
     }
 
-    res.json(dispute);
+    res.json({ success: true, message: "Dispute created successfully", data: dispute });
   } catch (error) {
     console.error('Error creating dispute:', error);
-    res.status(500).json({ error: "Failed to create dispute" });
+    res.status(500).json({ success: false, error: "Failed to create dispute" });
   }
 });
 
-// Update dispute status (approve/reject)
-router.put('/:id/status', async (req, res) => {
+// Lead Approval Action
+router.put('/:id/lead-approval', async (req, res) => {
   const { id } = req.params;
-  const { approved_by, remarks, date_of_approve, status } = req.body;
+  const { lead_id, action, remarks } = req.body;
+  
   try {
-    const dispute = await prisma.dispute.update({
-      where: { id: parseInt(id) },
-      data: {
-        approved_by,
-        remarks,
-        date_of_approve: date_of_approve ? new Date(date_of_approve) : new Date(),
-        status
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true
-          }
-        },
-        approver: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      }
-    });
-    res.json({ message: "Dispute status updated", dispute });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update dispute status" });
+    let dispute;
+    if (action === 'approve') {
+      dispute = await DisputeService.leadApprove(Number(id), lead_id, remarks);
+    } else {
+      dispute = await DisputeService.leadReject(Number(id), lead_id, remarks);
+    }
+    res.json({ success: true, message: `Dispute ${action}d by Lead`, data: dispute });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Update a dispute
-router.put('/:id', async (req, res) => {
+// Admin Approval Action
+router.put('/:id/admin-approval', async (req, res) => {
   const { id } = req.params;
-  const { description, remarks, status } = req.body;
+  const { admin_id, action, remarks } = req.body;
+  
   try {
-    const dispute = await prisma.dispute.update({
-      where: { id: parseInt(id) },
-      data: {
-        description,
-        remarks,
-        status
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true
-          }
-        },
-        approver: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      }
-    });
-    res.json({ message: "Dispute updated", dispute });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update dispute" });
+    let dispute;
+    if (action === 'approve') {
+      dispute = await DisputeService.adminApprove(Number(id), admin_id, remarks);
+    } else {
+      dispute = await DisputeService.adminReject(Number(id), admin_id, remarks);
+    }
+    res.json({ success: true, message: `Dispute ${action}d by Admin`, data: dispute });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Approve a dispute
-router.put('/:id/approve', async (req, res) => {
-  const { id } = req.params;
-  const { remarks, approved_by } = req.body;
-  try {
-    const dispute = await DisputeService.approveDispute(
-      parseInt(id),
-      approved_by || 'admin',
-      remarks || ''
-    );
-
-    res.json(dispute);
-  } catch (error) {
-    console.error('Error approving dispute:', error);
-    res.status(500).json({ error: "Failed to approve dispute" });
-  }
-});
-
-// Reject a dispute
-router.put('/:id/reject', async (req, res) => {
-  const { id } = req.params;
-  const { remarks, approved_by } = req.body;
-  try {
-    const dispute = await DisputeService.rejectDispute(
-      parseInt(id),
-      approved_by || 'admin',
-      remarks || ''
-    );
-
-    res.json(dispute);
-  } catch (error) {
-    console.error('Error rejecting dispute:', error);
-    res.status(500).json({ error: "Failed to reject dispute" });
-  }
-});
-
-// Delete a dispute
+// Soft Delete
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    await prisma.dispute.delete({
-      where: { id: parseInt(id) }
+    await prisma.dispute.update({
+      where: { id: Number(id) },
+      data: { is_deleted: true, deleted_at: new Date() }
     });
-    res.json({ message: "Dispute deleted" });
+    res.json({ success: true, message: "Dispute deleted successfully" });
   } catch (error) {
-    res.status(500).json({ error: "Failed to delete dispute" });
+    res.status(500).json({ success: false, error: "Failed to delete dispute" });
   }
 });
 
-export default router;
+export default router;

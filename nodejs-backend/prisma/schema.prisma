@@ -24,6 +24,8 @@ model Department {
   name     String @unique
   shift_id Int?
   shift    Shift? @relation(fields: [shift_id], references: [id])
+  lead_id  String?
+  lead     User?  @relation("DepartmentLead", fields: [lead_id], references: [id])
   users    User[]
 
   @@map("departments")
@@ -47,6 +49,10 @@ model User {
   deductions         Deduction[]
   disputes_app       Dispute[]          @relation("DisputeApprover")
   disputes_req       Dispute[]          @relation("DisputeRequester")
+  disputes_lead      Dispute[]          @relation("DisputeLeadApprover")
+  disputes_admin     Dispute[]          @relation("DisputeAdminApprover")
+  dispute_histories  DisputeHistory[]   @relation("HistoryActor")
+  led_departments    Department[]       @relation("DepartmentLead")
   leaveBank          LeaveBank?
   leave_reviews      LeaveRequest[]     @relation("LeaveReviewer")
   leave_requests     LeaveRequest[]     @relation("LeaveRequester")
@@ -95,22 +101,53 @@ model Commission {
 }
 
 model Dispute {
-  id              Int         @id @default(autoincrement())
-  req_by          String
-  approved_by     String?
-  description     String?
-  remarks         String?
-  date_of_req     DateTime
-  date_of_approve DateTime?
-  status          String      @default("pending")
-  category        String
-  dispute_date    DateTime
-  deductions      Deduction[]
-  approver        User?       @relation("DisputeApprover", fields: [approved_by], references: [id])
-  requester       User        @relation("DisputeRequester", fields: [req_by], references: [id], onDelete: Cascade)
-  salaries        Salary[]
+  id                Int              @id @default(autoincrement())
+  req_by            String
+  approved_by       String?
+  description       String?
+  remarks           String?
+  date_of_req       DateTime
+  date_of_approve   DateTime?
+  status            String           @default("pending")
+  category          String
+  dispute_date      DateTime
+  lead_status       String           @default("pending")
+  admin_status      String           @default("pending")
+  final_status      String           @default("pending")
+  lead_approved_by  String?
+  lead_approved_at  DateTime?
+  lead_remarks      String?
+  admin_approved_by String?
+  admin_approved_at DateTime?
+  admin_remarks     String?
+  salary_restored   Boolean          @default(false)
+  is_escalated      Boolean          @default(false)
+  is_deleted        Boolean          @default(false)
+  deleted_at        DateTime?
+  updated_at        DateTime         @updatedAt
+  deductions        Deduction[]
+  approver          User?            @relation("DisputeApprover", fields: [approved_by], references: [id])
+  leadApprover      User?            @relation("DisputeLeadApprover", fields: [lead_approved_by], references: [id])
+  adminApprover     User?            @relation("DisputeAdminApprover", fields: [admin_approved_by], references: [id])
+  requester         User             @relation("DisputeRequester", fields: [req_by], references: [id], onDelete: Cascade)
+  salaries          Salary[]
+  history           DisputeHistory[]
 
   @@map("disputes")
+}
+
+model DisputeHistory {
+  id         Int      @id @default(autoincrement())
+  dispute_id Int
+  actor_id   String
+  action     String
+  remarks    String?
+  metadata   Json?
+  created_at DateTime @default(now())
+  actor      User     @relation("HistoryActor", fields: [actor_id], references: [id])
+  dispute    Dispute  @relation(fields: [dispute_id], references: [id], onDelete: Cascade)
+
+  @@map("dispute_history")
 }
 
 model AttendanceRecord {

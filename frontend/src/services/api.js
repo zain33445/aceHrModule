@@ -5,6 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
 const api = {
   // Existing methods...
   getEmployees: () => axios.get(`${API_BASE}/employees`),
+  getUsers: () => axios.get(`${API_BASE}/employees`),
   getAttendance: () => axios.get(`${API_BASE}/attendance`),
   getUserAttendance: (userId) => axios.get(`${API_BASE}/attendance/${userId}`),
   getSalaryReport: (start, end) => {
@@ -82,13 +83,17 @@ const api = {
   // Dispute Management APIs
   createDispute: (data) => axios.post(`${API_BASE}/disputes`, data),
   getMyDisputes: (userId) => axios.get(`${API_BASE}/disputes/user/${userId}`),
-  getPendingDisputes: () => axios.get(`${API_BASE}/disputes/pending`),
-  getAdminDisputes: () => axios.get(`${API_BASE}/disputes/pending`),
-  getAllDisputes: () => axios.get(`${API_BASE}/disputes`),
-  approveDispute: (disputeId, remarks, approvedBy) =>
-    axios.put(`${API_BASE}/disputes/${disputeId}/approve`, { remarks, approved_by: approvedBy }),
-  rejectDispute: (disputeId, remarks, approvedBy) =>
-    axios.put(`${API_BASE}/disputes/${disputeId}/reject`, { remarks, approved_by: approvedBy }),
+  getAllDisputes: (page = 1, limit = 20) => axios.get(`${API_BASE}/disputes`, { params: { page, limit } }),
+  getTeamDisputes: (leadId, page = 1, limit = 20) => 
+    axios.get(`${API_BASE}/disputes/team`, { params: { leadId, page, limit } }),
+  
+  leadApproveDispute: (disputeId, data) =>
+    axios.put(`${API_BASE}/disputes/${disputeId}/lead-approval`, data),
+    
+  adminApproveDispute: (disputeId, data) =>
+    axios.put(`${API_BASE}/disputes/${disputeId}/admin-approval`, data),
+  
+  deleteDispute: (disputeId) => axios.delete(`${API_BASE}/disputes/${disputeId}`),
 
   // Salary History
   getUserSalaryHistory: (userId, startDate, endDate, page = 1, limit = 20) => {

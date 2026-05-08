@@ -18,14 +18,16 @@ import {
   Download
 } from 'lucide-react';
 
-export const Sidebar = ({ activeTab = 'dashboard', onTabChange, userRole = 'employee' }) => {
+export const Sidebar = ({ activeTab = 'dashboard', onTabChange, user }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
+  const userRole = user?.role;
+  const isLead = user?.is_lead;
   const normalizedRole = userRole?.toLowerCase() === 'administrator' ? 'admin' : userRole;
 
   // Navigation items for different roles
-  const navItems =
+  let navItems =
     normalizedRole === 'admin'
       ? [
           {
@@ -128,6 +130,17 @@ export const Sidebar = ({ activeTab = 'dashboard', onTabChange, userRole = 'empl
           },
         ];
 
+  // Add Lead Dashboard if user is a lead
+  if (normalizedRole !== 'admin' && isLead) {
+    // Insert after Salary or at a good spot
+    navItems.splice(3, 0, {
+      id: 'team_disputes',
+      label: 'Team Disputes',
+      icon: Users,
+      href: '#',
+    });
+  }
+
   const handleNavClick = (id) => {
     onTabChange?.(id);
     setIsMobileOpen(false);
@@ -162,7 +175,7 @@ export const Sidebar = ({ activeTab = 'dashboard', onTabChange, userRole = 'empl
           width: isCollapsed ? '80px' : '250px',
         }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-        className={`fixed left-0 top-16 h-[calc(100vh-64px)] bg-white border-r border-neutral-200 overflow-hidden flex flex-col z-35 ${
+        className={`fixed left-0 top-16 h-[calc(100vh-64px)] bg-white border-r border-neutral-200 flex flex-col z-35 ${
           isMobileOpen ? 'translate-x-0' : '-translate-x-full'
         } lg:translate-x-0 transition-transform lg:transition-none`}
       >
@@ -182,7 +195,7 @@ export const Sidebar = ({ activeTab = 'dashboard', onTabChange, userRole = 'empl
         </motion.button>
 
         {/* Navigation Items */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1 no-scrollbar">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

@@ -14,6 +14,11 @@ router.post('/login', async (req, res) => {
           { id: username }
         ],
         password_hash: password
+      },
+      include: {
+        led_departments: {
+          select: { id: true }
+        }
       }
     });
     
@@ -24,7 +29,8 @@ router.post('/login', async (req, res) => {
     res.json({
       user_id: user.id,
       name: user.name,
-      role: user.role
+      role: user.role,
+      is_lead: user.led_departments.length > 0
     });
   } catch (error) {
     res.status(500).json({ msg: "Internal server error", error });

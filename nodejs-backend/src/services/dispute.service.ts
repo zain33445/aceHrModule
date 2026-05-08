@@ -1,4 +1,6 @@
 import prisma from '../prisma';
+import { DISPUTE_STATUS, ACTION_TYPES } from '../constants/dispute.constants';
+import { DisputeWorkflow } from './dispute.workflow';
 
 export class DisputeService {
   // Helper to get active working days in a month (excluding weekends)
@@ -11,7 +13,6 @@ export class DisputeService {
         workingDays++;
       }
     }
-    // Fallback in case of 0 to avoid Infinity
     return workingDays > 0 ? workingDays : 30;
   }
 
@@ -21,184 +22,294 @@ export class DisputeService {
     
     switch (category) {
       case 'absent':
-        return employeeSalary / workingDays; // 1 day deduction
+        return employeeSalary / workingDays;
       case 'late':
-        return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for late
       case 'half-day':
-        return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for half-day
+        return (employeeSalary / workingDays) * 0.5;
       case 'leave':
-        return employeeSalary / workingDays; // 1 day deduction if unauthorized
+        return employeeSalary / workingDays;
       default:
         return 0;
     }
   }
 
   // Get all disputes for a user
-  static async getUserDisputes(userId: number | string) {
+  static async getUserDisputes(userId: string) {
     return prisma.dispute.findMany({
-      where: { req_by: userId.toString() },
+      where: { req_by: userId, is_deleted: false },
       include: {
-        requester: {
-          select: { id: true, name: true }
-        },
-        approver: {
-          select: { id: true, name: true }
-        }
+        requester: { select: { id: true, name: true } },
+        leadApprover: { select: { id: true, name: true } },
+        adminApprover: { select: { id: true, name: true } },
+        history: { orderBy: { created_at: 'desc' } }
       },
       orderBy: { date_of_req: 'desc' }
     });
   }
 
-  // Get all pending disputes
-  static async getPendingDisputes() {
-    return prisma.dispute.findMany({
-      include: {
-        requester: {
-          select: { id: true, name: true }
-        }
-      },
-      orderBy: { date_of_req: 'desc' }
+  // Get all disputes for admin
+  static async getAdminDisputes(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const [records, total] = await Promise.all([
+      prisma.dispute.findMany({
+        where: { is_deleted: false },
+        include: {
+          requester: { select: { id: true, name: true, department: true } },
+          leadApprover: { select: { id: true, name: true } },
+          adminApprover: { select: { id: true, name: true } }
+        },
+        orderBy: { date_of_req: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.dispute.count({ where: { is_deleted: false } })
+    ]);
+    return { records, total };
+  }
+
+  // Get team disputes for a lead
+  static async getTeamDisputes(leadId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const departments = await prisma.department.findMany({
+      where: { lead_id: leadId },
+      select: { id: true }
     });
+    const deptIds = departments.map(d => d.id);
+
+    const where = {
+      requester: { department_id: { in: deptIds } },
+      is_deleted: false
+    };
+
+    const [records, total] = await Promise.all([
+      prisma.dispute.findMany({
+        where,
+        include: {
+          requester: { select: { id: true, name: true, department: true } },
+          leadApprover: { select: { id: true, name: true } }
+        },
+        orderBy: { date_of_req: 'desc' },
+        skip,
+        take: limit
+      }),
+      prisma.dispute.count({ where })
+    ]);
+    return { records, total };
   }
 
   // Create a new dispute
   static async createDispute(data: {
-    user_id: number | string;
+    user_id: string;
     dispute_date: Date;
-    dispute_category: string;
+    category: string;
     description: string;
-    status?: string;
   }) {
-    return prisma.dispute.create({
-      data: {
-        req_by: data.user_id.toString(),
-        dispute_date: data.dispute_date,
-        category: data.dispute_category || 'other',
-        description: data.description,
-        date_of_req: new Date(),
-        status: data.status || 'pending'
-      },
-      include: {
-        requester: {
-          select: { id: true, name: true }
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.create({
+        data: {
+          req_by: data.user_id,
+          dispute_date: data.dispute_date,
+          category: data.category || 'other',
+          description: data.description,
+          date_of_req: new Date(),
+          status: DISPUTE_STATUS.PENDING,
+          lead_status: DISPUTE_STATUS.PENDING,
+          admin_status: DISPUTE_STATUS.PENDING,
+          final_status: DISPUTE_STATUS.PENDING
         }
-      }
-    });
-  }
-
-  // Approve a dispute and restore salary deductions
-  static async approveDispute(disputeId: number, approvedBy: string, remarks: string = '') {
-    const dispute = await prisma.dispute.findUnique({
-      where: { id: disputeId },
-      include: {
-        requester: {
-          select: { id: true, monthly_salary: true }
-        }
-      }
-    });
-
-    if (!dispute) {
-      throw new Error('Dispute not found');
-    }
-
-    // Calculate deduction that should be restored
-    const deductionAmount = this.calculateDeductionAmount(
-      dispute.category,
-      dispute.requester.monthly_salary,
-      new Date(dispute.dispute_date)
-    );
-
-    // Update dispute status
-    const updatedDispute = await prisma.dispute.update({
-      where: { id: disputeId },
-      data: {
-        status: 'approved',
-        approved_by: approvedBy,
-        remarks,
-        date_of_approve: new Date()
-      },
-      include: {
-        requester: {
-          select: { id: true, name: true }
-        }
-      }
-    });
-
-    // Find deduction record for the disputed date and remove it
-    // Create date range for the disputed date (start of day to end of day)
-    const startOfDay = new Date(dispute.dispute_date);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const endOfDay = new Date(dispute.dispute_date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const deductionRecord = await prisma.deduction.findFirst({
-      where: {
-        user_id: dispute.req_by,
-        date: {
-          gte: startOfDay,
-          lte: endOfDay
-        },
-        type: dispute.category
-      }
-    });
-
-    if (deductionRecord) {
-      // If we found a deduction record, we remove it because the dispute is approved
-      await prisma.deduction.delete({
-        where: { id: deductionRecord.id }
       });
-      console.log(`Deduction record ${deductionRecord.id} removed for user ${dispute.req_by} on ${dispute.dispute_date} due to approved dispute.`);
-    } else {
-      console.log(`No matching deduction record found for user ${dispute.req_by} on ${dispute.dispute_date}. Nothing to remove.`);
-    }
 
-    // Create notification for the employee
-    const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
-    await prisma.notification.create({
-      data: {
-        user_id: dispute.req_by,
-        type: 'dispute_approved',
-        message: `Your ${dispute.category} dispute for ${disputeDateStr} has been approved.${remarks ? ' Remarks: ' + remarks : ''}`
-      }
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: dispute.id,
+          actor_id: data.user_id,
+          action: ACTION_TYPES.CREATED,
+          remarks: 'Dispute submitted'
+        }
+      });
+
+      return dispute;
     });
-
-    return updatedDispute;
   }
 
-  // Reject a dispute
-  static async rejectDispute(disputeId: number, approvedBy: string, remarks: string = '') {
-    const dispute = await prisma.dispute.findUnique({
-      where: { id: disputeId }
-    });
+  // Lead Approval
+  static async leadApprove(disputeId: number, leadId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
+      if (!dispute) throw new Error('Dispute not found');
 
-    const updatedDispute = await prisma.dispute.update({
-      where: { id: disputeId },
-      data: {
-        status: 'rejected',
-        approved_by: approvedBy,
-        remarks,
-        date_of_approve: new Date()
-      },
-      include: {
-        requester: {
-          select: { id: true, name: true }
-        }
+      if (!DisputeWorkflow.canTransition(dispute.final_status, ACTION_TYPES.LEAD_APPROVED)) {
+        throw new Error('Invalid workflow transition');
       }
-    });
 
-    // Create notification for the employee
-    if (dispute) {
-      const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
-      await prisma.notification.create({
+      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.APPROVED, dispute.admin_status);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          lead_status: DISPUTE_STATUS.APPROVED,
+          lead_approved_by: leadId,
+          lead_approved_at: new Date(),
+          lead_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus // for backward compatibility
+        }
+      });
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: leadId,
+          action: ACTION_TYPES.LEAD_APPROVED,
+          remarks
+        }
+      });
+
+      await tx.notification.create({
         data: {
           user_id: dispute.req_by,
-          type: 'dispute_rejected',
-          message: `Your ${dispute.category} dispute for ${disputeDateStr} has been rejected.${remarks ? ' Remarks: ' + remarks : ''}`
+          type: 'dispute_partially_approved',
+          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} was approved by your Team Lead.`
         }
       });
-    }
 
-    return updatedDispute;
+      return updated;
+    });
+  }
+
+  // Lead Rejection
+  static async leadReject(disputeId: number, leadId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
+      if (!dispute) throw new Error('Dispute not found');
+
+      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.REJECTED, dispute.admin_status);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          lead_status: DISPUTE_STATUS.REJECTED,
+          lead_approved_by: leadId,
+          lead_approved_at: new Date(),
+          lead_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus
+        }
+      });
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: leadId,
+          action: ACTION_TYPES.LEAD_REJECTED,
+          remarks
+        }
+      });
+
+      return updated;
+    });
+  }
+
+  // Admin Approval (Final)
+  static async adminApprove(disputeId: number, adminId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({
+        where: { id: disputeId },
+        include: { requester: true }
+      });
+      if (!dispute) throw new Error('Dispute not found');
+
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.APPROVED);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          admin_status: DISPUTE_STATUS.APPROVED,
+          admin_approved_by: adminId,
+          admin_approved_at: new Date(),
+          admin_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus,
+          approved_by: adminId,
+          date_of_approve: new Date()
+        }
+      });
+
+      // Idempotent Salary Restoration
+      if (finalStatus === DISPUTE_STATUS.APPROVED && !dispute.salary_restored) {
+        const startOfDay = new Date(dispute.dispute_date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(dispute.dispute_date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const deduction = await tx.deduction.findFirst({
+          where: {
+            user_id: dispute.req_by,
+            date: { gte: startOfDay, lte: endOfDay },
+            type: dispute.category
+          }
+        });
+
+        if (deduction) {
+          await tx.deduction.delete({ where: { id: deduction.id } });
+          await tx.dispute.update({
+            where: { id: disputeId },
+            data: { salary_restored: true }
+          });
+        }
+      }
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: adminId,
+          action: ACTION_TYPES.ADMIN_APPROVED,
+          remarks
+        }
+      });
+
+      await tx.notification.create({
+        data: {
+          user_id: dispute.req_by,
+          type: 'dispute_approved',
+          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been fully approved by Admin.`
+        }
+      });
+
+      return updated;
+    });
+  }
+
+  // Admin Rejection
+  static async adminReject(disputeId: number, adminId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
+      if (!dispute) throw new Error('Dispute not found');
+
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.REJECTED);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          admin_status: DISPUTE_STATUS.REJECTED,
+          admin_approved_by: adminId,
+          admin_approved_at: new Date(),
+          admin_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus
+        }
+      });
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: adminId,
+          action: ACTION_TYPES.ADMIN_REJECTED,
+          remarks
+        }
+      });
+
+      return updated;
+    });
   }
 }

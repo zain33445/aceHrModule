@@ -30,7 +30,7 @@ export const LayoutContainer = ({
         <Sidebar
           activeTab={activeTab}
           onTabChange={onTabChange}
-          userRole={user?.role}
+          user={user}
         />
 
         {/* Main Content */}

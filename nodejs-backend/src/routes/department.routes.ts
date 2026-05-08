@@ -9,6 +9,7 @@ router.get('/', async (req, res) => {
     const departments = await prisma.department.findMany({
       include: {
         shift: true,
+        lead: { select: { id: true, name: true } },
         users: { select: { id: true, name: true, role: true } }
       }
     });
@@ -20,10 +21,14 @@ router.get('/', async (req, res) => {
 
 // Create department
 router.post('/', async (req, res) => {
-  const { name, shift_id } = req.body;
+  const { name, shift_id, lead_id } = req.body;
   try {
     const department = await prisma.department.create({
-      data: { name, shift_id: shift_id ? parseInt(shift_id) : undefined }
+      data: { 
+        name, 
+        shift_id: shift_id ? parseInt(shift_id) : undefined,
+        lead_id: lead_id || undefined
+      }
     });
     res.json(department);
   } catch (error) {
@@ -33,11 +38,15 @@ router.post('/', async (req, res) => {
 
 // Update department
 router.put('/:id', async (req, res) => {
-  const { name, shift_id } = req.body;
+  const { name, shift_id, lead_id } = req.body;
   try {
     const department = await prisma.department.update({
       where: { id: parseInt(req.params.id) },
-      data: { name, shift_id: shift_id ? parseInt(shift_id) : undefined }
+      data: { 
+        name, 
+        shift_id: shift_id ? parseInt(shift_id) : undefined,
+        lead_id: lead_id !== undefined ? lead_id : undefined
+      }
     });
     res.json(department);
   } catch (error) {
