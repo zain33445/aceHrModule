@@ -69,6 +69,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     on_leave: 0,
   });
   const [isSyncing, setIsSyncing] = useState(false);
+  const [payrollExportMonth, setPayrollExportMonth] = useState('');
 
   const handleSyncAttendance = async () => {
     setIsSyncing(true);
@@ -205,8 +206,8 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         setDisputes(res.data.data.records || []);
         setDisputePagination({
           currentPage: page,
-          totalPages: Math.ceil(res.data.data.total / 20),
-          totalRecords: res.data.data.total
+          totalPages: Math.ceil((res.data.data.total || 0) / 20),
+          totalRecords: res.data.data.total || 0
         });
       }
     } catch (err) {
@@ -254,6 +255,68 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       await api.updatePassword(userId, newPassword);
     } catch {
       alert("Failed to update password");
+    }
+  };
+
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExport = async () => {
+    const baseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
+    let url = '';
+    let filename = 'export.xlsx';
+
+    if (activeTab === 'attendance') {
+      const { startDate, endDate, userId } = attendanceFilters;
+      const params = new URLSearchParams();
+      if (startDate) params.set('start_date', startDate);
+      if (endDate) params.set('end_date', endDate);
+      if (userId && userId !== 'all') params.set('user_id', userId);
+      url = `${baseUrl}/export/attendance?${params.toString()}`;
+      filename = `attendance_export.xlsx`;
+    } else if (activeTab === 'payroll') {
+      let start = '';
+      let end = '';
+      if (payrollExportMonth) {
+        const [year, month] = payrollExportMonth.split('-').map(Number);
+        start = new Date(year, month - 1, 1).toISOString();
+        end = new Date(year, month, 0, 23, 59, 59, 999).toISOString();
+        filename = `payroll_${payrollExportMonth}.xlsx`;
+      } else {
+        filename = `payroll_current_month.xlsx`;
+      }
+      url = `${baseUrl}/export/salary?start_date=${start}&end_date=${end}`;
+    } else {
+      alert('Export is available for the Attendance and Payroll tabs.\nPlease switch to one of those tabs first.');
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const response = await fetch(url);
+      const contentType = response.headers.get('content-type') || '';
+
+      if (!response.ok || contentType.includes('application/json')) {
+        // Server returned an error — read the JSON message and show alert
+        const errJson = await response.json().catch(() => ({ error: 'Export failed. Please try again.' }));
+        alert(`Export failed: ${errJson.error || 'Unknown error'}`);
+        return;
+      }
+
+      // Valid XLSX blob — trigger download without navigating away
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Export failed: Unable to reach the server. Please check your connection.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -307,7 +370,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     {
       id: 'payroll',
       label: 'Payroll',
-      content: <PayrollTab report={report} loading={loading} />,
+      content: <PayrollTab report={report} loading={loading} onMonthChange={setPayrollExportMonth} />,
     },
     {
       id: 'disputes',
@@ -379,9 +442,15 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
               <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
               {isSyncing ? 'Syncing...' : 'Sync Attendance'}
             </Button>
-            <Button variant="primary" size="lg">
-              <Download size={18} />
-              Export Report
+            <Button
+              variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
+              size="lg"
+              onClick={handleExport}
+              disabled={isExporting}
+              title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
+            >
+              <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
+              {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Export Report'}
             </Button>
           </div>
         </motion.div>
@@ -462,10 +531,15 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
   );
 }
 
-function PayrollTab({ report, loading }) {
+function PayrollTab({ report, loading, onMonthChange }) {
   const [bulkPayDate, setBulkPayDate] = useState('');
   const [bulkPayLoading, setBulkPayLoading] = useState(false);
   const [bulkPayMessage, setBulkPayMessage] = useState('');
+
+  const handleMonthChange = (val) => {
+    setBulkPayDate(val);
+    if (onMonthChange) onMonthChange(val);
+  };
 
   const handleBulkPay = async () => {
     if (!bulkPayDate) { alert('Please select a month first'); return; }
@@ -490,7 +564,7 @@ function PayrollTab({ report, loading }) {
           <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
-              <input type="month" value={bulkPayDate} onChange={(e) => setBulkPayDate(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
+              <input type="month" value={bulkPayDate} onChange={(e) => handleMonthChange(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
             </div>
             <Button variant="primary" onClick={handleBulkPay} disabled={bulkPayLoading || !bulkPayDate} className="bg-green-600 hover:bg-green-700">
               {bulkPayLoading ? 'Processing...' : 'Process Bulk Pay'}
@@ -661,7 +735,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col"
+        style={{ maxWidth: '40rem' }} className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden max-h-[90vh] flex flex-col"
       >
         {/* Header */}
         <div className="p-6 border-b border-neutral-100 flex justify-between items-center bg-neutral-50/50">

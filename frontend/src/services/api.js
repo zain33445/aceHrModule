@@ -127,6 +127,8 @@ const api = {
   createDepartment: (data) => axios.post(`${API_BASE}/departments`, data),
   updateDepartment: (id, data) => axios.put(`${API_BASE}/departments/${id}`, data),
   deleteDepartment: (id) => axios.delete(`${API_BASE}/departments/${id}`),
+  assignEmployeeToDept: (deptId, userId) => axios.put(`${API_BASE}/departments/${deptId}/assign-employee`, { user_id: userId }),
+  removeEmployeeFromDept: (deptId, userId) => axios.put(`${API_BASE}/departments/${deptId}/remove-employee`, { user_id: userId }),
 
   // Holidays
   getHolidays: () => axios.get(`${API_BASE}/holidays`),

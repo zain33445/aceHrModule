@@ -15,6 +15,7 @@ import {
 import { Card, CardBody } from './common/Card';
 import { Button } from './common/Button';
 import { Badge, Modal } from './common';
+import { Pagination } from './common/Pagination';
 import api from '../services/api';
 import { DISPUTE_STATUS } from '../constants/dispute.constants';
 
@@ -43,12 +44,33 @@ export const LeadDisputeDashboard = ({ user }) => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [remarks, setRemarks] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
+  const [pagination, setPagination] = useState({ currentPage: 1, totalPages: 1, totalRecords: 0 });
 
   const fetchDisputes = async () => {
     setLoading(true);
     try {
-      const res = await api.getTeamDisputes(user.user_id);
-      setDisputes(res.data || []);
+      const res = await api.getTeamDisputes(user.user_id, pagination.currentPage);
+      
+      // Handle both wrapped and unwrapped response structures, 
+      // including direct arrays or objects with a 'records' field
+      const responseData = res.data?.data || res.data;
+      let records = [];
+      let total = 0;
+
+      if (Array.isArray(responseData)) {
+        records = responseData;
+        total = responseData.length;
+      } else if (responseData?.records) {
+        records = responseData.records;
+        total = responseData.total || records.length;
+      }
+
+      setDisputes(records);
+      setPagination(prev => ({
+        ...prev,
+        totalPages: Math.ceil(total / 20),
+        totalRecords: total
+      }));
     } catch (err) {
       console.error('Failed to fetch team disputes:', err);
     } finally {
@@ -58,13 +80,13 @@ export const LeadDisputeDashboard = ({ user }) => {
 
   useEffect(() => {
     fetchDisputes();
-  }, []);
+  }, [pagination.currentPage]);
 
   const filteredDisputes = useMemo(() => {
     return disputes.filter(d => {
       const matchesSearch = 
-        d.employee?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        d.reason?.toLowerCase().includes(searchQuery.toLowerCase());
+        d.requester?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.description?.toLowerCase().includes(searchQuery.toLowerCase());
       
       const matchesStatus = 
         filterStatus === 'all' || 
@@ -116,7 +138,7 @@ export const LeadDisputeDashboard = ({ user }) => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" size={18} />
             <input 
               type="text"
-              placeholder="Search employee or reason..."
+              placeholder="Search employee or description..."
               className="pl-10 pr-4 py-2 bg-white border border-neutral-200 rounded-xl w-64 focus:ring-2 focus:ring-primary-500 outline-none transition-all"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -213,11 +235,11 @@ export const LeadDisputeDashboard = ({ user }) => {
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-neutral-100 rounded-full flex items-center justify-center font-bold text-neutral-700">
-                        {dispute.employee?.name?.charAt(0)}
+                        {dispute.requester?.name?.charAt(0)}
                       </div>
                       <div>
-                        <h4 className="font-bold text-neutral-900">{dispute.employee?.name}</h4>
-                        <p className="text-xs text-neutral-500">{dispute.employee?.id}</p>
+                        <h4 className="font-bold text-neutral-900">{dispute.requester?.name}</h4>
+                        <p className="text-xs text-neutral-500">{dispute.requester?.id}</p>
                       </div>
                     </div>
                     <Badge variant={
@@ -230,13 +252,13 @@ export const LeadDisputeDashboard = ({ user }) => {
 
                   <div className="flex-1 space-y-3">
                     <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-100">
-                      <p className="text-sm text-neutral-700 line-clamp-2 italic">"{dispute.reason}"</p>
+                      <p className="text-sm text-neutral-700 line-clamp-2 italic">"{dispute.description}"</p>
                     </div>
                     
                     <div className="flex justify-between items-center text-xs text-neutral-500 px-1">
                       <span className="flex items-center gap-1">
                         <Clock size={12} />
-                        {new Date(dispute.created_at).toLocaleDateString()}
+                        {new Date(dispute.date_of_req).toLocaleDateString()}
                       </span>
                       <span className="font-bold text-primary-600">
                         Restoration Requested
@@ -262,6 +284,14 @@ export const LeadDisputeDashboard = ({ user }) => {
         )}
       </div>
 
+      {pagination.totalPages > 1 && (
+        <Pagination 
+          currentPage={pagination.currentPage} 
+          totalPages={pagination.totalPages} 
+          onPageChange={(page) => setPagination(prev => ({ ...prev, currentPage: page }))} 
+        />
+      )}
+
       {/* Detail Modal */}
       <AnimatePresence>
         {selectedDispute && (
@@ -275,17 +305,17 @@ export const LeadDisputeDashboard = ({ user }) => {
               {/* Employee Info Header */}
               <div className="flex items-center gap-4 p-4 bg-neutral-50 rounded-2xl border border-neutral-200">
                 <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-2xl font-bold text-primary-600 shadow-sm border-2 border-primary-100">
-                  {selectedDispute.employee?.name?.charAt(0)}
+                  {selectedDispute.requester?.name?.charAt(0)}
                 </div>
                 <div>
-                  <h3 className="text-xl font-bold text-neutral-900">{selectedDispute.employee?.name}</h3>
+                  <h3 className="text-xl font-bold text-neutral-900">{selectedDispute.requester?.name}</h3>
                   <div className="flex items-center gap-3 mt-1">
                     <span className="text-sm text-neutral-500 flex items-center gap-1">
-                      <Badge variant="neutral">{selectedDispute.employee?.id}</Badge>
+                      <Badge variant="neutral">{selectedDispute.requester?.id}</Badge>
                     </span>
                     <span className="text-sm text-neutral-400">|</span>
                     <span className="text-sm text-neutral-500 flex items-center gap-1">
-                      <Clock size={14} /> Filed {new Date(selectedDispute.created_at).toLocaleString()}
+                      <Clock size={14} /> Filed {new Date(selectedDispute.date_of_req).toLocaleString()}
                     </span>
                   </div>
                 </div>
@@ -295,9 +325,9 @@ export const LeadDisputeDashboard = ({ user }) => {
                 {/* Details Section */}
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest block mb-2">Dispute Reason</label>
+                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest block mb-2">Dispute Description</label>
                     <div className="p-4 bg-white rounded-xl border-2 border-neutral-100 shadow-sm min-h-[100px]">
-                      <p className="text-neutral-700">{selectedDispute.reason}</p>
+                      <p className="text-neutral-700">{selectedDispute.description}</p>
                     </div>
                   </div>
 
@@ -381,7 +411,7 @@ export const LeadDisputeDashboard = ({ user }) => {
                             {i + 1}
                           </div>
                           <div>
-                            <p className="font-bold text-neutral-900">{h.action_type.replace('_', ' ')}</p>
+                            <p className="font-bold text-neutral-900">{h.action?.replace('_', ' ')}</p>
                             <p className="text-neutral-500 mt-0.5">{h.remarks}</p>
                             <p className="text-[10px] text-neutral-400 mt-1 font-mono uppercase">
                               {new Date(h.created_at).toLocaleString()}

@@ -23,7 +23,7 @@ import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
 import { SlideUp, StaggerChildren } from './animations';
 import api from '../services/api';
 import { AttendanceFilters } from './common/AttendanceFilters';
-import { Modal, Input, Select, Textarea, Pagination } from './common';
+import { Modal, Input, Select, Textarea, Pagination, Badge } from './common';
 import { Send, Calendar as CalendarIcon, Tag, MessageSquare, Info, AlertOctagon, Watch, Sunset, Home, Image as ImageIcon } from 'lucide-react';
 
 import { AttendanceCalendar } from './calendar/AttendanceCalendar';
@@ -231,8 +231,21 @@ function EmployeeDashboard({ user, onLogout }) {
 
     try {
       const res = await api.getUserDisputes(user.user_id, sDate, eDate, cat, page);
-      const { records, total } = res.data;
-      setDisputes(records || []);
+      
+      // Handle wrapped and unwrapped structures, including direct arrays
+      const responseData = res.data?.data || res.data;
+      let records = [];
+      let total = 0;
+
+      if (Array.isArray(responseData)) {
+        records = responseData;
+        total = responseData.length;
+      } else if (responseData?.records) {
+        records = responseData.records;
+        total = responseData.total || records.length;
+      }
+
+      setDisputes(records);
       setDisputePagination({
         currentPage: page,
         totalPages: Math.ceil(total / 20),
@@ -908,12 +921,24 @@ function DisputesTab({ disputes, loading, pagination, onFilterChange, onPageChan
                         {new Date(dispute.dispute_date).toLocaleDateString()}
                       </p>
                     </div>
-                    <span className={`badge ${
-                      dispute.status === 'resolved' ? 'badge-success' : 
-                      dispute.status === 'pending' ? 'badge-warning' : 'badge-error'
-                    }`}>
-                      {dispute.status}
-                    </span>
+                    <div className="flex flex-col items-end gap-2">
+                      <Badge variant={
+                        dispute.status === 'approved' ? 'success' : 
+                        dispute.status === 'rejected' ? 'danger' : 'warning'
+                      }>
+                        {dispute.status}
+                      </Badge>
+                      <div className="flex gap-1">
+                        <div className={`w-4 h-4 rounded-full border border-white flex items-center justify-center text-[8px] font-bold ${
+                          dispute.lead_status === 'approved' ? 'bg-green-500 text-white' : 
+                          dispute.lead_status === 'rejected' ? 'bg-red-500 text-white' : 'bg-neutral-200 text-neutral-600'
+                        }`} title="Lead Approval">L</div>
+                        <div className={`w-4 h-4 rounded-full border border-white flex items-center justify-center text-[8px] font-bold ${
+                          dispute.admin_status === 'approved' ? 'bg-blue-500 text-white' : 
+                          dispute.admin_status === 'rejected' ? 'bg-red-500 text-white' : 'bg-neutral-200 text-neutral-600'
+                        }`} title="Admin Approval">A</div>
+                      </div>
+                    </div>
                   </div>
                 </motion.div>
               ))}

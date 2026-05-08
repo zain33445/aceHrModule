@@ -44,7 +44,10 @@ router.get('/user/:userId', async (req, res) => {
     res.json({
       success: true,
       message: "User disputes fetched successfully",
-      data: disputes
+      data: {
+        records: disputes,
+        total: disputes.length
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, error: "Failed to fetch user disputes" });
