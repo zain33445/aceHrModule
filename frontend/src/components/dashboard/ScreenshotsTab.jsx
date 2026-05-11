@@ -94,17 +94,15 @@ const ScreenshotsTab = ({ user, isAdmin = false, employees = [] }) => {
           {isAdmin && (
             <div className="w-full flex flex-col sm:flex-row items-end gap-4 p-4 bg-neutral-50 rounded-xl border border-neutral-100">
               <div className="flex-1 w-full">
-                <label className="block text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2">Select Employee</label>
-                <div className="relative">
-                  <Select
-                    value={selectedUserId}
-                    onChange={setSelectedUserId}
-                    className="w-full"
-                    icon={User}
-                    placeholder="Choose an employee..."
-                    options={employees.map(emp => ({ value: emp.id, label: `${emp.name} (${emp.id})` }))}
-                  />
-                </div>
+                <Select
+                  label="Select Employee"
+                  value={selectedUserId}
+                  onChange={setSelectedUserId}
+                  className="w-full"
+                  icon={User}
+                  placeholder="Choose an employee..."
+                  options={employees.map(emp => ({ value: emp.id, label: `${emp.name} (${emp.id})` }))}
+                />
               </div>
               <Button 
                 variant="primary" 
@@ -123,7 +121,7 @@ const ScreenshotsTab = ({ user, isAdmin = false, employees = [] }) => {
             <div className="text-center py-16 bg-neutral-50/50 rounded-xl border border-dashed border-neutral-200">
               <User size={48} className="mx-auto text-neutral-300 mb-4" />
               <p className="font-medium text-neutral-600">Please select an employee to view their activities</p>
-              <p className="text-sm text-neutral-400 mt-1 text-center max-w-xs mx-auto">
+              <p className="text-sm text-neutral-400 mt-1 text-center  mx-auto">
                 Monitoring logs and screenshots will be displayed here once an employee is selected.
               </p>
             </div>

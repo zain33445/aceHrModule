@@ -25,30 +25,23 @@ function App() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      let start = null;
-      let end = null;
       const now = new Date();
 
       // Set default to current month
-      start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
-      end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      const start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      const end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
-      if (activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'salary') {
-        const [empRes, repRes] = await Promise.all([
-          api.getEmployees(),
-          api.getSalaryReport(start, end)
-        ]);
-        setEmployees(empRes.data);
-        setReport(repRes.data);
-      } else if (activeTab === 'employees') {
-        const empRes = await api.getEmployees();
-        setEmployees(empRes.data);
-      }
+      const [empRes, repRes] = await Promise.all([
+        api.getEmployees(),
+        api.getSalaryReport(start, end)
+      ]);
+      setEmployees(empRes.data);
+      setReport(repRes.data);
     } catch {
       console.error("Failed to fetch data");
     }
     setLoading(false);
-  }, [activeTab]);
+  }, []);
 
   useEffect(() => {
     if (auth?.role === 'admin') {

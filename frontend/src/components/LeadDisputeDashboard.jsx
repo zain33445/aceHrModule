@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Card, CardBody } from './common/Card';
 import { Button } from './common/Button';
-import { Badge, Modal } from './common';
+import { Badge, Modal, Select } from './common';
 import { Pagination } from './common/Pagination';
 import api from '../services/api';
 import { DISPUTE_STATUS } from '../constants/dispute.constants';
@@ -144,16 +144,17 @@ export const LeadDisputeDashboard = ({ user }) => {
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
-          <select 
-            className="px-4 py-2 bg-white border border-neutral-200 rounded-xl focus:ring-2 focus:ring-primary-500 outline-none"
+          <Select 
+            className="w-56"
             value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          >
-            <option value="all">All Status</option>
-            <option value="pending">Pending Your Action</option>
-            <option value="approved">Approved by You</option>
-            <option value="rejected">Rejected by You</option>
-          </select>
+            onChange={setFilterStatus}
+            options={[
+              { value: 'all', label: 'All Status' },
+              { value: 'pending', label: 'Pending Your Action' },
+              { value: 'approved', label: 'Approved by You' },
+              { value: 'rejected', label: 'Rejected by You' },
+            ]}
+          />
         </div>
       </div>
 

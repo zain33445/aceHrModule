@@ -87,8 +87,33 @@
   --border: #E5E7EB;
 }
 
+html {
+  overflow: hidden;
+  height: 100%;
+}
+
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  height: 100%;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.font-bebas-neue {
+  font-family: 'Bebas Neue', sans-serif;
 }
 
 /* Legacy CSS Classes for Backward Compatibility */
@@ -293,3 +318,5 @@ tbody tr:hover {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
+
+.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

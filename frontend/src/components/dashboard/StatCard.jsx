@@ -12,6 +12,8 @@ export const StatCard = ({
   variant = 'default',
   onClick,
   className = '',
+  textAlign = 'start',
+  trendAlign = 'start',
 }) => {
   const variants = {
     default: 'bg-white',
@@ -38,13 +40,13 @@ export const StatCard = ({
       >
         <div className="flex items-start justify-between gap-4 p-6">
           {/* Left: Values */}
-          <div className="flex-1">
+          <div className={`flex-1 flex flex-col ${textAlign === 'end' ? 'items-end text-right' : 'items-start'}`}>
             <p className="text-sm font-medium text-neutral-600">{title}</p>
-            <p className="text-3xl font-bold text-neutral-900 mt-2">{value}</p>
+            <p className="text-3xl font-bold text-neutral-900 mt-2 leading-none">{value}</p>
 
             {/* Trend */}
             {trend !== undefined && (
-              <div className={`flex items-center gap-1 mt-3 ${trendColor} text-sm font-medium`}>
+              <div className={`flex items-center gap-1 mt-3 ${trendColor} text-sm font-medium w-full ${trendAlign === 'end' ? 'justify-end' : 'justify-start'}`}>
                 <TrendIcon size={16} />
                 <span>{Math.abs(trend)}%</span>
                 {trendLabel && <span className="text-neutral-600 ml-1">{trendLabel}</span>}

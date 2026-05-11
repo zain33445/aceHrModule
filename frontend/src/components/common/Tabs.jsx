@@ -39,7 +39,7 @@ export const Tabs = ({
 
   return (
     <div className={className}>
-      <div className={`flex gap-2 ${tabsVariant[variant]}`}>
+      <div className={`flex gap-2 ${tabsVariant[variant]} justify-evenly`}>
         {tabs.map((tab, index) => (
           <motion.button
             key={tab.id || index}
@@ -68,10 +68,10 @@ export const Tabs = ({
 
       <motion.div
         key={activeTab}
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -10 }}
-        transition={{ duration: 0.2 }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.15 }}
         className="mt-4"
       >
         {tabs[activeTab]?.content}

@@ -11,6 +11,8 @@ export const Modal = ({
   footer,
   size = 'md',
   closeButton = true,
+  className = '',
+  fullHeight = false,
 }) => {
   const sizes = {
     sm: 'max-w-sm',
@@ -18,6 +20,8 @@ export const Modal = ({
     lg: 'max-w-5xl',
     xl: 'max-w-6xl',
     '2xl': 'max-w-7xl',
+    '4xl': 'max-w-4xl',
+    full: 'max-w-full',
   };
 
   return (
@@ -34,12 +38,12 @@ export const Modal = ({
           />
 
           {/* Modal Container */}
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className={`fixed inset-0 z-50 flex items-center justify-center ${fullHeight ? '' : 'p-4'}`}>
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className={`bg-white rounded-lg shadow-2xl relative w-full ${sizes[size]}`}
+              className={`bg-white shadow-2xl relative flex flex-col overflow-hidden ${fullHeight ? 'h-full' : 'rounded-lg'} ${sizes[size]} ${className}`}
             >
             {/* Header */}
             {(title || closeButton) && (
@@ -58,7 +62,7 @@ export const Modal = ({
             )}
 
             {/* Content */}
-            <div className="px-6 py-4 max-h-96 overflow-y-auto">
+            <div className="px-6 py-4 overflow-y-auto no-scrollbar flex-1 max-h-[85vh]">
               {children}
             </div>
 

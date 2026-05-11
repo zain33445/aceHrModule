@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Trash2, UserPlus, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Select } from './common';
 import api from '../services/api';
 
 function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, onRefresh }) {
@@ -162,28 +163,24 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Role</label>
-              <select 
-                className="input-field" 
-                value={newEmp.role} 
-                onChange={e => setNewEmp({ ...newEmp, role: e.target.value })}
-              >
-                <option value="employee">Employee</option>
-                <option value="admin">Admin</option>
-              </select>
+              <Select
+                label="Role"
+                value={newEmp.role}
+                onChange={val => setNewEmp({ ...newEmp, role: val })}
+                options={[
+                  { value: 'employee', label: 'Employee' },
+                  { value: 'admin', label: 'Admin' }
+                ]}
+              />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Department</label>
-              <select 
-                className="input-field" 
-                value={newEmp.department_id} 
-                onChange={e => setNewEmp({ ...newEmp, department_id: e.target.value })}
-              >
-                <option value="">Select Department</option>
-                {departments.map(dep => (
-                  <option key={dep.id} value={dep.id}>{dep.name}</option>
-                ))}
-              </select>
+              <Select
+                label="Department"
+                value={newEmp.department_id}
+                onChange={val => setNewEmp({ ...newEmp, department_id: val })}
+                placeholder="Select Department"
+                options={departments.map(dep => ({ value: dep.id, label: dep.name }))}
+              />
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Create Record</button>

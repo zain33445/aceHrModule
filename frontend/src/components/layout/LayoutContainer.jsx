@@ -13,7 +13,7 @@ export const LayoutContainer = ({
   onNotificationClick,
 }) => {
   return (
-    <div className="min-h-screen bg-neutral-50 flex flex-col">
+    <div className="h-screen bg-neutral-50 flex flex-col overflow-hidden">
       {/* Navbar */}
       <Navbar
         user={user}
@@ -34,7 +34,7 @@ export const LayoutContainer = ({
         />
 
         {/* Main Content */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto no-scrollbar">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             {children}
           </div>

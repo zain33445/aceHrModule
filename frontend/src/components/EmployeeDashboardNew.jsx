@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Clock, 
@@ -49,6 +49,9 @@ function EmployeeDashboard({ user, onLogout }) {
     description: ''
   });
   const [loading, setLoading] = useState(true);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [disputeLoading, setDisputeLoading] = useState(false);
+  const [salaryLoading, setSalaryLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [filterType, setFilterType] = useState('current');
@@ -154,7 +157,7 @@ function EmployeeDashboard({ user, onLogout }) {
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user?.user_id]);
 
   const handleNotificationClick = async (notif) => {
     if (!notif.read) {
@@ -195,9 +198,8 @@ function EmployeeDashboard({ user, onLogout }) {
     setLoading(false);
   };
 
-  const fetchAbsenceData = async (startDate, endDate, status, page = 1) => {
-    setLoading(true);
-    // Use existing filters if not provided
+  const fetchAbsenceData = useCallback(async (startDate, endDate, status, page = 1) => {
+    setAttendanceLoading(true);
     const sDate = startDate !== undefined ? startDate : attendanceFilters.startDate;
     const eDate = endDate !== undefined ? endDate : attendanceFilters.endDate;
     const st = status !== undefined ? status : attendanceFilters.status;
@@ -220,11 +222,11 @@ function EmployeeDashboard({ user, onLogout }) {
     } catch (err) {
       console.error('Error fetching absence data:', err);
     }
-    setLoading(false);
-  };
+    setAttendanceLoading(false);
+  }, [attendanceFilters, user.user_id]);
 
-  const fetchDisputeData = async (startDate, endDate, category, page = 1) => {
-    setLoading(true);
+  const fetchDisputeData = useCallback(async (startDate, endDate, category, page = 1) => {
+    setDisputeLoading(true);
     const sDate = startDate !== undefined ? startDate : disputeFilters.startDate;
     const eDate = endDate !== undefined ? endDate : disputeFilters.endDate;
     const cat = category !== undefined ? category : disputeFilters.category;
@@ -255,11 +257,11 @@ function EmployeeDashboard({ user, onLogout }) {
     } catch (err) {
       console.error('Error fetching disputes:', err);
     }
-    setLoading(false);
-  };
+    setDisputeLoading(false);
+  }, [disputeFilters, user.user_id]);
 
-  const fetchSalaryPaidHistory = async (startDate, endDate, page = 1) => {
-    setLoading(true);
+  const fetchSalaryPaidHistory = useCallback(async (startDate, endDate, page = 1) => {
+    setSalaryLoading(true);
     const sDate = startDate !== undefined ? startDate : salaryPaidFilters.startDate;
     const eDate = endDate !== undefined ? endDate : salaryPaidFilters.endDate;
 
@@ -278,11 +280,11 @@ function EmployeeDashboard({ user, onLogout }) {
     } catch (err) {
       console.error('Error fetching paid salary history:', err);
     }
-    setLoading(false);
-  };
+    setSalaryLoading(false);
+  }, [salaryPaidFilters, user.user_id]);
 
-  const fetchSalaryDeductionHistory = async (startDate, endDate, type, page = 1) => {
-    setLoading(true);
+  const fetchSalaryDeductionHistory = useCallback(async (startDate, endDate, type, page = 1) => {
+    setSalaryLoading(true);
     const sDate = startDate !== undefined ? startDate : salaryDeductionFilters.startDate;
     const eDate = endDate !== undefined ? endDate : salaryDeductionFilters.endDate;
     const t = type !== undefined ? type : salaryDeductionFilters.type;
@@ -302,8 +304,8 @@ function EmployeeDashboard({ user, onLogout }) {
     } catch (err) {
       console.error('Error fetching deduction history:', err);
     }
-    setLoading(false);
-  };
+    setSalaryLoading(false);
+  }, [salaryDeductionFilters, user.user_id]);
 
   const handleDisputeSubmit = async (e) => {
     e.preventDefault();
@@ -337,73 +339,82 @@ function EmployeeDashboard({ user, onLogout }) {
       : []),
   ];
 
-  // Tab configuration
-  const tabsConfig = [
-    {
-      id: 'overview',
-      label: 'Dashboard',
-      icon: null,
-      content: <OverviewTab stats={stats} logs={logs} loading={loading} />,
-    },
-    {
-      id: 'attendance',
-      label: 'Attendance',
-      content: (
-        <AttendanceTab 
-          absences={absences} 
-          loading={loading} 
-          pagination={attendancePagination}
-          onFilterChange={(f) => fetchAbsenceData(f.startDate, f.endDate, f.category, 1)} 
-          onPageChange={(page) => fetchAbsenceData(undefined, undefined, undefined, page)}
-        />
-      ),
-    },
-    {
-      id: 'salary',
-      label: 'Salary',
-      content: (
-        <SalaryTab 
-          stats={stats} 
-          loading={loading} 
-          salaryHistory={salaryHistory} 
-          paidPagination={salaryPaidPagination}
-          deductionPagination={salaryDeductionPagination}
-          onPaidFilterChange={(f) => fetchSalaryPaidHistory(f.startDate, f.endDate, 1)}
-          onPaidPageChange={(page) => fetchSalaryPaidHistory(undefined, undefined, page)}
-          onDeductionFilterChange={(f) => fetchSalaryDeductionHistory(f.startDate, f.endDate, f.category, 1)}
-          onDeductionPageChange={(page) => fetchSalaryDeductionHistory(undefined, undefined, undefined, page)}
-        />
-      ),
-    },
-    {
-      id: 'disputes',
-      label: 'Disputes',
-      content: (
-        <DisputesTab 
-          disputes={disputes} 
+  const tabsConfig = useMemo(() => {
+    const baseTabs = [
+      {
+        id: 'overview',
+        label: 'Dashboard',
+        icon: null,
+        content: <OverviewTab
+          stats={stats}
+          logs={logs}
           loading={loading}
-          pagination={disputePagination}
-          onFilterChange={(f) => fetchDisputeData(f.startDate, f.endDate, f.category, 1)}
-          onPageChange={(page) => fetchDisputeData(undefined, undefined, undefined, page)}
-          onNewDispute={() => setShowDisputeModal(true)} 
-        />
-      ),
-    },
-    {
-      id: 'settings',
-      label: 'Settings',
-      content: <SettingsTab user={user} />,
-    },
-  ];
+          setActiveTab={setActiveTab}
+          setShowDisputeModal={setShowDisputeModal}
+          setDisputeForm={setDisputeForm}
+        />,
+      },
+      {
+        id: 'attendance',
+        label: 'Attendance',
+        content: (
+          <AttendanceTab
+            absences={absences}
+            loading={attendanceLoading}
+            pagination={attendancePagination}
+            onFilterChange={(f) => fetchAbsenceData(f.startDate, f.endDate, f.category, 1)}
+            onPageChange={(page) => fetchAbsenceData(undefined, undefined, undefined, page)}
+          />
+        ),
+      },
+      {
+        id: 'salary',
+        label: 'Salary',
+        content: (
+          <SalaryTab
+            stats={stats}
+            loading={salaryLoading}
+            salaryHistory={salaryHistory}
+            paidPagination={salaryPaidPagination}
+            deductionPagination={salaryDeductionPagination}
+            onPaidFilterChange={(f) => fetchSalaryPaidHistory(f.startDate, f.endDate, 1)}
+            onPaidPageChange={(page) => fetchSalaryPaidHistory(undefined, undefined, page)}
+            onDeductionFilterChange={(f) => fetchSalaryDeductionHistory(f.startDate, f.endDate, f.category, 1)}
+            onDeductionPageChange={(page) => fetchSalaryDeductionHistory(undefined, undefined, undefined, page)}
+          />
+        ),
+      },
+      {
+        id: 'disputes',
+        label: 'Disputes',
+        content: (
+          <DisputesTab
+            disputes={disputes}
+            loading={disputeLoading}
+            pagination={disputePagination}
+            onFilterChange={(f) => fetchDisputeData(f.startDate, f.endDate, f.category, 1)}
+            onPageChange={(page) => fetchDisputeData(undefined, undefined, undefined, page)}
+            onNewDispute={() => setShowDisputeModal(true)}
+          />
+        ),
+      },
+      {
+        id: 'settings',
+        label: 'Settings',
+        content: <SettingsTab user={user} />,
+      },
+    ];
 
-  // Add Team Disputes tab for leads
-  if (user?.is_lead) {
-    tabsConfig.splice(4, 0, {
-      id: 'team_disputes',
-      label: 'Team Disputes',
-      content: <LeadDisputeDashboard user={user} />,
-    });
-  }
+    if (user?.is_lead) {
+      baseTabs.splice(4, 0, {
+        id: 'team_disputes',
+        label: 'Team Disputes',
+        content: <LeadDisputeDashboard user={user} />,
+      });
+    }
+
+    return baseTabs;
+  }, [stats, logs, loading, absences, attendanceLoading, attendancePagination, salaryLoading, salaryHistory, salaryPaidPagination, salaryDeductionPagination, disputes, disputeLoading, disputePagination, user, fetchAbsenceData, fetchSalaryPaidHistory, fetchSalaryDeductionHistory, fetchDisputeData]);
 
   return (
     <>
@@ -416,10 +427,10 @@ function EmployeeDashboard({ user, onLogout }) {
         notifications={notifications}
         onNotificationClick={handleNotificationClick}
       >
-        <StaggerChildren stagger={0.1}>
+        <>
           {/* ... existing header and stats ... */}
           {/* Page Header */}
-          <motion.div className="mb-8 flex justify-between items-start">
+          {/* <motion.div className="mb-8 flex justify-between items-start">
             <div>
               <h1 className="text-3xl font-bold text-neutral-900">Dashboard</h1>
               <p className="text-neutral-600 mt-1">
@@ -430,70 +441,59 @@ function EmployeeDashboard({ user, onLogout }) {
               <RefreshCw size={16} className={isSyncing ? 'animate-spin mr-2' : 'mr-2'} />
               {isSyncing ? 'Syncing...' : 'Sync Attendance'}
             </Button>
-          </motion.div>
-
-          {/* Quick Stats */}
+          </motion.div> */}
+                                {/* Quick Stats */}
+                                
           {activeTab === 'overview' && (
-            <motion.div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <StatCard
-                title="Hours This Month"
-                value={stats?.total_hours || '0'}
-                icon={Clock}
-                trend={5}
-                trendLabel="vs last month"
-                variant="default"
-              />
-              <StatCard
-                title="Leave Balance"
-                value={leaveBank?.remaining_leaves || '0'}
-                icon={Calendar}
-                trend={-2}
-                trendLabel="leaves used"
-                variant="success"
-              />
+            <div
+              className="flex flex-row justify-center items-center gap-6 mb-8 flex-2"
+            >
+
               <StatCard
                 title="Net Salary"
-                value={`PKR ${stats?.total_salary?.toLocaleString() || '0'}`}
-                icon={DollarSign}
+                textAlign="end"
+                trendAlign="start"
+                value={`Rs. ${stats?.total_salary?.toLocaleString() || '0'}`}
                 trend={0}
                 variant="primary"
+                className='min-w-70'
               />
               <StatCard
-                title="Status"
-                value={stats?.status || 'Active'}
-                icon={CheckCircle2}
-                variant="warning"
-              />
-            </motion.div>
+                title="Deductions"
+                textAlign="start"
+                trendAlign="end"
+                value={`Rs. ${stats?.deductions?.toLocaleString() || '0'}`}
+                trend={0}
+                variant="error"
+                className='min-w-70'
+              /> 
+            </div>
           )}
+          <Tabs
+            tabs={tabsConfig}
+            defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
+            onChange={(index) => setActiveTab(tabsConfig[index].id)}
+            variant="tabs"
+          />
 
-          {/* Tab Navigation & Content */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-          >
-            <Tabs
-              tabs={tabsConfig}
-              defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
-              onChange={(index) => setActiveTab(tabsConfig[index].id)}
-              variant="tabs"
-            />
-          </motion.div>
-        </StaggerChildren>
+
+
+        </>
       </LayoutContainer>
 
       <Modal
+        className="w-1/2 h-[95%] rounded-2xl"
         isOpen={showDisputeModal}
         onClose={() => setShowDisputeModal(false)}
         title="File New Dispute"
-        size="4xl"
+        size="full"
+        fullHeight={false}
         footer={
-          <div className="flex gap-4 w-full">
-            <Button variant="ghost" className="flex-1 py-3 text-lg" onClick={() => setShowDisputeModal(false)}>
+          <div className="flex gap-4 w-[70%]">
+            <Button variant="ghost" className=" px-10 text-md" onClick={() => setShowDisputeModal(false)}>
               Cancel
             </Button>
-            <Button variant="primary" className="flex-1 py-3 text-lg shadow-lg shadow-primary-200" onClick={handleDisputeSubmit}>
+            <Button variant="primary" className="flex-1 py-1 text-md shadow-lg shadow-primary-200" onClick={handleDisputeSubmit}>
               <Send size={20} />
               Submit Dispute
             </Button>
@@ -505,13 +505,13 @@ function EmployeeDashboard({ user, onLogout }) {
           <motion.div 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="p-4 bg-gradient-to-r from-primary-50 to-indigo-50 rounded-xl border border-primary-100 flex gap-3 text-sm text-primary-800 shadow-sm"
+            className="p-2 bg-gradient-to-r from-primary-50 to-indigo-50 rounded-xl border border-primary-100 flex gap-3 text-sm text-primary-800 shadow-sm"
           >
-            <div className="bg-white p-2 rounded-lg shadow-sm h-fit">
-              <Info size={18} className="text-primary-600" />
+            <div className="bg-white p-1 rounded-lg shadow-sm h-fit">
+              <Info size={20} className="text-primary-600" />
             </div>
             <p className="leading-relaxed">
-              <strong>Submitting Request:</strong> You can only file disputes for records within the <strong>current month</strong>. Ensure descriptions are clear for faster processing.
+              <strong>Submitting Request:</strong> File disputes only for <strong>current month</strong>. Ensure description is entered.
             </p>
           </motion.div>
 
@@ -519,8 +519,8 @@ function EmployeeDashboard({ user, onLogout }) {
             <StaggerChildren stagger={0.1}>
               {/* Category Selector Cards */}
               <motion.div className="space-y-3" variants={SlideUp}>
-                <label className="text-sm font-semibold text-neutral-700 ml-1">Select Dispute Category</label>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <label className="text-sm font-semibold text-neutral-700 ml-1 mb-1">Select Dispute Category</label>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 my-3">
                   {[
                     { id: 'absent', label: 'Absent', icon: AlertOctagon, color: 'hover:border-error-500 hover:bg-error-50 text-error-600' },
                     { id: 'late', label: 'Late', icon: Watch, color: 'hover:border-warning-500 hover:bg-warning-50 text-warning-600' },
@@ -574,7 +574,7 @@ function EmployeeDashboard({ user, onLogout }) {
               </motion.div>
 
               {/* Rich Textarea Wrapper */}
-              <motion.div className="relative" variants={SlideUp}>
+              <motion.div className="relative mt-3" variants={SlideUp}>
                 <Textarea
                   label="Detailed Explanation"
                   placeholder="e.g., 'The facial recognition failed multiple times at 09:05 AM, but I was at the premises...'"
@@ -597,21 +597,24 @@ function EmployeeDashboard({ user, onLogout }) {
 }
 
 // Overview Tab Component
-function OverviewTab({ stats, logs, loading }) {
+function OverviewTab({ stats, logs, loading, setActiveTab, setShowDisputeModal, setDisputeForm }) {
+  const rows = Array.isArray(logs.records) ? logs.records : [];
+
   return (
     <SlideUp>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="flex flex-row gap-6">
         {/* Recent Activity */}
-        <Card className="lg:col-span-2">
+        <Card className="w-full">
           <CardHeader>
             <h3 className="text-lg font-semibold text-neutral-900">Recent Attendance</h3>
           </CardHeader>
           <CardBody>
             {loading ? (
               <div className="text-center py-8 text-neutral-500">Loading...</div>
-            ) : (Array.isArray(logs) ? logs : []).filter(log => log.status !== 'weekend').length > 0 ? (
+            ) : rows.filter(row => row.status !== 'weekend').length > 0 ? (
               <div className="space-y-4">
-                {(Array.isArray(logs) ? logs : []).filter(log => log.status !== 'weekend').slice(0, 5).map((log, idx) => (
+                <span></span>
+                {rows.filter(row => row.status !== 'weekend').slice(0, 5).map((row, idx) => (
                   <motion.div
                     key={idx}
                     initial={{ opacity: 0, x: -20 }}
@@ -621,15 +624,20 @@ function OverviewTab({ stats, logs, loading }) {
                   >
                     <div>
                       <p className="font-medium text-neutral-900">
-                        {new Date(log.date).toLocaleDateString()}
+                        {new Date(row.date).toLocaleDateString("en-us", {
+                          weekday: "long",
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                        })}
                       </p>
                       <p className="text-sm text-neutral-600">
-                        {log.check_in_time ? formatTime12h(log.check_in_time) : 'Not checked in'}
+                        {row.check_in_time ? formatTime12h(row.check_in_time) : 'Not checked in'}  -- {row.check_out_time ? formatTime12h(row.check_out_time) : 'Not checked out'}
                       </p>
                     </div>
                     <div className="text-right">
                       <span className="inline-block px-3 py-1 rounded-full text-xs font-medium bg-success/10 text-success">
-                        {log.status || 'Present'}
+                        {row.status || 'Present'}
                       </span>
                     </div>
                   </motion.div>
@@ -642,20 +650,28 @@ function OverviewTab({ stats, logs, loading }) {
         </Card>
 
         {/* Quick Actions */}
-        <Card>
+        <Card className="w-2/4 h-[14rem]">
           <CardHeader>
-            <h3 className="text-lg font-semibold text-neutral-900">Quick Actions</h3>
+            <h3 className="text-lg font-semibold text-neutral-900 mb-1">Quick Actions</h3>
           </CardHeader>
-          <CardBody className="space-y-3">
+          <CardBody className="space-y-3 mt-4">
             <Button className="w-full" variant="primary">
               <Download size={18} />
               Download Salary Slip
             </Button>
-            <Button className="w-full" variant="secondary">
+            {/* <Button className="w-full" variant="secondary">
               <FileText size={18} />
               View Full History
-            </Button>
-            <Button className="w-full" variant="ghost">
+            </Button> */}
+            <Button className="w-full" variant="ghost" onClick={() => {
+              // setActiveTab('disputes')
+              setShowDisputeModal(true);
+              setDisputeForm({
+                category: '',
+                dispute_date: '',
+                description: ''
+              });
+            }}>
               <Plus size={18} />
               File Dispute
             </Button>

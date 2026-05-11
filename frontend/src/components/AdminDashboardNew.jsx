@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users,
@@ -25,7 +25,7 @@ import StatCard from './dashboard/StatCard';
 import { Tabs } from './common/Tabs';
 import { Button } from './common/Button';
 import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
-import { SlideUp, StaggerChildren, FadeIn } from './animations';
+import { SlideUp, FadeIn } from './animations';
 import { Badge } from './common/Badge';
 import api from '../services/api';
 import StaffManager from './StaffManager';
@@ -45,7 +45,9 @@ import { formatTime12h } from '../utils/formatters';
 function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [absences, setAbsences] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [disputeLoading, setDisputeLoading] = useState(false);
   const [disputes, setDisputes] = useState([]);
   const [disputePagination, setDisputePagination] = useState({ currentPage: 1, totalPages: 1, totalRecords: 0 });
   const [selectedDispute, setSelectedDispute] = useState(null);
@@ -120,7 +122,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user?.user_id]);
 
   const handleNotificationClick = async (notif) => {
     if (!notif.read) {
@@ -139,8 +141,8 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     }
   };
 
-  const fetchOverviewData = async () => {
-    setLoading(true);
+  const fetchOverviewData = useCallback(async () => {
+    setOverviewLoading(true);
     try {
       const lastWeek = new Date();
       lastWeek.setDate(lastWeek.getDate() - 7);
@@ -172,11 +174,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     } catch (err) {
       console.error('Error fetching overview:', err);
     }
-    setLoading(false);
-  };
+    setOverviewLoading(false);
+  }, [employees.length]);
 
-  const fetchAttendanceData = async (startDate, endDate, status, userId, page = 1) => {
-    setLoading(true);
+  const fetchAttendanceData = useCallback(async (startDate, endDate, status, userId, page = 1) => {
+    setAttendanceLoading(true);
     const sDate = startDate !== undefined ? startDate : attendanceFilters.startDate;
     const eDate = endDate !== undefined ? endDate : attendanceFilters.endDate;
     const st = status !== undefined ? status : attendanceFilters.status;
@@ -195,11 +197,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     } catch (err) {
       console.error('Error fetching attendance:', err);
     }
-    setLoading(false);
-  };
+    setAttendanceLoading(false);
+  }, [attendanceFilters]);
 
-  const fetchDisputeData = async (page = 1) => {
-    setLoading(true);
+  const fetchDisputeData = useCallback(async (page = 1) => {
+    setDisputeLoading(true);
     try {
       const res = await api.getAllDisputes(page);
       if (res.data?.success) {
@@ -213,8 +215,8 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     } catch (err) {
       console.error('Error fetching disputes:', err);
     }
-    setLoading(false);
-  };
+    setDisputeLoading(false);
+  }, []);
 
   const handleAdminApproval = async (disputeId, action, remarks) => {
     try {
@@ -233,7 +235,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     }
   };
 
-  const handleUpdateEmployee = async (userId, value, key) => {
+  const handleUpdateEmployee = useCallback(async (userId, value, key) => {
     try {
       if (key === 'monthly_salary') {
         await api.updateEmployee(userId, value);
@@ -244,19 +246,19 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     } catch {
       alert("Failed to update setting");
     }
-  };
+  }, [fetchOverviewData]);
 
-  const handleShowHistory = (user) => {
+  const handleShowHistory = useCallback((user) => {
     alert(`Checking history for ${user.name}`);
-  };
+  }, []);
 
-  const handleUpdatePassword = async (userId, newPassword) => {
+  const handleUpdatePassword = useCallback(async (userId, newPassword) => {
     try {
       await api.updatePassword(userId, newPassword);
     } catch {
       alert("Failed to update password");
     }
-  };
+  }, []);
 
   const [isExporting, setIsExporting] = useState(false);
 
@@ -342,25 +344,20 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     ...(activeTab !== 'overview' ? [{ label: getTabLabel(activeTab), active: true }] : []),
   ];
 
-  const tabsConfig = [
+  const tabsConfig = useMemo(() => [
     {
       id: 'overview',
       label: 'Overview',
       content: <DashboardAnalytics stats={stats} employees={employees} absences={absences} />,
     },
     {
-      id: 'departments',
-      label: 'Departments',
-      content: <DepartmentManager />,
-    },
-    {
       id: 'attendance',
       label: 'Attendance',
       content: (
-        <AttendanceTab 
-          absences={absences} 
-          employees={employees} 
-          loading={loading} 
+        <AttendanceTab
+          absences={absences}
+          employees={employees}
+          loading={attendanceLoading}
           pagination={pagination}
           onFilterChange={(f) => fetchAttendanceData(f.startDate, f.endDate, f.category, f.userId, 1)}
           onPageChange={(page) => fetchAttendanceData(undefined, undefined, undefined, undefined, page)}
@@ -370,14 +367,15 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     {
       id: 'payroll',
       label: 'Payroll',
-      content: <PayrollTab report={report} loading={loading} onMonthChange={setPayrollExportMonth} />,
+      content: <PayrollTab report={report} loading={false} onMonthChange={setPayrollExportMonth} />,
     },
     {
       id: 'disputes',
       label: 'Disputes',
       content: (
-        <DisputesTab 
-          disputes={disputes} 
+        <DisputesTab
+          disputes={disputes}
+          loading={disputeLoading}
           pagination={disputePagination}
           onPageChange={fetchDisputeData}
           onViewDetail={(d) => { setSelectedDispute(d); setShowDisputeDetail(true); }}
@@ -385,19 +383,9 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       ),
     },
     {
-      id: 'holidays',
-      label: 'Holidays',
-      content: <HolidayCalendar isAdmin={true} />,
-    },
-    {
-      id: 'export',
-      label: 'Data Export',
-      content: <DataExportPanel />,
-    },
-    {
-      id: 'audit',
-      label: 'Audit Logs',
-      content: <AuditLogTab />,
+      id: 'departments',
+      label: 'Departments',
+      content: <DepartmentManager />,
     },
     {
       id: 'screenshots',
@@ -409,8 +397,8 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       label: 'Staff',
       content: (
         <div className="mt-6">
-          <StaffManager 
-            employees={employees} 
+          <StaffManager
+            employees={employees}
             onUpdate={handleUpdateEmployee}
             onShowHistory={handleShowHistory}
             onUpdatePassword={handleUpdatePassword}
@@ -419,7 +407,22 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         </div>
       ),
     },
-  ];
+    {
+      id: 'holidays',
+      label: 'Holidays',
+      content: <HolidayCalendar isAdmin={true} />,
+    },
+    {
+      id: 'export',
+      label: 'Export',
+      content: <DataExportPanel />,
+    },
+    {
+      id: 'audit',
+      label: 'Logs',
+      content: <AuditLogTab />,
+    },
+  ], [stats, employees, absences, attendanceLoading, pagination, report, disputes, disputeLoading, disputePagination, fetchAttendanceData, fetchDisputeData, fetchOverviewData, handleUpdateEmployee, handleShowHistory, handleUpdatePassword, onRefresh, setPayrollExportMonth]);
 
   return (
     <LayoutContainer
@@ -431,39 +434,25 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       notifications={notifications}
       onNotificationClick={handleNotificationClick}
     >
-      <StaggerChildren stagger={0.1}>
-        <motion.div className="mb-8 flex justify-between items-start">
-          <div>
-            <h1 className="text-3xl font-bold text-neutral-900">Administration Dashboard</h1>
-            <p className="text-neutral-600 mt-1">Manage attendance, staff, and payroll operations</p>
-          </div>
-          <div className="flex gap-3">
-            <Button variant="secondary" size="lg" onClick={handleSyncAttendance} disabled={isSyncing}>
-              <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
-              {isSyncing ? 'Syncing...' : 'Sync Attendance'}
-            </Button>
-            <Button
-              variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
-              size="lg"
-              onClick={handleExport}
-              disabled={isExporting}
-              title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
-            >
-              <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
-              {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Export Report'}
-            </Button>
-          </div>
-        </motion.div>
-
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
-          <Tabs
-            tabs={tabsConfig}
-            defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
-            onChange={(index) => setActiveTab(tabsConfig[index].id)}
-            variant="tabs"
-          />
-        </motion.div>
-      </StaggerChildren>
+      <div className="flex flex-row-reverse w-full mb-4">
+        <Button
+          variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
+          size="medium"
+          className='cursor-pointer px-4 py-2 rounded-md hover:bg-indigo-600'
+          onClick={handleExport}
+          disabled={isExporting}
+          title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
+        >
+          <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
+          {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Export Report'}
+        </Button>
+      </div>
+      <Tabs
+        tabs={tabsConfig}
+        defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
+        onChange={(index) => setActiveTab(tabsConfig[index].id)}
+        variant="tabs"
+      />
 
       <AnimatePresence>
         {showDisputeDetail && selectedDispute && (

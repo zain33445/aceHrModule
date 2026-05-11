@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Card, CardHeader, CardBody } from '../common/Card';
@@ -8,45 +8,46 @@ import { Users, Clock, AlertCircle, CheckCircle2, TrendingUp } from 'lucide-reac
 const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#6366F1'];
 
 export const DashboardAnalytics = ({ stats, employees = [], absences = [] }) => {
-  // Calculate attendance trend dynamically (last 7 days)
-  const trendMap = {};
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setHours(0,0,0,0);
-    d.setDate(d.getDate() - i);
-    const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
-    const dateStr = d.toISOString().split('T')[0];
-    trendMap[dateStr] = { name: dayName, present: 0, late: 0, absent: 0 };
-  }
-
-  absences.forEach(record => {
-    const rDate = new Date(record.date);
-    const dateStr = rDate.toISOString().split('T')[0];
-    if (trendMap[dateStr]) {
-      if (record.status === 'present') trendMap[dateStr].present++;
-      else if (record.status === 'late' || record.is_late) trendMap[dateStr].late++;
-      else if (record.status === 'absent') trendMap[dateStr].absent++;
+  const { attendanceTrend, departmentData } = useMemo(() => {
+    const trendMap = {};
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0,0,0,0);
+      d.setDate(d.getDate() - i);
+      const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const dateStr = d.toISOString().split('T')[0];
+      trendMap[dateStr] = { name: dayName, present: 0, late: 0, absent: 0 };
     }
-  });
 
-  const attendanceTrend = Object.values(trendMap);
+    absences.forEach(record => {
+      const rDate = new Date(record.date);
+      const dateStr = rDate.toISOString().split('T')[0];
+      if (trendMap[dateStr]) {
+        if (record.status === 'present') trendMap[dateStr].present++;
+        else if (record.status === 'late' || record.is_late) trendMap[dateStr].late++;
+        else if (record.status === 'absent') trendMap[dateStr].absent++;
+      }
+    });
 
-  const departmentData = [
-    { name: 'Engineering', value: employees.filter(e => e.department?.name === 'Engineering').length || 40 },
-    { name: 'Marketing', value: employees.filter(e => e.department?.name === 'Marketing').length || 15 },
-    { name: 'IT', value: employees.filter(e => e.department?.name === 'IT').length || 20 },
-  ].filter(d => d.value > 0);
+    const attendanceTrend = Object.values(trendMap);
 
-  if (departmentData.length === 0) {
-    departmentData.push({ name: 'Staff', value: 100 });
-  }
+    const deptMap = {};
+    employees.forEach(e => {
+      const name = e.department?.name;
+      if (name) deptMap[name] = (deptMap[name] || 0) + 1;
+    });
+    let departmentData = Object.entries(deptMap).map(([name, value]) => ({ name, value }));
+    if (departmentData.length === 0) departmentData = [{ name: 'Staff', value: 100 }];
+
+    return { attendanceTrend, departmentData };
+  }, [absences, employees]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div>
+      {/* <div>
         <h2 className="text-2xl font-bold tracking-tight text-neutral-900">Dashboard Analytics</h2>
         <p className="text-neutral-500 mt-1">Real-time overview of attendance, staff, and payroll.</p>
-      </div>
+      </div> */}
 
       {/* Primary KPI Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

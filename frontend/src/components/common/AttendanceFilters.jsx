@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Filter, Calendar, ChevronDown } from 'lucide-react';
+import { Filter, Calendar, User } from 'lucide-react';
 import { Button } from './Button';
+import { Select } from './Select';
 import { formatDateLocal } from '../../utils/formatters';
 
 export const AttendanceFilters = ({ onFilterChange, employees = [], excludeCategories = [], showCategory = true }) => {
@@ -55,61 +56,43 @@ export const AttendanceFilters = ({ onFilterChange, employees = [], excludeCateg
     <div className="flex flex-wrap items-end gap-6 p-4 bg-neutral-50 rounded-xl border border-neutral-200 mb-6 group">
       {employees.length > 0 && (
         <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-            Employee
-          </label>
-          <div className="relative">
-            <select
-              value={selectedUser}
-              onChange={(e) => setSelectedUser(e.target.value)}
-              className="w-full pl-4 pr-10 py-2.5 bg-white border border-neutral-300 rounded-lg appearance-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all cursor-pointer text-sm"
-            >
-              <option value="all">All Employees</option>
-              {employees.map(emp => (
-                <option key={emp.id} value={emp.id}>{emp.name}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" size={16} />
-          </div>
+          <Select
+            label="Employee"
+            value={selectedUser}
+            onChange={setSelectedUser}
+            icon={User}
+            options={[
+              { value: 'all', label: 'All Employees' },
+              ...employees.map(emp => ({ value: emp.id, label: emp.name }))
+            ]}
+          />
         </div>
       )}
 
       {showCategory && (
         <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-            Category
-          </label>
-          <div className="relative">
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="w-full pl-4 pr-10 py-2.5 bg-white border border-neutral-300 rounded-lg appearance-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all cursor-pointer text-sm"
-            >
-              {categories.map(cat => (
-                <option key={cat.value} value={cat.value}>{cat.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" size={16} />
-          </div>
+          <Select
+            label="Category"
+            value={category}
+            onChange={setCategory}
+            icon={Filter}
+            options={categories}
+          />
         </div>
       )}
 
       <div className="flex-1 min-w-[200px]">
-        <label className="block text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">
-          Date Range
-        </label>
-        <div className="relative">
-          <select
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
-            className="w-full pl-4 pr-10 py-2.5 bg-white border border-neutral-300 rounded-lg appearance-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all cursor-pointer text-sm"
-          >
-            <option value="current_month">Current Month</option>
-            <option value="last_month">Last Month</option>
-            <option value="custom">Custom Range</option>
-          </select>
-          <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" size={16} />
-        </div>
+        <Select
+          label="Date Range"
+          value={dateRange}
+          onChange={setDateRange}
+          icon={Calendar}
+          options={[
+            { value: 'current_month', label: 'Current Month' },
+            { value: 'last_month', label: 'Last Month' },
+            { value: 'custom', label: 'Custom Range' },
+          ]}
+        />
       </div>
 
       {dateRange === 'custom' && (

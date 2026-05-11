@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Building2, Plus, Edit2, Trash2, UserCheck, Star, UserPlus, UserMinus, Search, X } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Button } from '../common/Button';
-import { Modal, Input, Badge } from '../common';
+import { Modal, Input, Badge, Select } from '../common';
 import api from '../../services/api';
 
 export const DepartmentManager = () => {
@@ -213,17 +213,13 @@ export const DepartmentManager = () => {
               required
             />
             <div className="space-y-1">
-              <label className="block text-sm font-medium text-neutral-700">Assign Department Lead</label>
-              <select
+              <Select
+                label="Assign Department Lead"
                 value={form.lead_id}
-                onChange={(e) => setForm({ ...form, lead_id: e.target.value })}
-                className="w-full px-3 py-2 bg-neutral-50 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 outline-none transition-all"
-              >
-                <option value="">Select a Lead (Optional)</option>
-                {users.map(u => (
-                  <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                ))}
-              </select>
+                onChange={val => setForm({ ...form, lead_id: val })}
+                placeholder="Select a Lead (Optional)"
+                options={users.map(u => ({ value: u.id, label: `${u.name} (${u.role})` }))}
+              />
               <p className="text-xs text-neutral-500 italic">Leads can approve disputes for this department.</p>
             </div>
             <Input

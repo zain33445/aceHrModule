@@ -66,12 +66,17 @@ export const LeaveRequestHub = ({ user, isAdmin = false }) => {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={filterStr} onChange={(e) => setFilterStr(e.target.value)} className="w-40">
-            <option value="all">All Statuses</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-          </Select>
+          <Select 
+            value={filterStr} 
+            onChange={setFilterStr} 
+            className="w-48"
+            options={[
+              { value: 'all', label: 'All Statuses' },
+              { value: 'pending', label: 'Pending' },
+              { value: 'approved', label: 'Approved' },
+              { value: 'rejected', label: 'Rejected' },
+            ]}
+          />
           {!isAdmin && (
             <Button onClick={() => setShowModal(true)} className="flex items-center gap-2">
               <Plus size={16} /> Request Leave
