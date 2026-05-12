@@ -35,74 +35,28 @@ export const Navbar = ({
   return (
     <motion.nav
       ref={navRef}
-      className="sticky top-0 z-30 bg-white border-b border-neutral-200 shadow-sm h-16 flex items-center"
+      className="sticky top-0 z-30 bg-white border-b border-neutral-200 shadow-sm h-20 flex items-center"
     >
       <div className="max-w-full w-full px-4 sm:px-6 lg:px-4 h-full">
-        <div className="relative flex items-center justify-between h-full">
+        <div className="flex items-center justify-between h-full">
           
-          {/* Left: User Menu */}
-          <div className="flex items-center flex-1">
-            <div className="relative">
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 p-1 hover:bg-neutral-100 rounded-lg transition-colors"
-              >
-                <Avatar
-                  name={user?.name || 'User'}
-                  size="sm"
-                  className="flex-shrink-0"
-                />
-                <div className="hidden sm:flex flex-col items-start text-sm">
-                  <span className="font-medium text-neutral-900 leading-none">
-                    {user?.name || 'User'}
-                  </span>
-                  <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold mt-0.5">
-                    {user?.role || 'Employee'}
-                  </span>
-                </div>
-                <ChevronDown
-                  size={14}
-                  className={`text-neutral-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}
-                />
-              </motion.button>
-
-              {/* User Dropdown */}
-              {showUserMenu && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="absolute left-0 mt-2 w-48 bg-white rounded-lg shadow-xl border border-neutral-100 py-2 z-40"
-                >
-                  <button
-                    onClick={onLogout}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-error hover:bg-error/5 transition-colors font-medium"
-                  >
-                    <LogOut size={16} />
-                    Logout
-                  </button>
-                </motion.div>
-              )}
-            </div>
-          </div>
-
-          {/* Center: Branding */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center gap-3 pointer-events-none">
+          {/* Left: Branding */}
+          <div className="flex items-center gap-3">
             <div className="flex-shrink-0">
               <img 
                 src={aceLogo} 
                 alt="aceLogo" 
-                className="w-10 h-10 object-contain rounded-lg shadow-sm"
+                className="w-16 h-16 object-contain"
               />
             </div>
-            <h2 className='text-4xl text-primary-500 font-bebas-neue tracking-wider leading-none mt-1'>
+            <h2 className='text-3xl text-primary-500 font-bebas-neue tracking-wider leading-none mt-1'>
               ACE Services
             </h2>
           </div>
 
-          {/* Right: Notifications */}
-          <div className="flex items-center justify-end flex-1">
+          {/* Right: Notifications & User Menu */}
+          <div className="flex items-center gap-4">
+            {/* Notifications */}
             <div className="relative">
               <motion.button
                 whileHover={{ scale: 1.05 }}
@@ -156,6 +110,51 @@ export const Navbar = ({
                       No notifications
                     </p>
                   )}
+                </motion.div>
+              )}
+            </div>
+
+            {/* User Menu */}
+            <div className="relative border-l border-neutral-200 pl-4 h-8 flex items-center">
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2 p-1 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                <Avatar
+                  name={user?.name || 'User'}
+                  size="sm"
+                  className="flex-shrink-0"
+                />
+                <div className="hidden sm:flex flex-col items-end text-sm">
+                  <span className="font-medium text-neutral-900 leading-none">
+                    {user?.name?.toUpperCase() || 'User'}
+                  </span>
+                  <span className="text-[10px] text-neutral-500 uppercase tracking-wider font-semibold mt-0.5">
+                    {user?.role || 'Employee'}
+                  </span>
+                </div>
+                <ChevronDown
+                  size={14}
+                  className={`text-neutral-400 transition-transform ${showUserMenu ? 'rotate-180' : ''}`}
+                />
+              </motion.button>
+
+              {/* User Dropdown */}
+              {showUserMenu && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-xl border border-neutral-100 py-2 z-40"
+                >
+                  <button
+                    onClick={onLogout}
+                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-error hover:bg-error/5 transition-colors font-medium"
+                  >
+                    <LogOut size={16} />
+                    Logout
+                  </button>
                 </motion.div>
               )}
             </div>

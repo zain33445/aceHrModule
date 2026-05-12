@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import LayoutContainer from './layout/LayoutContainer';
 import StatCard from './dashboard/StatCard';
-import { Tabs } from './common/Tabs';
 import { Button } from './common/Button';
 import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
 import { SlideUp, StaggerChildren } from './animations';
@@ -469,12 +468,10 @@ function EmployeeDashboard({ user, onLogout }) {
               /> 
             </div>
           )}
-          <Tabs
-            tabs={tabsConfig}
-            defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
-            onChange={(index) => setActiveTab(tabsConfig[index].id)}
-            variant="tabs"
-          />
+          {/* Main Content Area */}
+          <div className="flex-1">
+            {tabsConfig.find((t) => t.id === activeTab)?.content}
+          </div>
 
 
 

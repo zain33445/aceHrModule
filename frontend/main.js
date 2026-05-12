@@ -49,30 +49,47 @@ let tray = null;
 // ─────────────────────────────────────────
 
 const isDev = !app.isPackaged;
+if (isDev) {
+  // Use a separate user data folder for development to avoid cache/lock conflicts
+  app.setPath('userData', path.join(app.getPath('appData'), 'acehrm-dev'));
+}
 
 // Resolve the correct icon path for both dev and prod
 const getIconPath = () => {
+  const iconFileName = 'aceLogo.png';
   if (isDev) {
-    return path.join(__dirname, 'public', 'aceLogo.png');
+    return path.resolve(__dirname, 'public', iconFileName);
   } else {
-    // In production, assets are typically next to the app or in resources
-    // Depending on builder config, but usually dist contains it.
-    return path.join(__dirname, 'dist_build', 'aceLogo.png');
+    // In production, assets from 'public' are copied to the root of 'dist_build'
+    return path.resolve(__dirname, 'dist_build', iconFileName);
   }
 };
 
 function createWindow() {
+  const iconPath = getIconPath();
+  logger.info(`Resolved icon path: ${iconPath}`);
+  
+  // Create a high-quality icon object and ensure it's resized for Windows
+  const icon = nativeImage.createFromPath(iconPath);
+  const taskbarIcon = icon.resize({ width: 256, height: 256, quality: 'best' });
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'aceHRM',
-    icon: getIconPath(),
+    icon: taskbarIcon,
+    show: false, // Don't show until icon and content are ready
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'electron', 'preload.js'),
       backgroundThrottling: false,
     },
+  });
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.setIcon(taskbarIcon);
+    mainWindow.show();
   });
 
 if (isDev) {

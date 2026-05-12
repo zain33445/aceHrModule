@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import LayoutContainer from './layout/LayoutContainer';
 import StatCard from './dashboard/StatCard';
-import { Tabs } from './common/Tabs';
 import { Button } from './common/Button';
 import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
 import { SlideUp, FadeIn } from './animations';
@@ -40,6 +39,7 @@ import { AuditLogTab } from './audit/AuditLogTab';
 import { DataExportPanel } from './export/DataExportPanel';
 import ScreenshotsTab from './dashboard/ScreenshotsTab';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
+import { SettingsTab } from './dashboard/SettingsTab';
 import { formatTime12h } from '../utils/formatters';
 
 function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
@@ -422,7 +422,12 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       label: 'Logs',
       content: <AuditLogTab />,
     },
-  ], [stats, employees, absences, attendanceLoading, pagination, report, disputes, disputeLoading, disputePagination, fetchAttendanceData, fetchDisputeData, fetchOverviewData, handleUpdateEmployee, handleShowHistory, handleUpdatePassword, onRefresh, setPayrollExportMonth]);
+    {
+      id: 'settings',
+      label: 'Settings',
+      content: <SettingsTab user={user} />,
+    },
+  ], [stats, employees, absences, attendanceLoading, pagination, report, disputes, disputeLoading, disputePagination, fetchAttendanceData, fetchDisputeData, fetchOverviewData, handleUpdateEmployee, handleShowHistory, handleUpdatePassword, onRefresh, setPayrollExportMonth, user]);
 
   return (
     <LayoutContainer
@@ -434,25 +439,26 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       notifications={notifications}
       onNotificationClick={handleNotificationClick}
     >
-      <div className="flex flex-row-reverse w-full mb-4">
+      {(activeTab === 'attendance' || activeTab === 'payroll') && (
+      <div className="flex justify-end mb-6">
         <Button
           variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
           size="medium"
-          className='cursor-pointer px-4 py-2 rounded-md hover:bg-indigo-600'
+          className="flex items-center gap-2 shadow-sm p-3"
           onClick={handleExport}
           disabled={isExporting}
           title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
         >
           <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
-          {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Export Report'}
+          {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Quick Export'}
         </Button>
       </div>
-      <Tabs
-        tabs={tabsConfig}
-        defaultTab={tabsConfig.findIndex((t) => t.id === activeTab)}
-        onChange={(index) => setActiveTab(tabsConfig[index].id)}
-        variant="tabs"
-      />
+      )}
+
+      {/* Main Content Area */}
+      <div className="flex-1">
+        {tabsConfig.find((t) => t.id === activeTab)?.content}
+      </div>
 
       <AnimatePresence>
         {showDisputeDetail && selectedDispute && (
