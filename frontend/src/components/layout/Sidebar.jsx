@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import packageJson from '../../../package.json';
 import {
   LayoutDashboard,
   Users,
@@ -19,8 +20,58 @@ import {
 } from 'lucide-react';
 
 export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    try {
+      const saved = localStorage.getItem('isCollapsed');
+      return saved !== null ? JSON.parse(saved) : false;
+    } catch {
+      return true;
+    }
+  });
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [isClientOnline, setIsClientOnline] = useState(navigator.onLine);
+  const [isBackendOnline, setIsBackendOnline] = useState(true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsClientOnline(true);
+    const handleOffline = () => setIsClientOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const checkBackend = async () => {
+      if (!navigator.onLine) return; // Don't check if client is offline
+      try {
+        const baseUrl = import.meta.env.VITE_API_BASE?.replace(/\/api\/?$/, '') || 'http://localhost:5000';
+        const res = await fetch(baseUrl);
+        setIsBackendOnline(res.ok);
+      } catch (e) {
+        setIsBackendOnline(false);
+      }
+    };
+
+    checkBackend();
+    const interval = setInterval(checkBackend, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
+
+  let statusColor = 'bg-success-500';
+  let statusText = 'System Online';
+
+  if (!isClientOnline) {
+    statusColor = 'bg-yellow-500';
+    statusText = 'Client Offline';
+  } else if (!isBackendOnline) {
+    statusColor = 'bg-red-500';
+    statusText = 'Server Offline';
+  }
 
   const userRole = user?.role;
   const isLead = user?.is_lead;
@@ -60,6 +111,10 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
     });
   }
 
+  useEffect(() => {
+    localStorage.setItem('isCollapsed', JSON.stringify(isCollapsed));
+  }, [isCollapsed]);
+
   const handleNavClick = (id) => {
     onTabChange?.(id);
     setIsMobileOpen(false);
@@ -93,7 +148,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
       <motion.aside
         initial={false}
         animate={{
-          width: isCollapsed ? '80px' : '260px',
+          width: isCollapsed ? '80px' : '250px',
         }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         className={`fixed left-0 top-20 h-[calc(100vh-80px)] bg-white border-r border-neutral-200 flex flex-col z-40 transition-transform lg:transition-none ${
@@ -109,7 +164,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
         >
           <ChevronRight
             size={14}
-            className={`text-neutral-500 transition-transform ${
+            className={`text-neutral-1000 transition-transform ${
               isCollapsed ? 'rotate-0' : 'rotate-180'
             }`}
           />
@@ -117,9 +172,10 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
 
         {/* Navigation Items */}
         <nav className="flex-1 overflow-y-auto p-4 space-y-2 no-scrollbar">
-          {navItems.map((item) => {
+          {navItems.map((item, index) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const isLast = index === navItems.length - 1;
 
             return (
               <motion.button
@@ -127,10 +183,12 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
                 whileHover={{ x: 4 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group ${
+                className={`w-full flex items-center gap-3 px-3 py-3 border-b-[2px] transition-all duration-200 group ${
                   isActive
-                    ? 'bg-primary-50 text-primary-600 shadow-sm'
-                    : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900'
+                    ? 'bg-primary-50 border-primary-500 text-primary-600 shadow-sm rounded-2xl'
+                    : `text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900 hover:rounded-2xl ${
+                        isLast ? 'border-transparent' : 'border-neutral-100 hover:border-neutral-300'
+                      }`
                 } ${isCollapsed ? 'justify-center' : ''}`}
                 title={isCollapsed ? item.label : ''}
               >
@@ -164,13 +222,13 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
             }`}
           >
             <div className="relative">
-              <div className="w-2.5 h-2.5 rounded-full bg-success-500" />
-              <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-success-500 animate-ping opacity-75" />
+              <div className={`w-2.5 h-2.5 rounded-full ${statusColor}`} />
+              <div className={`absolute inset-0 w-2.5 h-2.5 rounded-full ${statusColor} animate-ping opacity-75`} />
             </div>
             {!isCollapsed && (
               <div className="flex flex-col">
-                <span className="text-xs font-bold text-neutral-900">System Online</span>
-                <span className="text-[10px] text-neutral-500">v1.1.2</span>
+                <span className="text-xs font-bold text-neutral-900">{statusText}</span>
+                <span className="text-[10px] text-neutral-500">v{packageJson.version}</span>
               </div>
             )}
           </div>
@@ -181,7 +239,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
       <div
         className="hidden lg:block h-full flex-shrink-0"
         style={{
-          width: isCollapsed ? '80px' : '260px',
+          width: isCollapsed ? '80px' : '250px',
           transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       />

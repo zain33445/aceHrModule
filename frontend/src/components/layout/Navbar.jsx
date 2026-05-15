@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, ChevronDown, LogOut } from 'lucide-react';
+import { Bell, ChevronDown, LogOut, RefreshCw } from 'lucide-react';
 import Avatar from '../common/Avatar';
 import aceLogo from '../../assets/aceLogo.png';
 
@@ -15,7 +15,7 @@ export const Navbar = ({
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-
+const [reloading, setReloading] = useState(false);
   const unreadCount = notifications.filter((n) => !n.read).length;
   const navRef = useRef(null);
 
@@ -41,7 +41,16 @@ export const Navbar = ({
         <div className="flex items-center justify-between h-full">
           
           {/* Left: Branding */}
-          <div className="flex items-center gap-3">
+          <div 
+            className="flex items-center gap-3 cursor-pointer hover:scale-110 transition-transform duration-800 ease-in-out"
+            onClick={() => window.location.reload()}
+          >
+            {reloading ? (
+              <div className="flex items-center gap-3">
+                <RefreshCw className="animate-spin text-primary-500" size={20} />
+                <span className="text-primary-500 font-medium">Reloading...</span>
+              </div>
+            ) : (<>
             <div className="flex-shrink-0">
               <img 
                 src={aceLogo} 
@@ -52,6 +61,10 @@ export const Navbar = ({
             <h2 className='text-3xl text-primary-500 font-bebas-neue tracking-wider leading-none mt-1'>
               ACE Services
             </h2>
+            </>
+          
+            )}
+            
           </div>
 
           {/* Right: Notifications & User Menu */}

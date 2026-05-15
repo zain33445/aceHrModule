@@ -34,7 +34,14 @@ import { formatTime12h, formatDateLocal } from '../utils/formatters';
 import { LeadDisputeDashboard } from './LeadDisputeDashboard';
 
 function EmployeeDashboard({ user, onLogout }) {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    return sessionStorage.getItem('employeeDashboardActiveTab') || 'overview';
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('employeeDashboardActiveTab', activeTab);
+  }, [activeTab]);
+
   const [stats, setStats] = useState(null);
   const [logs, setLogs] = useState([]);
   const [absences, setAbsences] = useState([]);

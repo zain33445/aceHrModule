@@ -192,7 +192,7 @@ const ScreenshotsTab = ({ user, isAdmin = false, employees = [] }) => {
             <div className="text-center py-16 text-neutral-500 bg-neutral-50/50 rounded-xl border border-dashed border-neutral-200">
               <ImageIcon size={48} className="mx-auto text-neutral-300 mb-4 opacity-50" />
               <p className="font-semibold text-neutral-600">No screenshots found</p>
-              <p className="text-sm text-neutral-400 mt-1 max-w-xs mx-auto">
+              <p className="text-sm text-neutral-400 mt-1 mx-auto">
                 There are no monitoring records for {isAdmin ? 'this employee' : 'you'} during the selected period.
               </p>
             </div>

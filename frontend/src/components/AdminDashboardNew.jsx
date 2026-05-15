@@ -43,7 +43,14 @@ import { SettingsTab } from './dashboard/SettingsTab';
 import { formatTime12h } from '../utils/formatters';
 
 function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(() => {
+    return sessionStorage.getItem('adminDashboardActiveTab') || 'overview';
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem('adminDashboardActiveTab', activeTab);
+  }, [activeTab]);
+
   const [absences, setAbsences] = useState([]);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -87,11 +94,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
   };
 
   useEffect(() => {
-    if (activeTab === 'overview') {
+    if (activeTab === 'overview' || activeTab.toLocaleUpperCase() === 'analytics') {
       fetchOverviewData();
     } else if (activeTab === 'attendance') {
       fetchAttendanceData();
-    } else if (activeTab === 'disputes') {
+    } else if (activeTab?.toLocaleLowerCase() === 'disputes') {
       fetchDisputeData();
     }
   }, [activeTab]);
