@@ -64,4 +64,53 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Assign an employee to this department
+router.put('/:id/assign-employee', async (req, res) => {
+  const deptId = parseInt(req.params.id);
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    await prisma.user.update({
+      where: { id: String(user_id) },
+      data: { department_id: deptId }
+    });
+    // Return fresh department data
+    const department = await prisma.department.findUnique({
+      where: { id: deptId },
+      include: {
+        shift: true,
+        lead: { select: { id: true, name: true } },
+        users: { select: { id: true, name: true, role: true } }
+      }
+    });
+    res.json(department);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to assign employee' });
+  }
+});
+
+// Remove an employee from this department (set department_id to null)
+router.put('/:id/remove-employee', async (req, res) => {
+  const deptId = parseInt(req.params.id);
+  const { user_id } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    await prisma.user.update({
+      where: { id: String(user_id) },
+      data: { department_id: null }
+    });
+    const department = await prisma.department.findUnique({
+      where: { id: deptId },
+      include: {
+        shift: true,
+        lead: { select: { id: true, name: true } },
+        users: { select: { id: true, name: true, role: true } }
+      }
+    });
+    res.json(department);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to remove employee' });
+  }
+});
+
 export default router;

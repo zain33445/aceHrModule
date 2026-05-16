@@ -8,24 +8,52 @@ const router = Router();
 // Python microservice posts data here
 router.post('/attendance', async (req, res) => {
   const logs = req.body;
-  
+
   if (!Array.isArray(logs)) {
     return res.status(400).json({ error: "Logs must be an array" });
   }
 
+  console.log(logs[logs.length - 1])
+
   let insertedCount = 0;
+
+  const syncedDates: Date[] = [];
 
   for (const log of logs) {
     try {
       const userId = String(log.user_id);
-      
+      const timestamp = new Date(log.timestamp);
+      timestamp.setHours(timestamp.getHours() - 12);
       // Check if user exists in our system
+
       const userExists = await prisma.user.findUnique({
         where: { id: userId }
       });
 
+
       if (!userExists) {
-        console.warn(`[Webhook] Skipping attendance log for unknown user ID: ${userId}`);
+        continue;
+      }
+
+      const startOfDay = new Date(timestamp);
+      startOfDay.setHours(0, 0, 0, 0);
+
+      const endOfDay = new Date(timestamp);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const duplicate = await prisma.attendanceLog.findFirst({
+        where: {
+          user_id: userId,
+          status: Number(log.status),
+          timestamp: {
+            gte: startOfDay,
+            lte: endOfDay
+          }
+        }
+      });
+
+      if (duplicate) {
+        console.log(`[Webhook] Duplicate attendance log for user ID: ${userId}: ${timestamp} with status ${log.status}`);
         continue;
       }
 
@@ -33,17 +61,18 @@ router.post('/attendance', async (req, res) => {
         where: {
           user_id_timestamp_status: {
             user_id: userId,
-            timestamp: new Date(log.timestamp),
+            timestamp,
             status: Number(log.status)
           }
         },
         update: {},
         create: {
           user_id: userId,
-          timestamp: new Date(log.timestamp),
+          timestamp,
           status: Number(log.status)
         }
       });
+      syncedDates.push(timestamp);
       insertedCount++;
     } catch (error) {
       console.log(error)
@@ -51,10 +80,10 @@ router.post('/attendance', async (req, res) => {
   }
 
   const syncedUserIds = [...new Set(logs.map((log: any) => String(log.user_id)))];
-  
+
   if (syncedUserIds.length > 0) {
     // Fire off the live sync asynchronously in the background so it doesn't block the webhook response
-    AbsenceService.processLiveSync(syncedUserIds, new Date()).catch(console.error);
+    AbsenceService.processLiveSync(syncedUserIds, syncedDates.length > 0 ? syncedDates : new Date()).catch(console.error);
   }
 
   res.json({ message: "Webhook received", inserted: insertedCount, liveSyncedIds: syncedUserIds.length });
@@ -62,7 +91,7 @@ router.post('/attendance', async (req, res) => {
 
 router.post('/users', async (req, res) => {
   const users = req.body;
-  
+
   if (!Array.isArray(users)) {
     return res.status(400).json({ error: "Users must be an array" });
   }
@@ -70,9 +99,9 @@ router.post('/users', async (req, res) => {
   // Only proceed if the users table is currently empty
   const currentTotalUsers = await prisma.user.count();
   if (currentTotalUsers > 0) {
-    return res.json({ 
-      message: "Users sync skipped: user table is not empty", 
-      inserted: 0 
+    return res.json({
+      message: "Users sync skipped: user table is not empty",
+      inserted: 0
     });
   }
 

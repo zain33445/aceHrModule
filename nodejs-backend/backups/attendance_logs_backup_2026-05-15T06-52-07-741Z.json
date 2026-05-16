@@ -1,0 +1,3266 @@
+[
+  {
+    "id": 8791,
+    "user_id": "29",
+    "timestamp": "2026-04-01T10:02:48.000Z",
+    "status": 1
+  },
+  {
+    "id": 8792,
+    "user_id": "28",
+    "timestamp": "2026-04-01T10:02:52.000Z",
+    "status": 1
+  },
+  {
+    "id": 8793,
+    "user_id": "13",
+    "timestamp": "2026-04-01T10:04:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 8794,
+    "user_id": "32",
+    "timestamp": "2026-04-01T15:01:56.000Z",
+    "status": 0
+  },
+  {
+    "id": 8795,
+    "user_id": "33",
+    "timestamp": "2026-04-01T15:14:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 8796,
+    "user_id": "25",
+    "timestamp": "2026-04-01T15:15:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 8797,
+    "user_id": "25",
+    "timestamp": "2026-04-01T23:49:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 8798,
+    "user_id": "32",
+    "timestamp": "2026-04-01T23:55:46.000Z",
+    "status": 1
+  },
+  {
+    "id": 8799,
+    "user_id": "33",
+    "timestamp": "2026-04-01T23:56:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 8800,
+    "user_id": "13",
+    "timestamp": "2026-04-02T00:55:14.000Z",
+    "status": 0
+  },
+  {
+    "id": 8801,
+    "user_id": "26",
+    "timestamp": "2026-04-02T00:58:30.000Z",
+    "status": 0
+  },
+  {
+    "id": 8802,
+    "user_id": "21",
+    "timestamp": "2026-04-02T01:07:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 8803,
+    "user_id": "29",
+    "timestamp": "2026-04-02T01:17:06.000Z",
+    "status": 0
+  },
+  {
+    "id": 8804,
+    "user_id": "28",
+    "timestamp": "2026-04-02T01:33:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 8805,
+    "user_id": "21",
+    "timestamp": "2026-04-02T10:03:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 8806,
+    "user_id": "28",
+    "timestamp": "2026-04-02T10:03:23.000Z",
+    "status": 1
+  },
+  {
+    "id": 8807,
+    "user_id": "13",
+    "timestamp": "2026-04-02T10:10:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 8808,
+    "user_id": "26",
+    "timestamp": "2026-04-02T11:19:51.000Z",
+    "status": 1
+  },
+  {
+    "id": 8809,
+    "user_id": "32",
+    "timestamp": "2026-04-02T15:11:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 8810,
+    "user_id": "25",
+    "timestamp": "2026-04-02T15:11:52.000Z",
+    "status": 0
+  },
+  {
+    "id": 8811,
+    "user_id": "33",
+    "timestamp": "2026-04-02T15:16:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 8812,
+    "user_id": "25",
+    "timestamp": "2026-04-02T23:52:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 8813,
+    "user_id": "33",
+    "timestamp": "2026-04-02T23:56:13.000Z",
+    "status": 1
+  },
+  {
+    "id": 8814,
+    "user_id": "32",
+    "timestamp": "2026-04-02T23:58:59.000Z",
+    "status": 1
+  },
+  {
+    "id": 8815,
+    "user_id": "13",
+    "timestamp": "2026-04-03T00:51:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 8816,
+    "user_id": "26",
+    "timestamp": "2026-04-03T00:57:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 8817,
+    "user_id": "28",
+    "timestamp": "2026-04-03T01:04:40.000Z",
+    "status": 0
+  },
+  {
+    "id": 8818,
+    "user_id": "21",
+    "timestamp": "2026-04-03T01:14:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 8819,
+    "user_id": "29",
+    "timestamp": "2026-04-03T01:15:11.000Z",
+    "status": 0
+  },
+  {
+    "id": 8820,
+    "user_id": "26",
+    "timestamp": "2026-04-03T10:03:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 8821,
+    "user_id": "29",
+    "timestamp": "2026-04-03T10:03:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 8822,
+    "user_id": "21",
+    "timestamp": "2026-04-03T10:03:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 8823,
+    "user_id": "28",
+    "timestamp": "2026-04-03T10:04:46.000Z",
+    "status": 1
+  },
+  {
+    "id": 8824,
+    "user_id": "13",
+    "timestamp": "2026-04-03T10:04:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 8825,
+    "user_id": "32",
+    "timestamp": "2026-04-05T15:09:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 8826,
+    "user_id": "25",
+    "timestamp": "2026-04-05T15:15:33.000Z",
+    "status": 0
+  },
+  {
+    "id": 8827,
+    "user_id": "33",
+    "timestamp": "2026-04-05T16:34:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 8828,
+    "user_id": "33",
+    "timestamp": "2026-04-05T18:57:27.000Z",
+    "status": 0
+  },
+  {
+    "id": 8829,
+    "user_id": "25",
+    "timestamp": "2026-04-05T19:27:50.000Z",
+    "status": 1
+  },
+  {
+    "id": 8830,
+    "user_id": "32",
+    "timestamp": "2026-04-05T23:55:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 8831,
+    "user_id": "26",
+    "timestamp": "2026-04-06T01:01:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 8832,
+    "user_id": "13",
+    "timestamp": "2026-04-06T01:01:52.000Z",
+    "status": 0
+  },
+  {
+    "id": 8833,
+    "user_id": "21",
+    "timestamp": "2026-04-06T01:06:06.000Z",
+    "status": 0
+  },
+  {
+    "id": 8834,
+    "user_id": "28",
+    "timestamp": "2026-04-06T01:20:43.000Z",
+    "status": 0
+  },
+  {
+    "id": 8835,
+    "user_id": "29",
+    "timestamp": "2026-04-06T01:39:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 8836,
+    "user_id": "28",
+    "timestamp": "2026-04-06T10:04:13.000Z",
+    "status": 1
+  },
+  {
+    "id": 8837,
+    "user_id": "29",
+    "timestamp": "2026-04-06T10:04:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 8838,
+    "user_id": "26",
+    "timestamp": "2026-04-06T10:05:35.000Z",
+    "status": 1
+  },
+  {
+    "id": 8839,
+    "user_id": "13",
+    "timestamp": "2026-04-06T10:06:02.000Z",
+    "status": 1
+  },
+  {
+    "id": 8840,
+    "user_id": "21",
+    "timestamp": "2026-04-06T10:06:36.000Z",
+    "status": 1
+  },
+  {
+    "id": 8841,
+    "user_id": "32",
+    "timestamp": "2026-04-06T15:04:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 8842,
+    "user_id": "25",
+    "timestamp": "2026-04-06T15:08:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 8843,
+    "user_id": "25",
+    "timestamp": "2026-04-06T23:56:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 8844,
+    "user_id": "32",
+    "timestamp": "2026-04-06T23:57:52.000Z",
+    "status": 1
+  },
+  {
+    "id": 8845,
+    "user_id": "12",
+    "timestamp": "2026-04-06T23:58:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 8846,
+    "user_id": "13",
+    "timestamp": "2026-04-07T00:57:59.000Z",
+    "status": 0
+  },
+  {
+    "id": 8847,
+    "user_id": "26",
+    "timestamp": "2026-04-07T01:02:16.000Z",
+    "status": 0
+  },
+  {
+    "id": 8848,
+    "user_id": "21",
+    "timestamp": "2026-04-07T01:06:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 8849,
+    "user_id": "28",
+    "timestamp": "2026-04-07T01:35:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 8850,
+    "user_id": "29",
+    "timestamp": "2026-04-07T02:11:27.000Z",
+    "status": 0
+  },
+  {
+    "id": 8851,
+    "user_id": "21",
+    "timestamp": "2026-04-07T10:05:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 8852,
+    "user_id": "13",
+    "timestamp": "2026-04-07T10:06:28.000Z",
+    "status": 1
+  },
+  {
+    "id": 8853,
+    "user_id": "28",
+    "timestamp": "2026-04-07T10:06:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 8854,
+    "user_id": "29",
+    "timestamp": "2026-04-07T10:07:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 8855,
+    "user_id": "26",
+    "timestamp": "2026-04-07T10:09:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 8856,
+    "user_id": "33",
+    "timestamp": "2026-04-07T23:47:22.000Z",
+    "status": 1
+  },
+  {
+    "id": 8857,
+    "user_id": "32",
+    "timestamp": "2026-04-07T23:47:29.000Z",
+    "status": 1
+  },
+  {
+    "id": 8858,
+    "user_id": "26",
+    "timestamp": "2026-04-08T00:51:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 8859,
+    "user_id": "13",
+    "timestamp": "2026-04-08T00:52:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 8860,
+    "user_id": "21",
+    "timestamp": "2026-04-08T01:03:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 8861,
+    "user_id": "28",
+    "timestamp": "2026-04-08T01:05:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 8862,
+    "user_id": "29",
+    "timestamp": "2026-04-08T01:21:40.000Z",
+    "status": 0
+  },
+  {
+    "id": 8863,
+    "user_id": "29",
+    "timestamp": "2026-04-08T10:01:29.000Z",
+    "status": 1
+  },
+  {
+    "id": 8864,
+    "user_id": "13",
+    "timestamp": "2026-04-08T10:01:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 8865,
+    "user_id": "26",
+    "timestamp": "2026-04-08T10:03:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 8866,
+    "user_id": "28",
+    "timestamp": "2026-04-08T10:03:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 8867,
+    "user_id": "21",
+    "timestamp": "2026-04-08T11:08:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 8868,
+    "user_id": "32",
+    "timestamp": "2026-04-08T15:12:38.000Z",
+    "status": 0
+  },
+  {
+    "id": 8869,
+    "user_id": "12",
+    "timestamp": "2026-04-08T15:12:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 8870,
+    "user_id": "25",
+    "timestamp": "2026-04-08T15:13:06.000Z",
+    "status": 0
+  },
+  {
+    "id": 8871,
+    "user_id": "33",
+    "timestamp": "2026-04-08T15:27:01.000Z",
+    "status": 0
+  },
+  {
+    "id": 8872,
+    "user_id": "26",
+    "timestamp": "2026-04-14T00:58:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 8873,
+    "user_id": "13",
+    "timestamp": "2026-04-14T00:58:43.000Z",
+    "status": 0
+  },
+  {
+    "id": 8874,
+    "user_id": "28",
+    "timestamp": "2026-04-14T01:12:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 8875,
+    "user_id": "29",
+    "timestamp": "2026-04-14T01:14:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 8876,
+    "user_id": "21",
+    "timestamp": "2026-04-14T01:19:42.000Z",
+    "status": 0
+  },
+  {
+    "id": 8877,
+    "user_id": "13",
+    "timestamp": "2026-04-14T10:00:58.000Z",
+    "status": 1
+  },
+  {
+    "id": 8878,
+    "user_id": "28",
+    "timestamp": "2026-04-14T10:02:22.000Z",
+    "status": 1
+  },
+  {
+    "id": 8879,
+    "user_id": "26",
+    "timestamp": "2026-04-14T10:02:32.000Z",
+    "status": 1
+  },
+  {
+    "id": 8880,
+    "user_id": "29",
+    "timestamp": "2026-04-14T10:02:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 8881,
+    "user_id": "21",
+    "timestamp": "2026-04-14T10:02:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 8882,
+    "user_id": "25",
+    "timestamp": "2026-04-14T15:14:41.000Z",
+    "status": 0
+  },
+  {
+    "id": 8883,
+    "user_id": "32",
+    "timestamp": "2026-04-14T15:14:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 8884,
+    "user_id": "33",
+    "timestamp": "2026-04-14T15:34:46.000Z",
+    "status": 0
+  },
+  {
+    "id": 8885,
+    "user_id": "25",
+    "timestamp": "2026-04-14T23:55:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 8886,
+    "user_id": "32",
+    "timestamp": "2026-04-14T23:57:41.000Z",
+    "status": 1
+  },
+  {
+    "id": 8887,
+    "user_id": "33",
+    "timestamp": "2026-04-14T23:57:52.000Z",
+    "status": 1
+  },
+  {
+    "id": 8888,
+    "user_id": "12",
+    "timestamp": "2026-04-15T00:01:12.000Z",
+    "status": 1
+  },
+  {
+    "id": 8889,
+    "user_id": "26",
+    "timestamp": "2026-04-15T00:59:33.000Z",
+    "status": 0
+  },
+  {
+    "id": 8890,
+    "user_id": "13",
+    "timestamp": "2026-04-15T01:01:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 8891,
+    "user_id": "29",
+    "timestamp": "2026-04-15T01:05:41.000Z",
+    "status": 0
+  },
+  {
+    "id": 8892,
+    "user_id": "28",
+    "timestamp": "2026-04-15T01:06:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 8893,
+    "user_id": "21",
+    "timestamp": "2026-04-15T01:10:31.000Z",
+    "status": 0
+  },
+  {
+    "id": 8894,
+    "user_id": "13",
+    "timestamp": "2026-04-15T10:01:39.000Z",
+    "status": 0
+  },
+  {
+    "id": 8895,
+    "user_id": "28",
+    "timestamp": "2026-04-15T10:01:55.000Z",
+    "status": 1
+  },
+  {
+    "id": 8896,
+    "user_id": "21",
+    "timestamp": "2026-04-15T10:10:44.000Z",
+    "status": 1
+  },
+  {
+    "id": 8897,
+    "user_id": "32",
+    "timestamp": "2026-04-15T14:57:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 8898,
+    "user_id": "25",
+    "timestamp": "2026-04-15T15:07:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 8899,
+    "user_id": "12",
+    "timestamp": "2026-04-15T15:25:01.000Z",
+    "status": 0
+  },
+  {
+    "id": 8900,
+    "user_id": "33",
+    "timestamp": "2026-04-15T15:27:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 8901,
+    "user_id": "32",
+    "timestamp": "2026-04-15T21:43:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 8902,
+    "user_id": "25",
+    "timestamp": "2026-04-15T23:59:56.000Z",
+    "status": 1
+  },
+  {
+    "id": 8903,
+    "user_id": "12",
+    "timestamp": "2026-04-16T00:00:05.000Z",
+    "status": 1
+  },
+  {
+    "id": 8904,
+    "user_id": "33",
+    "timestamp": "2026-04-16T00:07:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 8905,
+    "user_id": "29",
+    "timestamp": "2026-04-16T00:52:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 8906,
+    "user_id": "13",
+    "timestamp": "2026-04-16T00:58:58.000Z",
+    "status": 0
+  },
+  {
+    "id": 8907,
+    "user_id": "26",
+    "timestamp": "2026-04-16T00:59:25.000Z",
+    "status": 0
+  },
+  {
+    "id": 8908,
+    "user_id": "21",
+    "timestamp": "2026-04-16T01:08:58.000Z",
+    "status": 0
+  },
+  {
+    "id": 8909,
+    "user_id": "28",
+    "timestamp": "2026-04-16T01:13:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 8910,
+    "user_id": "28",
+    "timestamp": "2026-04-16T10:01:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 8911,
+    "user_id": "13",
+    "timestamp": "2026-04-16T10:03:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 8912,
+    "user_id": "26",
+    "timestamp": "2026-04-16T10:03:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 8913,
+    "user_id": "21",
+    "timestamp": "2026-04-16T10:03:21.000Z",
+    "status": 1
+  },
+  {
+    "id": 8914,
+    "user_id": "29",
+    "timestamp": "2026-04-16T10:03:24.000Z",
+    "status": 1
+  },
+  {
+    "id": 8915,
+    "user_id": "1",
+    "timestamp": "2026-04-16T14:25:12.000Z",
+    "status": 1
+  },
+  {
+    "id": 8916,
+    "user_id": "25",
+    "timestamp": "2026-04-16T15:06:27.000Z",
+    "status": 0
+  },
+  {
+    "id": 8917,
+    "user_id": "12",
+    "timestamp": "2026-04-16T15:17:39.000Z",
+    "status": 0
+  },
+  {
+    "id": 8918,
+    "user_id": "33",
+    "timestamp": "2026-04-16T15:19:11.000Z",
+    "status": 0
+  },
+  {
+    "id": 8919,
+    "user_id": "25",
+    "timestamp": "2026-04-16T23:56:15.000Z",
+    "status": 1
+  },
+  {
+    "id": 8920,
+    "user_id": "33",
+    "timestamp": "2026-04-16T23:56:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 8921,
+    "user_id": "13",
+    "timestamp": "2026-04-17T00:59:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 8922,
+    "user_id": "26",
+    "timestamp": "2026-04-17T00:59:17.000Z",
+    "status": 0
+  },
+  {
+    "id": 8923,
+    "user_id": "29",
+    "timestamp": "2026-04-17T01:04:06.000Z",
+    "status": 0
+  },
+  {
+    "id": 8924,
+    "user_id": "21",
+    "timestamp": "2026-04-17T01:09:27.000Z",
+    "status": 0
+  },
+  {
+    "id": 8925,
+    "user_id": "28",
+    "timestamp": "2026-04-17T01:21:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 8926,
+    "user_id": "29",
+    "timestamp": "2026-04-17T10:01:06.000Z",
+    "status": 1
+  },
+  {
+    "id": 8927,
+    "user_id": "26",
+    "timestamp": "2026-04-17T10:05:23.000Z",
+    "status": 1
+  },
+  {
+    "id": 8928,
+    "user_id": "28",
+    "timestamp": "2026-04-17T10:25:59.000Z",
+    "status": 1
+  },
+  {
+    "id": 8929,
+    "user_id": "21",
+    "timestamp": "2026-04-17T10:26:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 8930,
+    "user_id": "13",
+    "timestamp": "2026-04-17T12:27:34.000Z",
+    "status": 1
+  },
+  {
+    "id": 8931,
+    "user_id": "25",
+    "timestamp": "2026-04-19T15:11:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 8932,
+    "user_id": "32",
+    "timestamp": "2026-04-19T15:15:31.000Z",
+    "status": 0
+  },
+  {
+    "id": 8933,
+    "user_id": "33",
+    "timestamp": "2026-04-19T15:25:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 8934,
+    "user_id": "12",
+    "timestamp": "2026-04-19T15:45:45.000Z",
+    "status": 0
+  },
+  {
+    "id": 8935,
+    "user_id": "32",
+    "timestamp": "2026-04-20T00:07:35.000Z",
+    "status": 1
+  },
+  {
+    "id": 8936,
+    "user_id": "33",
+    "timestamp": "2026-04-20T00:07:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 8937,
+    "user_id": "25",
+    "timestamp": "2026-04-20T00:52:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 8938,
+    "user_id": "12",
+    "timestamp": "2026-04-20T00:58:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 8939,
+    "user_id": "26",
+    "timestamp": "2026-04-20T00:58:46.000Z",
+    "status": 0
+  },
+  {
+    "id": 8940,
+    "user_id": "13",
+    "timestamp": "2026-04-20T01:02:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 8941,
+    "user_id": "28",
+    "timestamp": "2026-04-20T01:06:14.000Z",
+    "status": 0
+  },
+  {
+    "id": 8942,
+    "user_id": "29",
+    "timestamp": "2026-04-20T01:13:16.000Z",
+    "status": 0
+  },
+  {
+    "id": 8943,
+    "user_id": "21",
+    "timestamp": "2026-04-20T01:13:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 8944,
+    "user_id": "13",
+    "timestamp": "2026-04-20T10:01:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 8945,
+    "user_id": "26",
+    "timestamp": "2026-04-20T10:01:21.000Z",
+    "status": 1
+  },
+  {
+    "id": 8946,
+    "user_id": "29",
+    "timestamp": "2026-04-20T10:01:30.000Z",
+    "status": 1
+  },
+  {
+    "id": 8947,
+    "user_id": "28",
+    "timestamp": "2026-04-20T10:01:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 8948,
+    "user_id": "21",
+    "timestamp": "2026-04-20T10:01:59.000Z",
+    "status": 1
+  },
+  {
+    "id": 8949,
+    "user_id": "25",
+    "timestamp": "2026-04-20T15:06:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 8950,
+    "user_id": "12",
+    "timestamp": "2026-04-20T15:06:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 8951,
+    "user_id": "32",
+    "timestamp": "2026-04-20T15:13:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 8952,
+    "user_id": "33",
+    "timestamp": "2026-04-20T15:26:31.000Z",
+    "status": 0
+  },
+  {
+    "id": 8953,
+    "user_id": "25",
+    "timestamp": "2026-04-21T00:15:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 8954,
+    "user_id": "32",
+    "timestamp": "2026-04-21T00:53:39.000Z",
+    "status": 1
+  },
+  {
+    "id": 8955,
+    "user_id": "33",
+    "timestamp": "2026-04-21T00:53:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 8956,
+    "user_id": "13",
+    "timestamp": "2026-04-21T00:55:31.000Z",
+    "status": 0
+  },
+  {
+    "id": 8957,
+    "user_id": "26",
+    "timestamp": "2026-04-21T00:56:25.000Z",
+    "status": 0
+  },
+  {
+    "id": 8958,
+    "user_id": "12",
+    "timestamp": "2026-04-21T00:57:24.000Z",
+    "status": 1
+  },
+  {
+    "id": 8959,
+    "user_id": "28",
+    "timestamp": "2026-04-21T01:13:17.000Z",
+    "status": 0
+  },
+  {
+    "id": 8960,
+    "user_id": "29",
+    "timestamp": "2026-04-21T01:15:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 8961,
+    "user_id": "13",
+    "timestamp": "2026-04-21T10:02:32.000Z",
+    "status": 1
+  },
+  {
+    "id": 8962,
+    "user_id": "21",
+    "timestamp": "2026-04-21T10:04:30.000Z",
+    "status": 1
+  },
+  {
+    "id": 8963,
+    "user_id": "29",
+    "timestamp": "2026-04-21T10:04:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 8964,
+    "user_id": "26",
+    "timestamp": "2026-04-21T10:05:22.000Z",
+    "status": 1
+  },
+  {
+    "id": 8965,
+    "user_id": "28",
+    "timestamp": "2026-04-21T10:05:30.000Z",
+    "status": 1
+  },
+  {
+    "id": 8966,
+    "user_id": "25",
+    "timestamp": "2026-04-21T15:12:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 8967,
+    "user_id": "32",
+    "timestamp": "2026-04-21T15:12:27.000Z",
+    "status": 0
+  },
+  {
+    "id": 8968,
+    "user_id": "33",
+    "timestamp": "2026-04-21T15:22:58.000Z",
+    "status": 0
+  },
+  {
+    "id": 8969,
+    "user_id": "12",
+    "timestamp": "2026-04-21T15:31:54.000Z",
+    "status": 0
+  },
+  {
+    "id": 8970,
+    "user_id": "12",
+    "timestamp": "2026-04-21T23:39:06.000Z",
+    "status": 1
+  },
+  {
+    "id": 8971,
+    "user_id": "25",
+    "timestamp": "2026-04-21T23:39:38.000Z",
+    "status": 1
+  },
+  {
+    "id": 8972,
+    "user_id": "33",
+    "timestamp": "2026-04-21T23:40:15.000Z",
+    "status": 1
+  },
+  {
+    "id": 8973,
+    "user_id": "32",
+    "timestamp": "2026-04-21T23:40:39.000Z",
+    "status": 1
+  },
+  {
+    "id": 8974,
+    "user_id": "13",
+    "timestamp": "2026-04-22T00:54:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 8975,
+    "user_id": "26",
+    "timestamp": "2026-04-22T00:58:40.000Z",
+    "status": 0
+  },
+  {
+    "id": 8976,
+    "user_id": "29",
+    "timestamp": "2026-04-22T01:10:28.000Z",
+    "status": 0
+  },
+  {
+    "id": 8977,
+    "user_id": "28",
+    "timestamp": "2026-04-22T01:10:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 8978,
+    "user_id": "13",
+    "timestamp": "2026-04-22T10:01:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 8979,
+    "user_id": "26",
+    "timestamp": "2026-04-22T10:02:07.000Z",
+    "status": 1
+  },
+  {
+    "id": 8980,
+    "user_id": "29",
+    "timestamp": "2026-04-22T10:03:29.000Z",
+    "status": 1
+  },
+  {
+    "id": 8981,
+    "user_id": "28",
+    "timestamp": "2026-04-22T10:03:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 8982,
+    "user_id": "25",
+    "timestamp": "2026-04-22T15:06:32.000Z",
+    "status": 0
+  },
+  {
+    "id": 8983,
+    "user_id": "32",
+    "timestamp": "2026-04-22T15:13:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 8984,
+    "user_id": "12",
+    "timestamp": "2026-04-22T15:17:42.000Z",
+    "status": 0
+  },
+  {
+    "id": 8985,
+    "user_id": "33",
+    "timestamp": "2026-04-22T15:25:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 8986,
+    "user_id": "25",
+    "timestamp": "2026-04-22T23:56:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 8987,
+    "user_id": "12",
+    "timestamp": "2026-04-22T23:56:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 8988,
+    "user_id": "32",
+    "timestamp": "2026-04-22T23:57:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 8989,
+    "user_id": "33",
+    "timestamp": "2026-04-22T23:58:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 8990,
+    "user_id": "28",
+    "timestamp": "2026-04-23T00:59:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 8991,
+    "user_id": "13",
+    "timestamp": "2026-04-23T00:59:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 8992,
+    "user_id": "26",
+    "timestamp": "2026-04-23T01:04:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 8993,
+    "user_id": "29",
+    "timestamp": "2026-04-23T01:06:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 8994,
+    "user_id": "28",
+    "timestamp": "2026-04-23T10:01:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 8995,
+    "user_id": "26",
+    "timestamp": "2026-04-23T10:01:41.000Z",
+    "status": 1
+  },
+  {
+    "id": 8996,
+    "user_id": "13",
+    "timestamp": "2026-04-23T10:02:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 8997,
+    "user_id": "21",
+    "timestamp": "2026-04-23T10:04:02.000Z",
+    "status": 1
+  },
+  {
+    "id": 8998,
+    "user_id": "32",
+    "timestamp": "2026-04-23T15:06:45.000Z",
+    "status": 0
+  },
+  {
+    "id": 8999,
+    "user_id": "33",
+    "timestamp": "2026-04-23T15:24:36.000Z",
+    "status": 0
+  },
+  {
+    "id": 9000,
+    "user_id": "12",
+    "timestamp": "2026-04-23T15:33:30.000Z",
+    "status": 0
+  },
+  {
+    "id": 9001,
+    "user_id": "25",
+    "timestamp": "2026-04-23T15:47:33.000Z",
+    "status": 0
+  },
+  {
+    "id": 9002,
+    "user_id": "32",
+    "timestamp": "2026-04-23T21:44:58.000Z",
+    "status": 1
+  },
+  {
+    "id": 9003,
+    "user_id": "25",
+    "timestamp": "2026-04-23T23:51:58.000Z",
+    "status": 1
+  },
+  {
+    "id": 9004,
+    "user_id": "33",
+    "timestamp": "2026-04-23T23:53:28.000Z",
+    "status": 1
+  },
+  {
+    "id": 9005,
+    "user_id": "13",
+    "timestamp": "2026-04-24T00:55:59.000Z",
+    "status": 0
+  },
+  {
+    "id": 9006,
+    "user_id": "26",
+    "timestamp": "2026-04-24T00:56:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 9007,
+    "user_id": "21",
+    "timestamp": "2026-04-24T01:13:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9008,
+    "user_id": "29",
+    "timestamp": "2026-04-24T01:17:01.000Z",
+    "status": 0
+  },
+  {
+    "id": 9009,
+    "user_id": "28",
+    "timestamp": "2026-04-24T01:33:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 9010,
+    "user_id": "28",
+    "timestamp": "2026-04-24T10:03:02.000Z",
+    "status": 1
+  },
+  {
+    "id": 9011,
+    "user_id": "13",
+    "timestamp": "2026-04-24T10:03:40.000Z",
+    "status": 1
+  },
+  {
+    "id": 9012,
+    "user_id": "26",
+    "timestamp": "2026-04-24T10:04:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9013,
+    "user_id": "21",
+    "timestamp": "2026-04-24T10:06:05.000Z",
+    "status": 1
+  },
+  {
+    "id": 9014,
+    "user_id": "29",
+    "timestamp": "2026-04-24T10:06:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9015,
+    "user_id": "26",
+    "timestamp": "2026-04-24T10:06:12.000Z",
+    "status": 1
+  },
+  {
+    "id": 9016,
+    "user_id": "25",
+    "timestamp": "2026-04-26T15:21:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 9017,
+    "user_id": "32",
+    "timestamp": "2026-04-26T15:21:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 9018,
+    "user_id": "33",
+    "timestamp": "2026-04-26T15:27:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9019,
+    "user_id": "25",
+    "timestamp": "2026-04-26T23:57:24.000Z",
+    "status": 1
+  },
+  {
+    "id": 9020,
+    "user_id": "32",
+    "timestamp": "2026-04-27T00:01:19.000Z",
+    "status": 1
+  },
+  {
+    "id": 9021,
+    "user_id": "33",
+    "timestamp": "2026-04-27T00:02:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 9022,
+    "user_id": "13",
+    "timestamp": "2026-04-27T00:49:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 9023,
+    "user_id": "26",
+    "timestamp": "2026-04-27T00:57:13.000Z",
+    "status": 0
+  },
+  {
+    "id": 9024,
+    "user_id": "21",
+    "timestamp": "2026-04-27T01:08:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 9025,
+    "user_id": "28",
+    "timestamp": "2026-04-27T01:16:23.000Z",
+    "status": 0
+  },
+  {
+    "id": 9026,
+    "user_id": "29",
+    "timestamp": "2026-04-27T03:03:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 9027,
+    "user_id": "28",
+    "timestamp": "2026-04-27T10:00:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9028,
+    "user_id": "13",
+    "timestamp": "2026-04-27T10:02:01.000Z",
+    "status": 1
+  },
+  {
+    "id": 9029,
+    "user_id": "26",
+    "timestamp": "2026-04-27T10:02:06.000Z",
+    "status": 1
+  },
+  {
+    "id": 9030,
+    "user_id": "21",
+    "timestamp": "2026-04-27T10:02:16.000Z",
+    "status": 1
+  },
+  {
+    "id": 9031,
+    "user_id": "29",
+    "timestamp": "2026-04-27T10:02:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 9032,
+    "user_id": "25",
+    "timestamp": "2026-04-27T15:08:57.000Z",
+    "status": 0
+  },
+  {
+    "id": 9033,
+    "user_id": "32",
+    "timestamp": "2026-04-27T15:13:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9034,
+    "user_id": "33",
+    "timestamp": "2026-04-27T15:29:08.000Z",
+    "status": 0
+  },
+  {
+    "id": 9035,
+    "user_id": "25",
+    "timestamp": "2026-04-27T23:53:19.000Z",
+    "status": 1
+  },
+  {
+    "id": 9036,
+    "user_id": "32",
+    "timestamp": "2026-04-27T23:53:50.000Z",
+    "status": 1
+  },
+  {
+    "id": 9037,
+    "user_id": "33",
+    "timestamp": "2026-04-27T23:56:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 9038,
+    "user_id": "28",
+    "timestamp": "2026-04-28T00:47:45.000Z",
+    "status": 0
+  },
+  {
+    "id": 9039,
+    "user_id": "26",
+    "timestamp": "2026-04-28T00:52:02.000Z",
+    "status": 0
+  },
+  {
+    "id": 9040,
+    "user_id": "13",
+    "timestamp": "2026-04-28T00:56:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 9041,
+    "user_id": "29",
+    "timestamp": "2026-04-28T01:03:59.000Z",
+    "status": 0
+  },
+  {
+    "id": 9042,
+    "user_id": "21",
+    "timestamp": "2026-04-28T01:07:56.000Z",
+    "status": 0
+  },
+  {
+    "id": 9043,
+    "user_id": "34",
+    "timestamp": "2026-04-28T01:25:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9044,
+    "user_id": "34",
+    "timestamp": "2026-04-28T09:52:36.000Z",
+    "status": 1
+  },
+  {
+    "id": 9045,
+    "user_id": "28",
+    "timestamp": "2026-04-28T10:01:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9046,
+    "user_id": "13",
+    "timestamp": "2026-04-28T10:01:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9047,
+    "user_id": "26",
+    "timestamp": "2026-04-28T10:01:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 9048,
+    "user_id": "21",
+    "timestamp": "2026-04-28T10:04:12.000Z",
+    "status": 1
+  },
+  {
+    "id": 9049,
+    "user_id": "29",
+    "timestamp": "2026-04-28T10:04:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 9050,
+    "user_id": "25",
+    "timestamp": "2026-04-28T15:16:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 9051,
+    "user_id": "32",
+    "timestamp": "2026-04-28T15:16:16.000Z",
+    "status": 0
+  },
+  {
+    "id": 9052,
+    "user_id": "33",
+    "timestamp": "2026-04-28T15:17:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 9053,
+    "user_id": "25",
+    "timestamp": "2026-04-29T00:03:50.000Z",
+    "status": 1
+  },
+  {
+    "id": 9054,
+    "user_id": "32",
+    "timestamp": "2026-04-29T00:10:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 9055,
+    "user_id": "33",
+    "timestamp": "2026-04-29T00:10:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9056,
+    "user_id": "26",
+    "timestamp": "2026-04-29T00:57:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 9057,
+    "user_id": "28",
+    "timestamp": "2026-04-29T00:59:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 9058,
+    "user_id": "13",
+    "timestamp": "2026-04-29T01:02:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9059,
+    "user_id": "21",
+    "timestamp": "2026-04-29T01:11:16.000Z",
+    "status": 0
+  },
+  {
+    "id": 9060,
+    "user_id": "29",
+    "timestamp": "2026-04-29T01:13:42.000Z",
+    "status": 0
+  },
+  {
+    "id": 9061,
+    "user_id": "34",
+    "timestamp": "2026-04-29T01:16:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 9062,
+    "user_id": "34",
+    "timestamp": "2026-04-29T09:58:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 9063,
+    "user_id": "13",
+    "timestamp": "2026-04-29T10:03:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9064,
+    "user_id": "26",
+    "timestamp": "2026-04-29T10:05:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 9065,
+    "user_id": "29",
+    "timestamp": "2026-04-29T10:06:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 9066,
+    "user_id": "28",
+    "timestamp": "2026-04-29T10:09:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9067,
+    "user_id": "21",
+    "timestamp": "2026-04-29T10:09:54.000Z",
+    "status": 1
+  },
+  {
+    "id": 9068,
+    "user_id": "32",
+    "timestamp": "2026-04-29T15:14:01.000Z",
+    "status": 0
+  },
+  {
+    "id": 9069,
+    "user_id": "25",
+    "timestamp": "2026-04-29T15:14:56.000Z",
+    "status": 0
+  },
+  {
+    "id": 9070,
+    "user_id": "33",
+    "timestamp": "2026-04-29T15:31:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 9071,
+    "user_id": "25",
+    "timestamp": "2026-04-29T23:54:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 9072,
+    "user_id": "32",
+    "timestamp": "2026-04-29T23:56:12.000Z",
+    "status": 1
+  },
+  {
+    "id": 9073,
+    "user_id": "33",
+    "timestamp": "2026-04-29T23:56:19.000Z",
+    "status": 1
+  },
+  {
+    "id": 9074,
+    "user_id": "26",
+    "timestamp": "2026-04-30T00:59:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9075,
+    "user_id": "13",
+    "timestamp": "2026-04-30T01:02:52.000Z",
+    "status": 0
+  },
+  {
+    "id": 9076,
+    "user_id": "28",
+    "timestamp": "2026-04-30T01:04:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 9077,
+    "user_id": "34",
+    "timestamp": "2026-04-30T01:06:33.000Z",
+    "status": 0
+  },
+  {
+    "id": 9078,
+    "user_id": "21",
+    "timestamp": "2026-04-30T01:10:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9079,
+    "user_id": "29",
+    "timestamp": "2026-04-30T01:14:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 9080,
+    "user_id": "13",
+    "timestamp": "2026-04-30T10:01:05.000Z",
+    "status": 1
+  },
+  {
+    "id": 9081,
+    "user_id": "28",
+    "timestamp": "2026-04-30T10:01:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9082,
+    "user_id": "34",
+    "timestamp": "2026-04-30T10:01:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 9083,
+    "user_id": "25",
+    "timestamp": "2026-04-30T15:06:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 9084,
+    "user_id": "32",
+    "timestamp": "2026-04-30T15:15:46.000Z",
+    "status": 0
+  },
+  {
+    "id": 9085,
+    "user_id": "33",
+    "timestamp": "2026-04-30T15:25:38.000Z",
+    "status": 0
+  },
+  {
+    "id": 9086,
+    "user_id": "25",
+    "timestamp": "2026-04-30T23:51:40.000Z",
+    "status": 1
+  },
+  {
+    "id": 9087,
+    "user_id": "32",
+    "timestamp": "2026-04-30T23:53:02.000Z",
+    "status": 1
+  },
+  {
+    "id": 9088,
+    "user_id": "33",
+    "timestamp": "2026-04-30T23:53:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9089,
+    "user_id": "34",
+    "timestamp": "2026-05-01T00:55:28.000Z",
+    "status": 0
+  },
+  {
+    "id": 9090,
+    "user_id": "13",
+    "timestamp": "2026-05-01T00:59:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 9091,
+    "user_id": "28",
+    "timestamp": "2026-05-01T01:03:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 9092,
+    "user_id": "26",
+    "timestamp": "2026-05-01T01:06:30.000Z",
+    "status": 0
+  },
+  {
+    "id": 9093,
+    "user_id": "29",
+    "timestamp": "2026-05-01T01:10:33.000Z",
+    "status": 0
+  },
+  {
+    "id": 9094,
+    "user_id": "34",
+    "timestamp": "2026-05-01T09:52:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 9095,
+    "user_id": "26",
+    "timestamp": "2026-05-01T10:01:49.000Z",
+    "status": 1
+  },
+  {
+    "id": 9096,
+    "user_id": "29",
+    "timestamp": "2026-05-01T10:02:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9097,
+    "user_id": "28",
+    "timestamp": "2026-05-01T10:02:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9098,
+    "user_id": "13",
+    "timestamp": "2026-05-01T10:02:21.000Z",
+    "status": 1
+  },
+  {
+    "id": 9099,
+    "user_id": "21",
+    "timestamp": "2026-05-01T10:02:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 9100,
+    "user_id": "25",
+    "timestamp": "2026-05-03T15:11:52.000Z",
+    "status": 0
+  },
+  {
+    "id": 9101,
+    "user_id": "32",
+    "timestamp": "2026-05-03T15:12:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 9102,
+    "user_id": "12",
+    "timestamp": "2026-05-03T15:12:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 9103,
+    "user_id": "33",
+    "timestamp": "2026-05-03T15:33:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9104,
+    "user_id": "32",
+    "timestamp": "2026-05-04T00:02:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9105,
+    "user_id": "33",
+    "timestamp": "2026-05-04T00:02:24.000Z",
+    "status": 1
+  },
+  {
+    "id": 9106,
+    "user_id": "12",
+    "timestamp": "2026-05-04T00:07:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9107,
+    "user_id": "13",
+    "timestamp": "2026-05-04T00:52:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 9108,
+    "user_id": "34",
+    "timestamp": "2026-05-04T00:57:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 9109,
+    "user_id": "28",
+    "timestamp": "2026-05-04T01:05:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 9110,
+    "user_id": "26",
+    "timestamp": "2026-05-04T01:05:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 9111,
+    "user_id": "29",
+    "timestamp": "2026-05-04T01:09:02.000Z",
+    "status": 0
+  },
+  {
+    "id": 9112,
+    "user_id": "21",
+    "timestamp": "2026-05-04T01:11:17.000Z",
+    "status": 0
+  },
+  {
+    "id": 9113,
+    "user_id": "25",
+    "timestamp": "2026-05-04T01:12:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 9114,
+    "user_id": "34",
+    "timestamp": "2026-05-04T09:44:45.000Z",
+    "status": 1
+  },
+  {
+    "id": 9115,
+    "user_id": "13",
+    "timestamp": "2026-05-04T10:01:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9116,
+    "user_id": "28",
+    "timestamp": "2026-05-04T10:01:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 9117,
+    "user_id": "26",
+    "timestamp": "2026-05-04T10:03:57.000Z",
+    "status": 1
+  },
+  {
+    "id": 9118,
+    "user_id": "21",
+    "timestamp": "2026-05-04T10:04:47.000Z",
+    "status": 1
+  },
+  {
+    "id": 9119,
+    "user_id": "25",
+    "timestamp": "2026-05-04T15:06:14.000Z",
+    "status": 0
+  },
+  {
+    "id": 9120,
+    "user_id": "32",
+    "timestamp": "2026-05-04T15:15:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 9121,
+    "user_id": "12",
+    "timestamp": "2026-05-04T15:23:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 9122,
+    "user_id": "33",
+    "timestamp": "2026-05-04T15:30:52.000Z",
+    "status": 0
+  },
+  {
+    "id": 9123,
+    "user_id": "33",
+    "timestamp": "2026-05-05T00:00:03.000Z",
+    "status": 0
+  },
+  {
+    "id": 9124,
+    "user_id": "32",
+    "timestamp": "2026-05-05T00:00:35.000Z",
+    "status": 1
+  },
+  {
+    "id": 9125,
+    "user_id": "25",
+    "timestamp": "2026-05-05T00:02:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 9126,
+    "user_id": "12",
+    "timestamp": "2026-05-05T00:03:30.000Z",
+    "status": 1
+  },
+  {
+    "id": 9127,
+    "user_id": "26",
+    "timestamp": "2026-05-05T01:01:24.000Z",
+    "status": 0
+  },
+  {
+    "id": 9128,
+    "user_id": "13",
+    "timestamp": "2026-05-05T01:01:42.000Z",
+    "status": 0
+  },
+  {
+    "id": 9129,
+    "user_id": "28",
+    "timestamp": "2026-05-05T01:04:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 9130,
+    "user_id": "21",
+    "timestamp": "2026-05-05T01:12:26.000Z",
+    "status": 0
+  },
+  {
+    "id": 9131,
+    "user_id": "34",
+    "timestamp": "2026-05-05T01:15:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 9132,
+    "user_id": "29",
+    "timestamp": "2026-05-05T04:23:58.000Z",
+    "status": 0
+  },
+  {
+    "id": 9133,
+    "user_id": "34",
+    "timestamp": "2026-05-05T09:48:55.000Z",
+    "status": 1
+  },
+  {
+    "id": 9134,
+    "user_id": "13",
+    "timestamp": "2026-05-05T10:01:21.000Z",
+    "status": 1
+  },
+  {
+    "id": 9135,
+    "user_id": "26",
+    "timestamp": "2026-05-05T10:01:23.000Z",
+    "status": 1
+  },
+  {
+    "id": 9136,
+    "user_id": "28",
+    "timestamp": "2026-05-05T10:01:51.000Z",
+    "status": 1
+  },
+  {
+    "id": 9137,
+    "user_id": "21",
+    "timestamp": "2026-05-05T10:09:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 9138,
+    "user_id": "25",
+    "timestamp": "2026-05-05T15:08:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 9139,
+    "user_id": "32",
+    "timestamp": "2026-05-05T15:08:45.000Z",
+    "status": 0
+  },
+  {
+    "id": 9140,
+    "user_id": "12",
+    "timestamp": "2026-05-05T15:21:38.000Z",
+    "status": 0
+  },
+  {
+    "id": 9141,
+    "user_id": "33",
+    "timestamp": "2026-05-05T15:30:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 9142,
+    "user_id": "25",
+    "timestamp": "2026-05-05T20:59:36.000Z",
+    "status": 1
+  },
+  {
+    "id": 9143,
+    "user_id": "32",
+    "timestamp": "2026-05-06T00:06:32.000Z",
+    "status": 1
+  },
+  {
+    "id": 9144,
+    "user_id": "33",
+    "timestamp": "2026-05-06T00:06:39.000Z",
+    "status": 1
+  },
+  {
+    "id": 9145,
+    "user_id": "34",
+    "timestamp": "2026-05-06T00:50:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 9146,
+    "user_id": "26",
+    "timestamp": "2026-05-06T00:59:36.000Z",
+    "status": 0
+  },
+  {
+    "id": 9147,
+    "user_id": "13",
+    "timestamp": "2026-05-06T01:00:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 9148,
+    "user_id": "29",
+    "timestamp": "2026-05-06T01:10:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9149,
+    "user_id": "28",
+    "timestamp": "2026-05-06T01:11:30.000Z",
+    "status": 0
+  },
+  {
+    "id": 9150,
+    "user_id": "21",
+    "timestamp": "2026-05-06T01:17:28.000Z",
+    "status": 0
+  },
+  {
+    "id": 9151,
+    "user_id": "34",
+    "timestamp": "2026-05-06T09:57:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 9152,
+    "user_id": "28",
+    "timestamp": "2026-05-06T10:01:28.000Z",
+    "status": 1
+  },
+  {
+    "id": 9153,
+    "user_id": "13",
+    "timestamp": "2026-05-06T10:01:43.000Z",
+    "status": 1
+  },
+  {
+    "id": 9154,
+    "user_id": "26",
+    "timestamp": "2026-05-06T10:01:47.000Z",
+    "status": 1
+  },
+  {
+    "id": 9155,
+    "user_id": "29",
+    "timestamp": "2026-05-06T10:03:30.000Z",
+    "status": 1
+  },
+  {
+    "id": 9156,
+    "user_id": "21",
+    "timestamp": "2026-05-06T10:03:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 9157,
+    "user_id": "32",
+    "timestamp": "2026-05-06T15:00:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9158,
+    "user_id": "25",
+    "timestamp": "2026-05-06T15:08:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9159,
+    "user_id": "33",
+    "timestamp": "2026-05-06T15:31:58.000Z",
+    "status": 0
+  },
+  {
+    "id": 9160,
+    "user_id": "32",
+    "timestamp": "2026-05-06T21:49:48.000Z",
+    "status": 1
+  },
+  {
+    "id": 9161,
+    "user_id": "33",
+    "timestamp": "2026-05-06T23:55:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 9162,
+    "user_id": "25",
+    "timestamp": "2026-05-06T23:55:56.000Z",
+    "status": 1
+  },
+  {
+    "id": 9163,
+    "user_id": "28",
+    "timestamp": "2026-05-07T00:44:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9164,
+    "user_id": "13",
+    "timestamp": "2026-05-07T00:55:22.000Z",
+    "status": 0
+  },
+  {
+    "id": 9165,
+    "user_id": "26",
+    "timestamp": "2026-05-07T01:02:11.000Z",
+    "status": 0
+  },
+  {
+    "id": 9166,
+    "user_id": "21",
+    "timestamp": "2026-05-07T01:11:36.000Z",
+    "status": 0
+  },
+  {
+    "id": 9167,
+    "user_id": "29",
+    "timestamp": "2026-05-07T01:12:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 9168,
+    "user_id": "34",
+    "timestamp": "2026-05-07T01:16:21.000Z",
+    "status": 0
+  },
+  {
+    "id": 9169,
+    "user_id": "34",
+    "timestamp": "2026-05-07T09:48:24.000Z",
+    "status": 1
+  },
+  {
+    "id": 9170,
+    "user_id": "13",
+    "timestamp": "2026-05-07T10:00:51.000Z",
+    "status": 1
+  },
+  {
+    "id": 9171,
+    "user_id": "26",
+    "timestamp": "2026-05-07T10:01:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9172,
+    "user_id": "28",
+    "timestamp": "2026-05-07T10:01:20.000Z",
+    "status": 1
+  },
+  {
+    "id": 9173,
+    "user_id": "29",
+    "timestamp": "2026-05-07T10:02:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9174,
+    "user_id": "21",
+    "timestamp": "2026-05-07T10:02:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9175,
+    "user_id": "13",
+    "timestamp": "2026-05-08T00:56:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 9176,
+    "user_id": "29",
+    "timestamp": "2026-05-08T01:07:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 9177,
+    "user_id": "21",
+    "timestamp": "2026-05-08T01:18:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 9178,
+    "user_id": "28",
+    "timestamp": "2026-05-08T01:18:50.000Z",
+    "status": 0
+  },
+  {
+    "id": 9179,
+    "user_id": "34",
+    "timestamp": "2026-05-08T01:25:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 9180,
+    "user_id": "26",
+    "timestamp": "2026-05-08T06:38:09.000Z",
+    "status": 0
+  },
+  {
+    "id": 9181,
+    "user_id": "26",
+    "timestamp": "2026-05-08T10:00:58.000Z",
+    "status": 1
+  },
+  {
+    "id": 9182,
+    "user_id": "13",
+    "timestamp": "2026-05-08T10:01:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9183,
+    "user_id": "34",
+    "timestamp": "2026-05-08T10:01:15.000Z",
+    "status": 1
+  },
+  {
+    "id": 9184,
+    "user_id": "21",
+    "timestamp": "2026-05-08T10:01:23.000Z",
+    "status": 1
+  },
+  {
+    "id": 9185,
+    "user_id": "28",
+    "timestamp": "2026-05-08T10:02:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 9186,
+    "user_id": "29",
+    "timestamp": "2026-05-08T10:03:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9187,
+    "user_id": "25",
+    "timestamp": "2026-05-10T15:13:57.000Z",
+    "status": 0
+  },
+  {
+    "id": 9188,
+    "user_id": "32",
+    "timestamp": "2026-05-10T15:14:07.000Z",
+    "status": 0
+  },
+  {
+    "id": 9189,
+    "user_id": "33",
+    "timestamp": "2026-05-10T15:34:01.000Z",
+    "status": 0
+  },
+  {
+    "id": 9190,
+    "user_id": "12",
+    "timestamp": "2026-05-10T15:37:10.000Z",
+    "status": 0
+  },
+  {
+    "id": 9191,
+    "user_id": "34",
+    "timestamp": "2026-05-10T23:41:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 9192,
+    "user_id": "12",
+    "timestamp": "2026-05-10T23:57:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9193,
+    "user_id": "25",
+    "timestamp": "2026-05-10T23:57:16.000Z",
+    "status": 1
+  },
+  {
+    "id": 9194,
+    "user_id": "33",
+    "timestamp": "2026-05-10T23:58:32.000Z",
+    "status": 1
+  },
+  {
+    "id": 9195,
+    "user_id": "32",
+    "timestamp": "2026-05-10T23:58:41.000Z",
+    "status": 1
+  },
+  {
+    "id": 9196,
+    "user_id": "26",
+    "timestamp": "2026-05-11T00:59:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 9197,
+    "user_id": "13",
+    "timestamp": "2026-05-11T01:00:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 9198,
+    "user_id": "21",
+    "timestamp": "2026-05-11T01:09:12.000Z",
+    "status": 0
+  },
+  {
+    "id": 9199,
+    "user_id": "29",
+    "timestamp": "2026-05-11T01:09:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 9200,
+    "user_id": "28",
+    "timestamp": "2026-05-11T01:20:53.000Z",
+    "status": 0
+  },
+  {
+    "id": 9201,
+    "user_id": "34",
+    "timestamp": "2026-05-11T10:01:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 9202,
+    "user_id": "28",
+    "timestamp": "2026-05-11T10:01:29.000Z",
+    "status": 1
+  },
+  {
+    "id": 9203,
+    "user_id": "13",
+    "timestamp": "2026-05-11T10:01:44.000Z",
+    "status": 1
+  },
+  {
+    "id": 9204,
+    "user_id": "29",
+    "timestamp": "2026-05-11T10:01:51.000Z",
+    "status": 1
+  },
+  {
+    "id": 9205,
+    "user_id": "21",
+    "timestamp": "2026-05-11T10:02:38.000Z",
+    "status": 1
+  },
+  {
+    "id": 9206,
+    "user_id": "25",
+    "timestamp": "2026-05-11T15:05:42.000Z",
+    "status": 0
+  },
+  {
+    "id": 9207,
+    "user_id": "12",
+    "timestamp": "2026-05-11T15:06:02.000Z",
+    "status": 0
+  },
+  {
+    "id": 9208,
+    "user_id": "32",
+    "timestamp": "2026-05-11T15:10:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 9209,
+    "user_id": "33",
+    "timestamp": "2026-05-11T15:32:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 9210,
+    "user_id": "28",
+    "timestamp": "2026-05-11T23:01:28.000Z",
+    "status": 0
+  },
+  {
+    "id": 9211,
+    "user_id": "25",
+    "timestamp": "2026-05-12T00:01:15.000Z",
+    "status": 1
+  },
+  {
+    "id": 9212,
+    "user_id": "12",
+    "timestamp": "2026-05-12T00:01:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 9213,
+    "user_id": "32",
+    "timestamp": "2026-05-12T00:03:14.000Z",
+    "status": 1
+  },
+  {
+    "id": 9214,
+    "user_id": "33",
+    "timestamp": "2026-05-12T00:03:22.000Z",
+    "status": 1
+  },
+  {
+    "id": 9215,
+    "user_id": "26",
+    "timestamp": "2026-05-12T00:50:13.000Z",
+    "status": 0
+  },
+  {
+    "id": 9216,
+    "user_id": "13",
+    "timestamp": "2026-05-12T00:50:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 9217,
+    "user_id": "34",
+    "timestamp": "2026-05-12T00:54:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 9218,
+    "user_id": "21",
+    "timestamp": "2026-05-12T01:11:21.000Z",
+    "status": 0
+  },
+  {
+    "id": 9219,
+    "user_id": "29",
+    "timestamp": "2026-05-12T01:12:11.000Z",
+    "status": 0
+  },
+  {
+    "id": 9220,
+    "user_id": "34",
+    "timestamp": "2026-05-12T09:59:07.000Z",
+    "status": 1
+  },
+  {
+    "id": 9274,
+    "user_id": "28",
+    "timestamp": "2026-05-12T10:00:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 9221,
+    "user_id": "28",
+    "timestamp": "2026-05-12T10:00:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 9275,
+    "user_id": "13",
+    "timestamp": "2026-05-12T10:01:34.000Z",
+    "status": 1
+  },
+  {
+    "id": 9276,
+    "user_id": "21",
+    "timestamp": "2026-05-12T10:01:57.000Z",
+    "status": 1
+  },
+  {
+    "id": 9222,
+    "user_id": "21",
+    "timestamp": "2026-05-12T10:03:05.000Z",
+    "status": 1
+  },
+  {
+    "id": 9223,
+    "user_id": "26",
+    "timestamp": "2026-05-12T10:03:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 9277,
+    "user_id": "34",
+    "timestamp": "2026-05-12T10:03:32.000Z",
+    "status": 1
+  },
+  {
+    "id": 9278,
+    "user_id": "25",
+    "timestamp": "2026-05-12T15:05:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 9279,
+    "user_id": "12",
+    "timestamp": "2026-05-12T15:05:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 9224,
+    "user_id": "25",
+    "timestamp": "2026-05-12T15:06:21.000Z",
+    "status": 0
+  },
+  {
+    "id": 9225,
+    "user_id": "32",
+    "timestamp": "2026-05-12T15:07:16.000Z",
+    "status": 0
+  },
+  {
+    "id": 9280,
+    "user_id": "32",
+    "timestamp": "2026-05-12T15:07:41.000Z",
+    "status": 0
+  },
+  {
+    "id": 9226,
+    "user_id": "12",
+    "timestamp": "2026-05-12T15:13:05.000Z",
+    "status": 0
+  },
+  {
+    "id": 9227,
+    "user_id": "33",
+    "timestamp": "2026-05-12T15:32:25.000Z",
+    "status": 0
+  },
+  {
+    "id": 9281,
+    "user_id": "33",
+    "timestamp": "2026-05-12T15:33:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 9282,
+    "user_id": "33",
+    "timestamp": "2026-05-13T00:05:45.000Z",
+    "status": 0
+  },
+  {
+    "id": 9283,
+    "user_id": "32",
+    "timestamp": "2026-05-13T00:05:55.000Z",
+    "status": 1
+  },
+  {
+    "id": 9228,
+    "user_id": "32",
+    "timestamp": "2026-05-13T00:26:02.000Z",
+    "status": 1
+  },
+  {
+    "id": 9229,
+    "user_id": "33",
+    "timestamp": "2026-05-13T00:26:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 9230,
+    "user_id": "12",
+    "timestamp": "2026-05-13T00:31:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 9284,
+    "user_id": "26",
+    "timestamp": "2026-05-13T00:47:54.000Z",
+    "status": 0
+  },
+  {
+    "id": 9285,
+    "user_id": "13",
+    "timestamp": "2026-05-13T00:48:05.000Z",
+    "status": 0
+  },
+  {
+    "id": 9231,
+    "user_id": "26",
+    "timestamp": "2026-05-13T00:55:02.000Z",
+    "status": 0
+  },
+  {
+    "id": 9232,
+    "user_id": "13",
+    "timestamp": "2026-05-13T00:55:20.000Z",
+    "status": 0
+  },
+  {
+    "id": 9286,
+    "user_id": "34",
+    "timestamp": "2026-05-13T01:05:50.000Z",
+    "status": 0
+  },
+  {
+    "id": 9287,
+    "user_id": "13",
+    "timestamp": "2026-05-13T01:08:25.000Z",
+    "status": 0
+  },
+  {
+    "id": 9233,
+    "user_id": "29",
+    "timestamp": "2026-05-13T01:09:29.000Z",
+    "status": 0
+  },
+  {
+    "id": 9234,
+    "user_id": "21",
+    "timestamp": "2026-05-13T01:09:50.000Z",
+    "status": 0
+  },
+  {
+    "id": 9235,
+    "user_id": "28",
+    "timestamp": "2026-05-13T01:10:14.000Z",
+    "status": 0
+  },
+  {
+    "id": 9288,
+    "user_id": "21",
+    "timestamp": "2026-05-13T01:10:26.000Z",
+    "status": 0
+  },
+  {
+    "id": 9289,
+    "user_id": "29",
+    "timestamp": "2026-05-13T01:10:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9236,
+    "user_id": "25",
+    "timestamp": "2026-05-13T01:12:11.000Z",
+    "status": 1
+  },
+  {
+    "id": 9290,
+    "user_id": "25",
+    "timestamp": "2026-05-13T01:15:51.000Z",
+    "status": 1
+  },
+  {
+    "id": 9291,
+    "user_id": "12",
+    "timestamp": "2026-05-13T01:21:38.000Z",
+    "status": 1
+  },
+  {
+    "id": 9292,
+    "user_id": "35",
+    "timestamp": "2026-05-13T08:16:08.000Z",
+    "status": 1
+  },
+  {
+    "id": 9293,
+    "user_id": "34",
+    "timestamp": "2026-05-13T10:00:00.000Z",
+    "status": 1
+  },
+  {
+    "id": 9294,
+    "user_id": "13",
+    "timestamp": "2026-05-13T10:02:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9295,
+    "user_id": "21",
+    "timestamp": "2026-05-13T10:02:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 9296,
+    "user_id": "35",
+    "timestamp": "2026-05-13T10:02:46.000Z",
+    "status": 1
+  },
+  {
+    "id": 9297,
+    "user_id": "26",
+    "timestamp": "2026-05-13T10:03:37.000Z",
+    "status": 1
+  },
+  {
+    "id": 9298,
+    "user_id": "29",
+    "timestamp": "2026-05-13T10:03:44.000Z",
+    "status": 1
+  },
+  {
+    "id": 9237,
+    "user_id": "28",
+    "timestamp": "2026-05-13T10:08:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 9238,
+    "user_id": "21",
+    "timestamp": "2026-05-13T10:08:46.000Z",
+    "status": 1
+  },
+  {
+    "id": 9239,
+    "user_id": "29",
+    "timestamp": "2026-05-13T10:08:50.000Z",
+    "status": 1
+  },
+  {
+    "id": 9240,
+    "user_id": "13",
+    "timestamp": "2026-05-13T10:08:58.000Z",
+    "status": 1
+  },
+  {
+    "id": 9241,
+    "user_id": "26",
+    "timestamp": "2026-05-13T10:09:25.000Z",
+    "status": 1
+  },
+  {
+    "id": 9242,
+    "user_id": "25",
+    "timestamp": "2026-05-13T15:04:39.000Z",
+    "status": 0
+  },
+  {
+    "id": 9243,
+    "user_id": "12",
+    "timestamp": "2026-05-13T15:05:30.000Z",
+    "status": 0
+  },
+  {
+    "id": 9299,
+    "user_id": "25",
+    "timestamp": "2026-05-13T15:05:55.000Z",
+    "status": 0
+  },
+  {
+    "id": 9300,
+    "user_id": "32",
+    "timestamp": "2026-05-13T15:11:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 9244,
+    "user_id": "32",
+    "timestamp": "2026-05-13T15:12:08.000Z",
+    "status": 0
+  },
+  {
+    "id": 9301,
+    "user_id": "12",
+    "timestamp": "2026-05-13T15:16:54.000Z",
+    "status": 0
+  },
+  {
+    "id": 9302,
+    "user_id": "33",
+    "timestamp": "2026-05-13T15:21:35.000Z",
+    "status": 0
+  },
+  {
+    "id": 9245,
+    "user_id": "33",
+    "timestamp": "2026-05-13T15:29:05.000Z",
+    "status": 0
+  },
+  {
+    "id": 9303,
+    "user_id": "33",
+    "timestamp": "2026-05-13T23:59:48.000Z",
+    "status": 0
+  },
+  {
+    "id": 9304,
+    "user_id": "32",
+    "timestamp": "2026-05-14T00:00:05.000Z",
+    "status": 1
+  },
+  {
+    "id": 9305,
+    "user_id": "13",
+    "timestamp": "2026-05-14T00:57:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 9306,
+    "user_id": "26",
+    "timestamp": "2026-05-14T00:57:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 9307,
+    "user_id": "35",
+    "timestamp": "2026-05-14T00:59:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9246,
+    "user_id": "13",
+    "timestamp": "2026-05-14T01:02:28.000Z",
+    "status": 0
+  },
+  {
+    "id": 9247,
+    "user_id": "26",
+    "timestamp": "2026-05-14T01:02:51.000Z",
+    "status": 0
+  },
+  {
+    "id": 9248,
+    "user_id": "34",
+    "timestamp": "2026-05-14T01:06:23.000Z",
+    "status": 0
+  },
+  {
+    "id": 9249,
+    "user_id": "32",
+    "timestamp": "2026-05-14T01:08:15.000Z",
+    "status": 1
+  },
+  {
+    "id": 9250,
+    "user_id": "33",
+    "timestamp": "2026-05-14T01:08:18.000Z",
+    "status": 1
+  },
+  {
+    "id": 9308,
+    "user_id": "34",
+    "timestamp": "2026-05-14T01:08:44.000Z",
+    "status": 0
+  },
+  {
+    "id": 9309,
+    "user_id": "29",
+    "timestamp": "2026-05-14T01:09:18.000Z",
+    "status": 0
+  },
+  {
+    "id": 9251,
+    "user_id": "21",
+    "timestamp": "2026-05-14T01:10:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9310,
+    "user_id": "12",
+    "timestamp": "2026-05-14T01:10:47.000Z",
+    "status": 1
+  },
+  {
+    "id": 9311,
+    "user_id": "25",
+    "timestamp": "2026-05-14T01:10:53.000Z",
+    "status": 1
+  },
+  {
+    "id": 9252,
+    "user_id": "29",
+    "timestamp": "2026-05-14T01:12:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9312,
+    "user_id": "21",
+    "timestamp": "2026-05-14T01:12:43.000Z",
+    "status": 0
+  },
+  {
+    "id": 9253,
+    "user_id": "28",
+    "timestamp": "2026-05-14T01:13:50.000Z",
+    "status": 0
+  },
+  {
+    "id": 9313,
+    "user_id": "28",
+    "timestamp": "2026-05-14T01:23:13.000Z",
+    "status": 0
+  },
+  {
+    "id": 9254,
+    "user_id": "25",
+    "timestamp": "2026-05-14T03:08:27.000Z",
+    "status": 1
+  },
+  {
+    "id": 9314,
+    "user_id": "34",
+    "timestamp": "2026-05-14T09:59:59.000Z",
+    "status": 1
+  },
+  {
+    "id": 9255,
+    "user_id": "13",
+    "timestamp": "2026-05-14T10:00:56.000Z",
+    "status": 1
+  },
+  {
+    "id": 9256,
+    "user_id": "28",
+    "timestamp": "2026-05-14T10:01:09.000Z",
+    "status": 1
+  },
+  {
+    "id": 9257,
+    "user_id": "34",
+    "timestamp": "2026-05-14T10:01:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 9258,
+    "user_id": "21",
+    "timestamp": "2026-05-14T10:01:40.000Z",
+    "status": 1
+  },
+  {
+    "id": 9315,
+    "user_id": "21",
+    "timestamp": "2026-05-14T10:01:41.000Z",
+    "status": 1
+  },
+  {
+    "id": 9259,
+    "user_id": "26",
+    "timestamp": "2026-05-14T10:01:55.000Z",
+    "status": 1
+  },
+  {
+    "id": 9260,
+    "user_id": "29",
+    "timestamp": "2026-05-14T10:02:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 9316,
+    "user_id": "35",
+    "timestamp": "2026-05-14T10:03:16.000Z",
+    "status": 1
+  },
+  {
+    "id": 9317,
+    "user_id": "26",
+    "timestamp": "2026-05-14T10:03:39.000Z",
+    "status": 1
+  },
+  {
+    "id": 9318,
+    "user_id": "13",
+    "timestamp": "2026-05-14T10:06:04.000Z",
+    "status": 1
+  },
+  {
+    "id": 9319,
+    "user_id": "28",
+    "timestamp": "2026-05-14T10:12:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 9320,
+    "user_id": "25",
+    "timestamp": "2026-05-14T15:08:36.000Z",
+    "status": 0
+  },
+  {
+    "id": 9321,
+    "user_id": "32",
+    "timestamp": "2026-05-14T15:08:47.000Z",
+    "status": 0
+  },
+  {
+    "id": 9261,
+    "user_id": "25",
+    "timestamp": "2026-05-14T15:09:13.000Z",
+    "status": 0
+  },
+  {
+    "id": 9322,
+    "user_id": "12",
+    "timestamp": "2026-05-14T15:09:23.000Z",
+    "status": 0
+  },
+  {
+    "id": 9262,
+    "user_id": "32",
+    "timestamp": "2026-05-14T15:17:08.000Z",
+    "status": 0
+  },
+  {
+    "id": 9323,
+    "user_id": "33",
+    "timestamp": "2026-05-14T15:24:34.000Z",
+    "status": 0
+  },
+  {
+    "id": 9263,
+    "user_id": "33",
+    "timestamp": "2026-05-14T15:27:00.000Z",
+    "status": 0
+  },
+  {
+    "id": 9264,
+    "user_id": "12",
+    "timestamp": "2026-05-14T15:35:59.000Z",
+    "status": 0
+  },
+  {
+    "id": 9265,
+    "user_id": "33",
+    "timestamp": "2026-05-14T23:59:23.000Z",
+    "status": 0
+  },
+  {
+    "id": 9266,
+    "user_id": "32",
+    "timestamp": "2026-05-14T23:59:42.000Z",
+    "status": 1
+  },
+  {
+    "id": 9267,
+    "user_id": "25",
+    "timestamp": "2026-05-15T00:00:46.000Z",
+    "status": 1
+  },
+  {
+    "id": 9324,
+    "user_id": "32",
+    "timestamp": "2026-05-15T00:14:03.000Z",
+    "status": 1
+  },
+  {
+    "id": 9325,
+    "user_id": "33",
+    "timestamp": "2026-05-15T00:14:10.000Z",
+    "status": 1
+  },
+  {
+    "id": 9326,
+    "user_id": "12",
+    "timestamp": "2026-05-15T00:21:17.000Z",
+    "status": 1
+  },
+  {
+    "id": 9327,
+    "user_id": "25",
+    "timestamp": "2026-05-15T00:21:28.000Z",
+    "status": 1
+  },
+  {
+    "id": 9328,
+    "user_id": "35",
+    "timestamp": "2026-05-15T00:50:33.000Z",
+    "status": 1
+  },
+  {
+    "id": 9329,
+    "user_id": "26",
+    "timestamp": "2026-05-15T00:50:39.000Z",
+    "status": 1
+  },
+  {
+    "id": 9330,
+    "user_id": "13",
+    "timestamp": "2026-05-15T00:51:19.000Z",
+    "status": 0
+  },
+  {
+    "id": 9331,
+    "user_id": "34",
+    "timestamp": "2026-05-15T00:53:37.000Z",
+    "status": 0
+  },
+  {
+    "id": 9268,
+    "user_id": "13",
+    "timestamp": "2026-05-15T00:57:49.000Z",
+    "status": 0
+  },
+  {
+    "id": 9269,
+    "user_id": "26",
+    "timestamp": "2026-05-15T00:58:04.000Z",
+    "status": 0
+  },
+  {
+    "id": 9332,
+    "user_id": "21",
+    "timestamp": "2026-05-15T01:07:13.000Z",
+    "status": 0
+  },
+  {
+    "id": 9270,
+    "user_id": "34",
+    "timestamp": "2026-05-15T01:07:31.000Z",
+    "status": 0
+  },
+  {
+    "id": 9271,
+    "user_id": "21",
+    "timestamp": "2026-05-15T01:08:15.000Z",
+    "status": 0
+  },
+  {
+    "id": 9272,
+    "user_id": "29",
+    "timestamp": "2026-05-15T01:09:25.000Z",
+    "status": 0
+  },
+  {
+    "id": 9333,
+    "user_id": "28",
+    "timestamp": "2026-05-15T01:14:40.000Z",
+    "status": 0
+  },
+  {
+    "id": 9273,
+    "user_id": "28",
+    "timestamp": "2026-05-15T01:16:11.000Z",
+    "status": 0
+  },
+  {
+    "id": 9334,
+    "user_id": "29",
+    "timestamp": "2026-05-15T02:12:42.000Z",
+    "status": 0
+  }
+]

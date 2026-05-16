@@ -87,13 +87,40 @@ app.listen(PORT, () => {
     // 5-minute cron for live sync fallback
     setInterval(() => __awaiter(void 0, void 0, void 0, function* () {
         try {
+            // Process TODAY
             const tomorrow = new Date();
             tomorrow.setDate(tomorrow.getDate() + 1);
             yield absence_service_1.AbsenceService.processDailyAbsences(tomorrow);
-            console.log(`[Cron] 5-minute global sync for today completed`);
+            // Also process YESTERDAY to catch overnight checkouts from night shift
+            // (their checkout at ~3 AM falls in yesterday's 6AM-6AM window)
+            const today = new Date();
+            yield absence_service_1.AbsenceService.processDailyAbsences(today);
+            // Also cleanup any past pending records
+            yield absence_service_1.AbsenceService.processMissedAbsences();
+            console.log(`[Cron] 5-minute global sync and cleanup completed`);
         }
         catch (err) {
             console.error(`[Cron] 5-minute sync failed`, err);
         }
     }), 5 * 60 * 1000);
+    // Hourly cron for 3-day MonitoringLog retention policy
+    setInterval(() => __awaiter(void 0, void 0, void 0, function* () {
+        try {
+            const threeDaysAgo = new Date();
+            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+            const { count } = yield prisma_1.default.monitoringLog.deleteMany({
+                where: {
+                    timestamp: {
+                        lt: threeDaysAgo
+                    }
+                }
+            });
+            if (count > 0) {
+                console.log(`[Cron] Deleted ${count} old monitoring logs (older than 3 days)`);
+            }
+        }
+        catch (err) {
+            console.error(`[Cron] 3-day retention cleanup failed`, err);
+        }
+    }), 60 * 60 * 1000); // Run every hour
 });

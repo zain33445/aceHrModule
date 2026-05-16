@@ -82,9 +82,15 @@ app.listen(PORT, () => {
   // 5-minute cron for live sync fallback
   setInterval(async () => {
     try {
+      // Process TODAY
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       await AbsenceService.processDailyAbsences(tomorrow);
+      
+      // Also process YESTERDAY to catch overnight checkouts from night shift
+      // (their checkout at ~3 AM falls in yesterday's 6AM-6AM window)
+      const today = new Date();
+      await AbsenceService.processDailyAbsences(today);
       
       // Also cleanup any past pending records
       await AbsenceService.processMissedAbsences();

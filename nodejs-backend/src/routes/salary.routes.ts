@@ -32,8 +32,12 @@ router.post('/bulk-pay', async (req, res) => {
   if (!date) return res.status(400).json({ error: 'Date is required' });
 
   try {
-    const paymentDate = new Date(date);
-    paymentDate.setDate(1); // Standardize to 1st of month
+    // Parse date safely to avoid timezone shifts (e.g., 2026-04-01 becoming March 31st in some TZs)
+    // Adding 12 hours ensures the date stays within the intended month regardless of local/UTC offset.
+    const d = new Date(date);
+    d.setHours(d.getHours() + 12);
+    
+    const paymentDate = new Date(d.getFullYear(), d.getMonth(), 1);
 
     // Get all users
     const users = await prisma.user.findMany({
@@ -55,8 +59,8 @@ router.post('/bulk-pay', async (req, res) => {
         _sum: { amount: true }
       });
       
-      const deductions = deductionAgg._sum.amount || 0;
-      const finalSalary = Math.max(0, user.monthly_salary - deductions);
+      const deductions = Math.round(deductionAgg._sum.amount || 0);
+      const finalSalary = Math.max(0, Math.round(user.monthly_salary - deductions));
 
       // 2. Check if already paid this month to avoid duplicates
       const existing = await prisma.salary.findFirst({
@@ -118,7 +122,7 @@ router.post('/', async (req, res) => {
     const salary = await prisma.salary.create({
       data: {
         user_id,
-        paid_salary: parseFloat(paid_salary),
+        paid_salary: Math.round(parseFloat(paid_salary)),
         date: new Date(date)
       },
       include: {
@@ -144,7 +148,7 @@ router.put('/:id', async (req, res) => {
     const salary = await prisma.salary.update({
       where: { id: parseInt(id) },
       data: {
-        paid_salary: paid_salary ? parseFloat(paid_salary) : undefined,
+        paid_salary: paid_salary ? Math.round(parseFloat(paid_salary)) : undefined,
         date: date ? new Date(date) : undefined
       },
       include: {

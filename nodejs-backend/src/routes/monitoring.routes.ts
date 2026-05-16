@@ -19,8 +19,9 @@ router.post('/screenshot', async (req: Request, res: Response) => {
     }
 
     const eventTime = new Date(timestamp);
-    const dateStr = eventTime.toISOString().split('T')[0];
     const timeStr = eventTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }); // "HH:MM"
+    const rawEventTime = new Date(eventTime.getTime() - (5 * 60 * 60 * 1000));
+    const dateStr = rawEventTime.toISOString().split('T')[0];
 
     let finalUserId = null;
     if (userId && userId !== 'electron-monitor') {
@@ -41,7 +42,8 @@ router.post('/screenshot', async (req: Request, res: Response) => {
     // 2. Sync with AttendanceRecord if it's a valid user and check-in/out event
     if (finalUserId && (type === 'check-in' || type === 'check-out')) {
       try {
-        const attendanceDate = new Date(dateStr);
+        // Use noon-UTC canonical date to match the cron's format and prevent duplicates
+        const attendanceDate = new Date(dateStr + 'T12:00:00.000Z');
         
         if (type === 'check-in') {
           // Fetch user shift for status calculation

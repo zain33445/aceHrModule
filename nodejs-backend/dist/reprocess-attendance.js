@@ -14,159 +14,103 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const prisma_1 = __importDefault(require("./prisma"));
 const absence_service_1 = require("./services/absence.service");
+const MAY_REWRITE_START = '2026-05-01';
+function parseDateArg(value, fallback) {
+    const raw = value || fallback;
+    const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const date = match
+        ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+        : new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+        throw new Error(`Invalid date: ${value}`);
+    }
+    date.setHours(0, 0, 0, 0);
+    return date;
+}
+function resetMayLeaveBanks() {
+    return __awaiter(this, void 0, void 0, function* () {
+        const users = yield prisma_1.default.user.findMany({
+            where: { role: 'employee' },
+            select: { id: true, leave_bank: true },
+        });
+        for (const user of users) {
+            yield prisma_1.default.leaveBank.upsert({
+                where: { user_id: user.id },
+                update: {
+                    leaves_remaining: user.leave_bank,
+                    last_reset_month: '2026-05',
+                },
+                create: {
+                    user_id: user.id,
+                    leaves_remaining: user.leave_bank,
+                    last_reset_month: '2026-05',
+                },
+            });
+        }
+        return users.length;
+    });
+}
 function reprocessAttendance() {
     return __awaiter(this, void 0, void 0, function* () {
+        const startDate = parseDateArg(process.argv[2], MAY_REWRITE_START);
+        const endDate = parseDateArg(process.argv[3], new Date().toISOString().split('T')[0]);
+        if (startDate < parseDateArg(MAY_REWRITE_START, MAY_REWRITE_START)) {
+            throw new Error(`This script is limited to ${MAY_REWRITE_START} onward.`);
+        }
+        if (endDate < startDate) {
+            throw new Error('End date must be on or after start date.');
+        }
+        const deleteStart = new Date(startDate);
+        deleteStart.setHours(0, 0, 0, 0);
+        const deleteEnd = new Date(endDate);
+        deleteEnd.setHours(23, 59, 59, 999);
         try {
-            console.log('\n🔄 Clearing existing attendance records for March...\n');
-            // Delete existing March records
-            const startOfMarch = new Date('2026-03-01');
-            const endOfMarch = new Date('2026-03-31');
-            endOfMarch.setHours(23, 59, 59, 999);
-            const deleted = yield prisma_1.default.attendanceRecord.deleteMany({
+            console.log(`\nReprocessing attendance records from ${startDate.toDateString()} to ${endDate.toDateString()}.\n`);
+            const resetCount = yield resetMayLeaveBanks();
+            console.log(`Reset May leave banks for ${resetCount} employees.`);
+            const deletedDeductions = yield prisma_1.default.deduction.deleteMany({
                 where: {
                     date: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
-                }
-            });
-            console.log(`🗑️  Deleted ${deleted.count} old records\n`);
-            // Get all unique dates from March attendance logs
-            const marchLogs = yield prisma_1.default.attendanceLog.findMany({
-                where: {
-                    timestamp: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
+                        gte: deleteStart,
+                        lte: deleteEnd,
+                    },
+                    type: { in: ['late', 'half-day', 'absent'] },
                 },
-                select: { timestamp: true },
-                orderBy: { timestamp: 'asc' }
             });
-            const uniqueDates = new Set();
-            marchLogs.forEach(log => {
-                const dateStr = log.timestamp.toISOString().split('T')[0];
-                uniqueDates.add(dateStr);
-            });
-            const sortedDates = Array.from(uniqueDates).sort();
-            console.log(`📅 Re-processing ${sortedDates.length} dates with corrected shift times...\n`);
-            // Process each date
-            for (const dateStr of sortedDates) {
-                const processDate = new Date(dateStr);
-                yield absence_service_1.AbsenceService.processDailyAbsences(processDate);
-                console.log(`✅ Processed: ${dateStr}`);
-            }
-            // Fetch and display results
-            console.log('\n\n📊 VERIFICATION RESULTS\n');
-            console.log('═══════════════════════════════════════');
-            const totalRecords = yield prisma_1.default.attendanceRecord.findMany({
+            console.log(`Deleted ${deletedDeductions.count} attendance-related deductions.`);
+            const deletedRecords = yield prisma_1.default.attendanceRecord.deleteMany({
                 where: {
                     date: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
-                }
+                        gte: deleteStart,
+                        lte: deleteEnd,
+                    },
+                },
             });
-            console.log(`Total Attendance Records: ${totalRecords.length}`);
-            // Breakdown by status
-            const statusCounts = {
-                present: totalRecords.filter(r => r.status === 'present').length,
-                absent: totalRecords.filter(r => r.status === 'absent').length,
-                leave: totalRecords.filter(r => r.status === 'leave').length,
-                late: totalRecords.filter(r => r.status === 'late').length,
-                halfday: totalRecords.filter(r => r.status === 'halfday').length
-            };
-            console.log('\nStatus Breakdown:');
-            console.log(`  ├─ Present: ${statusCounts.present}`);
-            console.log(`  ├─ Absent: ${statusCounts.absent}`);
-            console.log(`  ├─ Leave: ${statusCounts.leave}`);
-            console.log(`  ├─ Late: ${statusCounts.late}`);
-            console.log(`  └─ Half-day: ${statusCounts.halfday}`);
-            // Flags
-            const lateCount = totalRecords.filter(r => r.is_late).length;
-            const halfdayCount = totalRecords.filter(r => r.is_halfday).length;
-            const withCheckIn = totalRecords.filter(r => r.check_in_time).length;
-            const withCheckOut = totalRecords.filter(r => r.check_out_time).length;
-            console.log('\nDetailed Metrics:');
-            console.log(`  ├─ Late Arrivals (is_late): ${lateCount}`);
-            console.log(`  ├─ Half-days (is_halfday): ${halfdayCount}`);
-            console.log(`  ├─ Records with Check-in Times: ${withCheckIn}`);
-            console.log(`  └─ Records with Check-out Times: ${withCheckOut}`);
-            console.log('\n═══════════════════════════════════════');
-            // Show detailed examples
-            console.log('\n📋 SAMPLE RECORDS WITH LATE ARRIVALS:\n');
-            const lateRecords = yield prisma_1.default.attendanceRecord.findMany({
-                where: {
-                    is_late: true,
-                    date: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
-                },
-                include: {
-                    user: { select: { name: true } }
-                },
-                take: 5
-            });
-            if (lateRecords.length > 0) {
-                lateRecords.forEach((r, i) => {
-                    console.log(`${i + 1}. ${r.user.name}`);
-                    console.log(`   Date: ${r.date.toISOString().split('T')[0]}`);
-                    console.log(`   Check-in: ${r.check_in_time} (Late after 09:16 for day shift, 19:41 for night shift)`);
-                    console.log(`   Status: ${r.status}`);
-                    console.log('');
-                });
-            }
-            else {
-                console.log('No late arrivals found in current data.');
-            }
-            console.log('\n📋 SAMPLE RECORDS WITH HALF-DAYS:\n');
-            const halfdayRecords = yield prisma_1.default.attendanceRecord.findMany({
-                where: {
-                    is_halfday: true,
-                    date: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
-                },
-                include: {
-                    user: { select: { name: true } }
-                },
-                take: 5
-            });
-            if (halfdayRecords.length > 0) {
-                halfdayRecords.forEach((r, i) => {
-                    console.log(`${i + 1}. ${r.user.name}`);
-                    console.log(`   Date: ${r.date.toISOString().split('T')[0]}`);
-                    console.log(`   Check-out: ${r.check_out_time} (Before 11:01 for day shift, 23:01 for night shift)`);
-                    console.log(`   Status: ${r.status}`);
-                    console.log('');
-                });
-            }
-            else {
-                console.log('No half-day records found in current data.');
-            }
-            console.log('\n📋 OVERALL SAMPLE (First 10 records):\n');
-            const sampleRecords = yield prisma_1.default.attendanceRecord.findMany({
+            console.log(`Deleted ${deletedRecords.count} attendance records.`);
+            const results = yield absence_service_1.AbsenceService.processDateRange(startDate, endDate);
+            console.log(`Processed ${results.length} attendance dates.`);
+            const records = yield prisma_1.default.attendanceRecord.findMany({
                 where: {
                     date: {
-                        gte: startOfMarch,
-                        lte: endOfMarch
-                    }
+                        gte: deleteStart,
+                        lte: deleteEnd,
+                    },
                 },
-                include: {
-                    user: { select: { name: true } }
-                },
-                take: 10,
-                orderBy: { date: 'desc' }
             });
-            sampleRecords.forEach((r, i) => {
-                console.log(`${i + 1}. ${r.user.name} - ${r.date.toISOString().split('T')[0]}`);
-                console.log(`   Status: ${r.status} | Check-in: ${r.check_in_time || 'N/A'} | Check-out: ${r.check_out_time || 'N/A'} | Late: ${r.is_late} | Half-day: ${r.is_halfday}`);
-            });
-            console.log('\n✅ Re-processing Complete!\n');
+            const summary = records.reduce((acc, record) => {
+                acc[record.status] = (acc[record.status] || 0) + 1;
+                return acc;
+            }, {});
+            console.log('\nMay-forward rewrite summary:');
+            console.log(`Total records: ${records.length}`);
+            Object.entries(summary)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .forEach(([status, count]) => console.log(`${status}: ${count}`));
+            console.log('\nDone.\n');
         }
         catch (error) {
-            console.error('❌ Error:', error);
+            console.error('Reprocessing failed:', error);
+            process.exitCode = 1;
         }
         finally {
             yield prisma_1.default.$disconnect();

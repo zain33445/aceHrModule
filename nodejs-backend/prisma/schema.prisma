@@ -24,9 +24,9 @@ model Department {
   name     String @unique
   shift_id Int?
   shift    Shift? @relation(fields: [shift_id], references: [id])
+  users    User[]
   lead_id  String?
   lead     User?  @relation("DepartmentLead", fields: [lead_id], references: [id])
-  users    User[]
 
   @@map("departments")
 }
@@ -52,7 +52,6 @@ model User {
   disputes_lead      Dispute[]          @relation("DisputeLeadApprover")
   disputes_admin     Dispute[]          @relation("DisputeAdminApprover")
   dispute_histories  DisputeHistory[]   @relation("HistoryActor")
-  led_departments    Department[]       @relation("DepartmentLead")
   leaveBank          LeaveBank?
   leave_reviews      LeaveRequest[]     @relation("LeaveReviewer")
   leave_requests     LeaveRequest[]     @relation("LeaveRequester")
@@ -60,6 +59,7 @@ model User {
   notifications      Notification[]
   salaries           Salary[]
   department         Department?        @relation(fields: [department_id], references: [id])
+  led_departments    Department[]       @relation("DepartmentLead")
 
   @@map("users")
 }
@@ -124,7 +124,7 @@ model Dispute {
   is_escalated      Boolean          @default(false)
   is_deleted        Boolean          @default(false)
   deleted_at        DateTime?
-  updated_at        DateTime         @updatedAt
+  updated_at        DateTime         @default(now()) @updatedAt
   deductions        Deduction[]
   approver          User?            @relation("DisputeApprover", fields: [approved_by], references: [id])
   leadApprover      User?            @relation("DisputeLeadApprover", fields: [lead_approved_by], references: [id])

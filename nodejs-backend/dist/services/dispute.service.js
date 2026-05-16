@@ -14,6 +14,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DisputeService = void 0;
 const prisma_1 = __importDefault(require("../prisma"));
+const dispute_constants_1 = require("../constants/dispute.constants");
+const dispute_workflow_1 = require("./dispute.workflow");
 class DisputeService {
     // Helper to get active working days in a month (excluding weekends)
     static getWorkingDaysInMonth(year, month) {
@@ -25,7 +27,6 @@ class DisputeService {
                 workingDays++;
             }
         }
-        // Fallback in case of 0 to avoid Infinity
         return workingDays > 0 ? workingDays : 30;
     }
     // Calculate deduction amount based on category
@@ -33,13 +34,12 @@ class DisputeService {
         const workingDays = this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
         switch (category) {
             case 'absent':
-                return employeeSalary / workingDays; // 1 day deduction
+                return employeeSalary / workingDays;
             case 'late':
-                return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for late
             case 'half-day':
-                return (employeeSalary / workingDays) * 0.5; // 50% of daily salary for half-day
+                return (employeeSalary / workingDays) * 0.5;
             case 'leave':
-                return employeeSalary / workingDays; // 1 day deduction if unauthorized
+                return employeeSalary / workingDays;
             default:
                 return 0;
         }
@@ -48,153 +48,261 @@ class DisputeService {
     static getUserDisputes(userId) {
         return __awaiter(this, void 0, void 0, function* () {
             return prisma_1.default.dispute.findMany({
-                where: { req_by: userId.toString() },
+                where: { req_by: userId, is_deleted: false },
                 include: {
-                    requester: {
-                        select: { id: true, name: true }
-                    },
-                    approver: {
-                        select: { id: true, name: true }
-                    }
+                    requester: { select: { id: true, name: true } },
+                    leadApprover: { select: { id: true, name: true } },
+                    adminApprover: { select: { id: true, name: true } },
+                    history: { orderBy: { created_at: 'desc' } }
                 },
                 orderBy: { date_of_req: 'desc' }
             });
         });
     }
-    // Get all pending disputes
-    static getPendingDisputes() {
-        return __awaiter(this, void 0, void 0, function* () {
-            return prisma_1.default.dispute.findMany({
-                include: {
-                    requester: {
-                        select: { id: true, name: true }
-                    }
-                },
-                orderBy: { date_of_req: 'desc' }
+    // Get all disputes for admin
+    static getAdminDisputes() {
+        return __awaiter(this, arguments, void 0, function* (page = 1, limit = 20) {
+            const skip = (page - 1) * limit;
+            const [records, total] = yield Promise.all([
+                prisma_1.default.dispute.findMany({
+                    where: { is_deleted: false },
+                    include: {
+                        requester: { select: { id: true, name: true, department: true } },
+                        leadApprover: { select: { id: true, name: true } },
+                        adminApprover: { select: { id: true, name: true } }
+                    },
+                    orderBy: { date_of_req: 'desc' },
+                    skip,
+                    take: limit
+                }),
+                prisma_1.default.dispute.count({ where: { is_deleted: false } })
+            ]);
+            return { records, total };
+        });
+    }
+    // Get team disputes for a lead
+    static getTeamDisputes(leadId_1) {
+        return __awaiter(this, arguments, void 0, function* (leadId, page = 1, limit = 20) {
+            const skip = (page - 1) * limit;
+            const departments = yield prisma_1.default.department.findMany({
+                where: { lead_id: leadId },
+                select: { id: true }
             });
+            const deptIds = departments.map(d => d.id);
+            const where = {
+                requester: { department_id: { in: deptIds } },
+                is_deleted: false
+            };
+            const [records, total] = yield Promise.all([
+                prisma_1.default.dispute.findMany({
+                    where,
+                    include: {
+                        requester: { select: { id: true, name: true, department: true } },
+                        leadApprover: { select: { id: true, name: true } }
+                    },
+                    orderBy: { date_of_req: 'desc' },
+                    skip,
+                    take: limit
+                }),
+                prisma_1.default.dispute.count({ where })
+            ]);
+            return { records, total };
         });
     }
     // Create a new dispute
     static createDispute(data) {
         return __awaiter(this, void 0, void 0, function* () {
-            return prisma_1.default.dispute.create({
-                data: {
-                    req_by: data.user_id.toString(),
-                    dispute_date: data.dispute_date,
-                    category: data.dispute_category || 'other',
-                    description: data.description,
-                    date_of_req: new Date(),
-                    status: data.status || 'pending'
-                },
-                include: {
-                    requester: {
-                        select: { id: true, name: true }
+            return prisma_1.default.$transaction((tx) => __awaiter(this, void 0, void 0, function* () {
+                const dispute = yield tx.dispute.create({
+                    data: {
+                        req_by: data.user_id,
+                        dispute_date: data.dispute_date,
+                        category: data.category || 'other',
+                        description: data.description,
+                        date_of_req: new Date(),
+                        status: dispute_constants_1.DISPUTE_STATUS.PENDING,
+                        lead_status: dispute_constants_1.DISPUTE_STATUS.PENDING,
+                        admin_status: dispute_constants_1.DISPUTE_STATUS.PENDING,
+                        final_status: dispute_constants_1.DISPUTE_STATUS.PENDING
                     }
-                }
-            });
-        });
-    }
-    // Approve a dispute and restore salary deductions
-    static approveDispute(disputeId_1) {
-        return __awaiter(this, arguments, void 0, function* (disputeId, remarks = '') {
-            const dispute = yield prisma_1.default.dispute.findUnique({
-                where: { id: disputeId },
-                include: {
-                    requester: {
-                        select: { id: true, monthly_salary: true }
-                    }
-                }
-            });
-            if (!dispute) {
-                throw new Error('Dispute not found');
-            }
-            // Calculate deduction that should be restored
-            const deductionAmount = this.calculateDeductionAmount(dispute.category, dispute.requester.monthly_salary, new Date(dispute.dispute_date));
-            // Update dispute status
-            const updatedDispute = yield prisma_1.default.dispute.update({
-                where: { id: disputeId },
-                data: {
-                    status: 'approved',
-                    approved_by: 'admin',
-                    remarks,
-                    date_of_approve: new Date()
-                },
-                include: {
-                    requester: {
-                        select: { id: true, name: true }
-                    }
-                }
-            });
-            // Find deduction record for the disputed date and remove it
-            // Create date range for the disputed date (start of day to end of day)
-            const startOfDay = new Date(dispute.dispute_date);
-            startOfDay.setHours(0, 0, 0, 0);
-            const endOfDay = new Date(dispute.dispute_date);
-            endOfDay.setHours(23, 59, 59, 999);
-            const deductionRecord = yield prisma_1.default.deduction.findFirst({
-                where: {
-                    user_id: dispute.req_by,
-                    date: {
-                        gte: startOfDay,
-                        lte: endOfDay
-                    },
-                    type: dispute.category
-                }
-            });
-            if (deductionRecord) {
-                // If we found a deduction record, we remove it because the dispute is approved
-                yield prisma_1.default.deduction.delete({
-                    where: { id: deductionRecord.id }
                 });
-                console.log(`Deduction record ${deductionRecord.id} removed for user ${dispute.req_by} on ${dispute.dispute_date} due to approved dispute.`);
-            }
-            else {
-                console.log(`No matching deduction record found for user ${dispute.req_by} on ${dispute.dispute_date}. Nothing to remove.`);
-            }
-            // Create notification for the employee
-            const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
-            yield prisma_1.default.notification.create({
-                data: {
-                    user_id: dispute.req_by,
-                    type: 'dispute_approved',
-                    message: `Your ${dispute.category} dispute for ${disputeDateStr} has been approved.${remarks ? ' Remarks: ' + remarks : ''}`
-                }
-            });
-            return updatedDispute;
+                yield tx.disputeHistory.create({
+                    data: {
+                        dispute_id: dispute.id,
+                        actor_id: data.user_id,
+                        action: dispute_constants_1.ACTION_TYPES.CREATED,
+                        remarks: 'Dispute submitted'
+                    }
+                });
+                return dispute;
+            }));
         });
     }
-    // Reject a dispute
-    static rejectDispute(disputeId_1) {
-        return __awaiter(this, arguments, void 0, function* (disputeId, remarks = '') {
-            const dispute = yield prisma_1.default.dispute.findUnique({
-                where: { id: disputeId }
-            });
-            const updatedDispute = yield prisma_1.default.dispute.update({
-                where: { id: disputeId },
-                data: {
-                    status: 'rejected',
-                    approved_by: 'admin',
-                    remarks,
-                    date_of_approve: new Date()
-                },
-                include: {
-                    requester: {
-                        select: { id: true, name: true }
-                    }
+    // Lead Approval
+    static leadApprove(disputeId_1, leadId_1) {
+        return __awaiter(this, arguments, void 0, function* (disputeId, leadId, remarks = '') {
+            return prisma_1.default.$transaction((tx) => __awaiter(this, void 0, void 0, function* () {
+                const dispute = yield tx.dispute.findUnique({ where: { id: disputeId } });
+                if (!dispute)
+                    throw new Error('Dispute not found');
+                if (!dispute_workflow_1.DisputeWorkflow.canTransition(dispute.final_status, dispute_constants_1.ACTION_TYPES.LEAD_APPROVED)) {
+                    throw new Error('Invalid workflow transition');
                 }
-            });
-            // Create notification for the employee
-            if (dispute) {
-                const disputeDateStr = new Date(dispute.dispute_date).toLocaleDateString();
-                yield prisma_1.default.notification.create({
+                const finalStatus = dispute_workflow_1.DisputeWorkflow.computeFinalStatus(dispute_constants_1.DISPUTE_STATUS.APPROVED, dispute.admin_status);
+                const updated = yield tx.dispute.update({
+                    where: { id: disputeId },
+                    data: {
+                        lead_status: dispute_constants_1.DISPUTE_STATUS.APPROVED,
+                        lead_approved_by: leadId,
+                        lead_approved_at: new Date(),
+                        lead_remarks: remarks,
+                        final_status: finalStatus,
+                        status: finalStatus // for backward compatibility
+                    }
+                });
+                yield tx.disputeHistory.create({
+                    data: {
+                        dispute_id: disputeId,
+                        actor_id: leadId,
+                        action: dispute_constants_1.ACTION_TYPES.LEAD_APPROVED,
+                        remarks
+                    }
+                });
+                yield tx.notification.create({
                     data: {
                         user_id: dispute.req_by,
-                        type: 'dispute_rejected',
-                        message: `Your ${dispute.category} dispute for ${disputeDateStr} has been rejected.${remarks ? ' Remarks: ' + remarks : ''}`
+                        type: 'dispute_partially_approved',
+                        message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} was approved by your Team Lead.`
                     }
                 });
-            }
-            return updatedDispute;
+                return updated;
+            }));
+        });
+    }
+    // Lead Rejection
+    static leadReject(disputeId_1, leadId_1) {
+        return __awaiter(this, arguments, void 0, function* (disputeId, leadId, remarks = '') {
+            return prisma_1.default.$transaction((tx) => __awaiter(this, void 0, void 0, function* () {
+                const dispute = yield tx.dispute.findUnique({ where: { id: disputeId } });
+                if (!dispute)
+                    throw new Error('Dispute not found');
+                const finalStatus = dispute_workflow_1.DisputeWorkflow.computeFinalStatus(dispute_constants_1.DISPUTE_STATUS.REJECTED, dispute.admin_status);
+                const updated = yield tx.dispute.update({
+                    where: { id: disputeId },
+                    data: {
+                        lead_status: dispute_constants_1.DISPUTE_STATUS.REJECTED,
+                        lead_approved_by: leadId,
+                        lead_approved_at: new Date(),
+                        lead_remarks: remarks,
+                        final_status: finalStatus,
+                        status: finalStatus
+                    }
+                });
+                yield tx.disputeHistory.create({
+                    data: {
+                        dispute_id: disputeId,
+                        actor_id: leadId,
+                        action: dispute_constants_1.ACTION_TYPES.LEAD_REJECTED,
+                        remarks
+                    }
+                });
+                return updated;
+            }));
+        });
+    }
+    // Admin Approval (Final)
+    static adminApprove(disputeId_1, adminId_1) {
+        return __awaiter(this, arguments, void 0, function* (disputeId, adminId, remarks = '') {
+            return prisma_1.default.$transaction((tx) => __awaiter(this, void 0, void 0, function* () {
+                const dispute = yield tx.dispute.findUnique({
+                    where: { id: disputeId },
+                    include: { requester: true }
+                });
+                if (!dispute)
+                    throw new Error('Dispute not found');
+                const finalStatus = dispute_workflow_1.DisputeWorkflow.computeFinalStatus(dispute.lead_status, dispute_constants_1.DISPUTE_STATUS.APPROVED);
+                const updated = yield tx.dispute.update({
+                    where: { id: disputeId },
+                    data: {
+                        admin_status: dispute_constants_1.DISPUTE_STATUS.APPROVED,
+                        admin_approved_by: adminId,
+                        admin_approved_at: new Date(),
+                        admin_remarks: remarks,
+                        final_status: finalStatus,
+                        status: finalStatus,
+                        approved_by: adminId,
+                        date_of_approve: new Date()
+                    }
+                });
+                // Idempotent Salary Restoration
+                if (finalStatus === dispute_constants_1.DISPUTE_STATUS.APPROVED && !dispute.salary_restored) {
+                    const startOfDay = new Date(dispute.dispute_date);
+                    startOfDay.setHours(0, 0, 0, 0);
+                    const endOfDay = new Date(dispute.dispute_date);
+                    endOfDay.setHours(23, 59, 59, 999);
+                    const deduction = yield tx.deduction.findFirst({
+                        where: {
+                            user_id: dispute.req_by,
+                            date: { gte: startOfDay, lte: endOfDay },
+                            type: dispute.category
+                        }
+                    });
+                    if (deduction) {
+                        yield tx.deduction.delete({ where: { id: deduction.id } });
+                        yield tx.dispute.update({
+                            where: { id: disputeId },
+                            data: { salary_restored: true }
+                        });
+                    }
+                }
+                yield tx.disputeHistory.create({
+                    data: {
+                        dispute_id: disputeId,
+                        actor_id: adminId,
+                        action: dispute_constants_1.ACTION_TYPES.ADMIN_APPROVED,
+                        remarks
+                    }
+                });
+                yield tx.notification.create({
+                    data: {
+                        user_id: dispute.req_by,
+                        type: 'dispute_approved',
+                        message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been fully approved by Admin.`
+                    }
+                });
+                return updated;
+            }));
+        });
+    }
+    // Admin Rejection
+    static adminReject(disputeId_1, adminId_1) {
+        return __awaiter(this, arguments, void 0, function* (disputeId, adminId, remarks = '') {
+            return prisma_1.default.$transaction((tx) => __awaiter(this, void 0, void 0, function* () {
+                const dispute = yield tx.dispute.findUnique({ where: { id: disputeId } });
+                if (!dispute)
+                    throw new Error('Dispute not found');
+                const finalStatus = dispute_workflow_1.DisputeWorkflow.computeFinalStatus(dispute.lead_status, dispute_constants_1.DISPUTE_STATUS.REJECTED);
+                const updated = yield tx.dispute.update({
+                    where: { id: disputeId },
+                    data: {
+                        admin_status: dispute_constants_1.DISPUTE_STATUS.REJECTED,
+                        admin_approved_by: adminId,
+                        admin_approved_at: new Date(),
+                        admin_remarks: remarks,
+                        final_status: finalStatus,
+                        status: finalStatus
+                    }
+                });
+                yield tx.disputeHistory.create({
+                    data: {
+                        dispute_id: disputeId,
+                        actor_id: adminId,
+                        action: dispute_constants_1.ACTION_TYPES.ADMIN_REJECTED,
+                        remarks
+                    }
+                });
+                return updated;
+            }));
         });
     }
 }

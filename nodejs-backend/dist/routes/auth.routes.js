@@ -17,18 +17,30 @@ const prisma_1 = __importDefault(require("../prisma"));
 const router = (0, express_1.Router)();
 // Basic login logic compatible with the old Python API
 router.post('/login', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    const { password } = req.body;
+    const { username, password } = req.body;
     try {
         const user = yield prisma_1.default.user.findFirst({
-            where: { password_hash: password }
+            where: {
+                OR: [
+                    { username: username },
+                    { id: username }
+                ],
+                password_hash: password
+            },
+            include: {
+                led_departments: {
+                    select: { id: true }
+                }
+            }
         });
         if (!user) {
-            return res.status(401).json({ detail: "Invalid password" });
+            return res.status(401).json({ detail: "Invalid username or password" });
         }
         res.json({
             user_id: user.id,
             name: user.name,
-            role: user.role
+            role: user.role,
+            is_lead: user.led_departments.length > 0
         });
     }
     catch (error) {

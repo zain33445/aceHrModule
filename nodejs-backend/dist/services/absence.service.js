@@ -16,6 +16,22 @@ exports.AbsenceService = void 0;
 const prisma_1 = __importDefault(require("../prisma"));
 const dispute_service_1 = require("./dispute.service");
 class AbsenceService {
+    static getUtcDateKey(date) {
+        return date.toISOString().split('T')[0];
+    }
+    static getCanonicalUtcDate(dateRaw) {
+        return new Date(`${this.getUtcDateKey(dateRaw)}T12:00:00.000Z`);
+    }
+    static getUtcDayWindow(dateRaw) {
+        const dateKey = this.getUtcDateKey(dateRaw);
+        return {
+            startOfWindow: new Date(`${dateKey}T00:00:00.000Z`),
+            endOfWindow: new Date(`${dateKey}T23:59:59.999Z`)
+        };
+    }
+    static formatAttendanceClockTime(date) {
+        return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    }
     /**
      * Helper function to convert time HH:MM to comparable format
      */
@@ -46,14 +62,10 @@ class AbsenceService {
         return __awaiter(this, void 0, void 0, function* () {
             var _a, _b;
             const targetDate = checkDate || new Date();
-            targetDate.setDate(targetDate.getDate() - 1); // Check yesterday by default
-            // Set time window: 06:00 AM on target date to 06:00 AM on the following day
-            // This captures even late night shifts (e.g., 7:30 PM to 3:00 AM) in one record.
-            const startOfWindow = new Date(targetDate);
-            startOfWindow.setHours(6, 0, 0, 0);
-            const endOfWindow = new Date(targetDate);
-            endOfWindow.setDate(endOfWindow.getDate() + 1);
-            endOfWindow.setHours(6, 0, 0, 0);
+            if (!checkDate) {
+                targetDate.setUTCDate(targetDate.getUTCDate() - 1); // Check yesterday by default
+            }
+            const { startOfWindow, endOfWindow } = this.getUtcDayWindow(targetDate);
             try {
                 // Get all users
                 const allUsers = yield prisma_1.default.user.findMany({
@@ -101,20 +113,15 @@ class AbsenceService {
         });
     }
     /**
-     * Run real-time sync for specific users who just registered a biometric punch
+     * Run real-time sync for specific users who just registered a biometric punch.
+     * Processes the UTC calendar date(s) present in the incoming logs.
      */
     static processLiveSync(userIds_1) {
         return __awaiter(this, arguments, void 0, function* (userIds, targetDate = new Date()) {
             var _a;
             try {
-                const startOfWindow = new Date(targetDate);
-                startOfWindow.setHours(6, 0, 0, 0);
-                const endOfWindow = new Date(targetDate);
-                endOfWindow.setDate(endOfWindow.getDate() + 1);
-                endOfWindow.setHours(6, 0, 0, 0);
-                // Midnight version of target date for record-keeping
-                const startOfDay = new Date(targetDate);
-                startOfDay.setHours(0, 0, 0, 0);
+                const targetDates = Array.isArray(targetDate) ? targetDate : [targetDate];
+                const uniqueDateKeys = [...new Set(targetDates.map((date) => this.getUtcDateKey(date)))];
                 const usersToSync = yield prisma_1.default.user.findMany({
                     where: { id: { in: userIds } },
                     include: {
@@ -127,24 +134,74 @@ class AbsenceService {
                 });
                 let processedCount = 0;
                 for (const user of usersToSync) {
-                    // Fetch logs for today
-                    const attendanceLogs = yield prisma_1.default.attendanceLog.findMany({
-                        where: {
-                            user_id: user.id,
-                            timestamp: { gte: startOfWindow, lte: endOfWindow }
+                    for (const dateKey of uniqueDateKeys) {
+                        const date = new Date(`${dateKey}T12:00:00.000Z`);
+                        const { startOfWindow, endOfWindow } = this.getUtcDayWindow(date);
+                        const attendanceLogs = yield prisma_1.default.attendanceLog.findMany({
+                            where: {
+                                user_id: user.id,
+                                timestamp: { gte: startOfWindow, lte: endOfWindow }
+                            }
+                        });
+                        if (attendanceLogs.length > 0) {
+                            yield this.calculateAndRecordAttendance(user.id, date, attendanceLogs, user.monthly_salary, (_a = user.department) === null || _a === void 0 ? void 0 : _a.shift);
+                            processedCount++;
                         }
-                    });
-                    if (attendanceLogs.length > 0) {
-                        // Pass startOfDay (midnight) instead of targetDate (which has ms precision)
-                        yield this.calculateAndRecordAttendance(user.id, startOfDay, attendanceLogs, user.monthly_salary, (_a = user.department) === null || _a === void 0 ? void 0 : _a.shift);
-                        processedCount++;
                     }
                 }
-                console.log(`Live sync completed: updated attendance for ${processedCount} users.`);
+                console.log(`Live sync completed: updated ${processedCount} user/date attendance records.`);
             }
             catch (error) {
                 console.error('Error during live sync processing:', error);
             }
+        });
+    }
+    /**
+     * Scan for any 'pending' records from past dates and finalize them (absent/leave)
+     */
+    static processMissedAbsences() {
+        return __awaiter(this, void 0, void 0, function* () {
+            var _a, _b;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const staleRecords = yield prisma_1.default.attendanceRecord.findMany({
+                where: {
+                    status: 'pending',
+                    date: { lt: today }
+                },
+                include: {
+                    user: {
+                        include: {
+                            department: {
+                                include: { shift: true }
+                            }
+                        }
+                    }
+                }
+            });
+            console.log(`[AbsenceService] Found ${staleRecords.length} stale pending records to finalize.`);
+            for (const record of staleRecords) {
+                try {
+                    console.log(`[AbsenceService] Finalizing past record for user ${record.user_id} on ${record.date.toDateString()}`);
+                    const { startOfWindow, endOfWindow } = this.getUtcDayWindow(record.date);
+                    const logs = yield prisma_1.default.attendanceLog.findMany({
+                        where: {
+                            user_id: record.user_id,
+                            timestamp: { gte: startOfWindow, lte: endOfWindow }
+                        }
+                    });
+                    if (logs.length > 0) {
+                        yield this.calculateAndRecordAttendance(record.user_id, record.date, logs, record.user.monthly_salary, (_a = record.user.department) === null || _a === void 0 ? void 0 : _a.shift);
+                    }
+                    else {
+                        yield this.processAttendance(record.user_id, record.date, record.user.monthly_salary, (_b = record.user.department) === null || _b === void 0 ? void 0 : _b.shift);
+                    }
+                }
+                catch (err) {
+                    console.error(`Failed to finalize stale record ${record.id}:`, err);
+                }
+            }
+            return staleRecords.length;
         });
     }
     /**
@@ -154,9 +211,7 @@ class AbsenceService {
     static calculateAndRecordAttendance(userId, targetDateRaw, attendanceLogs, monthlySalary, userShift) {
         return __awaiter(this, void 0, void 0, function* () {
             try {
-                // FORCE absolute pure YYYY-MM-DD midnight UTC representation to mathematically prevent ms-precision duplicates entirely.
-                const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-                const date = new Date(localDateStr + "T00:00:00.000Z");
+                const date = this.getCanonicalUtcDate(targetDateRaw);
                 // Use provided shift or fallback to first shift
                 const shift = userShift || (yield prisma_1.default.shift.findFirst());
                 if (!shift) {
@@ -173,35 +228,39 @@ class AbsenceService {
                 let checkInTime = null;
                 let checkOutTime = null;
                 if (checkInLog) {
-                    checkInTime = checkInLog.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    checkInTime = this.formatAttendanceClockTime(checkInLog.timestamp);
                 }
                 else if (attendanceLogs.length > 0) {
-                    // Fallback to earliest punch if no explicit "In" status found
+                    // Fallback to earliest punch if no explicit "In" status found, BUT DO NOT use a checkout log as an IN log
                     const firstPunch = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())[0];
-                    checkInTime = firstPunch.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    if (firstPunch.status !== 1) {
+                        checkInTime = this.formatAttendanceClockTime(firstPunch.timestamp);
+                    }
                 }
                 if (checkOutLog) {
-                    checkOutTime = checkOutLog.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    checkOutTime = this.formatAttendanceClockTime(checkOutLog.timestamp);
                 }
                 else if (attendanceLogs.length > 1) {
-                    // Fallback to latest punch only if multiple punches exist
-                    const lastPunch = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())[attendanceLogs.length - 1];
-                    if (lastPunch.timestamp.getTime() !== ((checkInLog === null || checkInLog === void 0 ? void 0 : checkInLog.timestamp.getTime()) || 0)) {
-                        checkOutTime = lastPunch.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+                    // Fallback to latest punch only if multiple punches exist, BUT DO NOT use a checkin log as an OUT log
+                    const sorted = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+                    const lastPunch = sorted[sorted.length - 1];
+                    const firstPunchOffset = checkInLog ? checkInLog.timestamp.getTime() : sorted[0].timestamp.getTime();
+                    if (lastPunch.status !== 0 && lastPunch.timestamp.getTime() !== firstPunchOffset) {
+                        checkOutTime = this.formatAttendanceClockTime(lastPunch.timestamp);
                     }
                 }
                 // Determine if it's today
                 const now = new Date();
-                const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+                const todayStr = this.getUtcDateKey(now);
                 const isToday = date.toISOString().startsWith(todayStr);
                 // Determine if weekend
-                const dayOfWeek = date.getDay();
+                const dayOfWeek = date.getUTCDay();
                 const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                 // Determine status based on Rules
                 let status = 'present';
                 let shiftType = 'day';
                 if (isWeekend) {
-                    status = 'holiday';
+                    status = 'weekend';
                 }
                 else if (!checkInTime && !checkOutTime) {
                     // Rule 1 & 2 Logic (No punches)
@@ -223,8 +282,8 @@ class AbsenceService {
                     status = 'present';
                 }
                 // Ensure mutually exclusive logic, isLate and isHalfday directly map from the status
-                const isLate = status === 'late';
-                const isHalfday = status === 'halfday';
+                let isLate = status === 'late';
+                let isHalfday = status === 'halfday';
                 // Check if record already exists for this user and date
                 const existingRecord = yield prisma_1.default.attendanceRecord.findUnique({
                     where: {
@@ -235,13 +294,23 @@ class AbsenceService {
                     }
                 });
                 if (existingRecord) {
-                    // Update existing record
+                    // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
+                    let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
+                    let finalCheckOut = checkOutTime ? checkOutTime : existingRecord.check_out_time;
+                    // Recalculate status based on the merged earliest check-in
+                    let finalStatus = status;
+                    if (finalCheckIn) {
+                        const currentShiftType = this.determineShiftType(finalCheckIn, shift);
+                        finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType);
+                    }
+                    isLate = finalStatus === 'late';
+                    isHalfday = finalStatus === 'halfday';
                     yield prisma_1.default.attendanceRecord.update({
                         where: { id: existingRecord.id },
                         data: {
-                            check_in_time: checkInTime,
-                            check_out_time: checkOutTime,
-                            status: status,
+                            check_in_time: finalCheckIn,
+                            check_out_time: finalCheckOut,
+                            status: finalStatus,
                             is_late: isLate,
                             is_halfday: isHalfday
                         }
@@ -309,6 +378,17 @@ class AbsenceService {
      * Night shift: check-in in evening/night (18:00-23:59)
      */
     static determineShiftType(checkInTime, shift) {
+        if ((shift === null || shift === void 0 ? void 0 : shift.shiftid) && String(shift.shiftid).toLowerCase().includes('night')) {
+            return 'night';
+        }
+        if ((shift === null || shift === void 0 ? void 0 : shift.checkin) && (shift === null || shift === void 0 ? void 0 : shift.checkout)) {
+            const shiftCheckInMinutes = this.timeToMinutes(shift.checkin);
+            const shiftCheckOutMinutes = this.timeToMinutes(shift.checkout);
+            if (shiftCheckInMinutes >= 13 * 60 || shiftCheckOutMinutes <= shiftCheckInMinutes) {
+                return 'night';
+            }
+            return 'day';
+        }
         const checkInMinutes = this.timeToMinutes(checkInTime);
         // If check-in is before 13:00 (1 PM), it's day shift
         if (checkInMinutes < 13 * 60) {
@@ -345,9 +425,7 @@ class AbsenceService {
      */
     static processAttendance(userId, targetDateRaw, monthlySalary, userShift) {
         return __awaiter(this, void 0, void 0, function* () {
-            // FORCE absolute pure YYYY-MM-DD midnight UTC representation
-            const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-            const date = new Date(localDateStr + "T00:00:00.000Z");
+            const date = this.getCanonicalUtcDate(targetDateRaw);
             // Use provided shift or fallback to first shift
             const shift = userShift || (yield prisma_1.default.shift.findFirst());
             // Clean up previous deductions for this specific date and user to avoid duplicates or orphaned deductions
@@ -358,36 +436,35 @@ class AbsenceService {
                 }
             });
             // Check if it's a weekend BEFORE deducting leaves or marking absent
-            const dayOfWeek = date.getDay();
+            const dayOfWeek = date.getUTCDay();
             if (dayOfWeek === 0 || dayOfWeek === 6) {
-                yield prisma_1.default.attendanceRecord.upsert({
-                    where: {
-                        user_id_date: {
-                            user_id: userId,
-                            date: date
-                        }
-                    },
-                    update: {
-                        status: 'holiday',
-                        check_in_time: null,
-                        check_out_time: null,
-                        is_late: false,
-                        is_halfday: false
-                    },
-                    create: {
-                        user_id: userId,
-                        status: 'holiday',
-                        date: date,
-                        is_late: false,
-                        is_halfday: false
-                    }
+                const weekendRec = yield prisma_1.default.attendanceRecord.findUnique({
+                    where: { user_id_date: { user_id: userId, date: date } }
                 });
+                if (!weekendRec) {
+                    yield prisma_1.default.attendanceRecord.create({
+                        data: {
+                            user_id: userId,
+                            status: 'weekend',
+                            date: date,
+                            is_late: false,
+                            is_halfday: false
+                        }
+                    });
+                }
+                else if (weekendRec.check_in_time === null && weekendRec.check_out_time === null) {
+                    yield prisma_1.default.attendanceRecord.update({
+                        where: { id: weekendRec.id },
+                        data: { status: 'weekend', is_late: false, is_halfday: false }
+                    });
+                }
+                // If check_in/out already set (employee worked on weekend), preserve them.
                 return; // Skip leave deduction and absence marking entirely
             }
             // Get or create user's leave bank record, and ensure monthly reset
             const leaveBankRecord = yield this.ensureMonthlyReset(userId, date);
             const now = new Date();
-            const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+            const todayStr = this.getUtcDateKey(now);
             const isToday = date.toISOString().startsWith(todayStr);
             let status;
             let newLeavesRemaining = leaveBankRecord.leaves_remaining;
@@ -409,29 +486,39 @@ class AbsenceService {
                 // Rule 2: Past date with no leaves
                 status = 'absent';
             }
-            // Create or update attendance record
-            yield prisma_1.default.attendanceRecord.upsert({
-                where: {
-                    user_id_date: {
-                        user_id: userId,
-                        date: date
-                    }
-                },
-                update: {
-                    status: status,
-                    check_in_time: null,
-                    check_out_time: null,
-                    is_late: false,
-                    is_halfday: false
-                },
-                create: {
-                    user_id: userId,
-                    status: status,
-                    date: date,
-                    is_late: false,
-                    is_halfday: false
-                }
+            // Create or update attendance record — but PRESERVE existing check-in/out times
+            // (set by the Electron desktop monitor) if they already exist.
+            const existingRec = yield prisma_1.default.attendanceRecord.findUnique({
+                where: { user_id_date: { user_id: userId, date: date } }
             });
+            if (!existingRec) {
+                // No record at all — create a fresh one
+                yield prisma_1.default.attendanceRecord.create({
+                    data: {
+                        user_id: userId,
+                        status: status,
+                        date: date,
+                        is_late: false,
+                        is_halfday: false
+                    }
+                });
+            }
+            else {
+                // Record exists. Only update status if check_in_time is still null
+                // (meaning the Electron monitor hasn't set it yet).
+                // If the monitor already set check_in_time, do NOT overwrite anything.
+                if (existingRec.check_in_time === null && existingRec.check_out_time === null) {
+                    yield prisma_1.default.attendanceRecord.update({
+                        where: { id: existingRec.id },
+                        data: {
+                            status: status,
+                            is_late: false,
+                            is_halfday: false
+                        }
+                    });
+                }
+                // If check_in_time or check_out_time already has a value, leave the record untouched.
+            }
             if (status === 'absent') {
                 const amount = dispute_service_1.DisputeService.calculateDeductionAmount('absent', monthlySalary, date);
                 if (amount > 0) {
@@ -495,23 +582,17 @@ class AbsenceService {
     static processDateRange(startDate, endDate) {
         return __awaiter(this, void 0, void 0, function* () {
             const dates = [];
-            let current = new Date(startDate);
-            current.setHours(0, 0, 0, 0);
-            const end = new Date(endDate);
-            end.setHours(0, 0, 0, 0);
+            let current = this.getCanonicalUtcDate(startDate);
+            const end = this.getCanonicalUtcDate(endDate);
             while (current <= end) {
                 dates.push(new Date(current));
-                current.setDate(current.getDate() + 1);
+                current.setUTCDate(current.getUTCDate() + 1);
             }
             console.log(`Processing ${dates.length} days...`);
             const results = [];
             for (const date of dates) {
-                // processDailyAbsences(d) processes d-1 by default. 
-                // We want to process exactly the dates provided, so we pass date + 1 day
-                const checkDate = new Date(date);
-                checkDate.setDate(checkDate.getDate() + 1);
-                console.log(`Processing ${date.toDateString()}...`);
-                const result = yield this.processDailyAbsences(checkDate);
+                console.log(`Processing ${date.toISOString().split('T')[0]}...`);
+                const result = yield this.processDailyAbsences(date);
                 results.push(result);
             }
             return results;
@@ -532,6 +613,9 @@ class AbsenceService {
             }
             if (status && status !== 'all') {
                 whereClause.status = status;
+            }
+            else {
+                whereClause.status = { not: 'pending' };
             }
             const skip = (page - 1) * limit;
             const [records, total] = yield Promise.all([
@@ -574,6 +658,9 @@ class AbsenceService {
             }
             if (status && status !== 'all') {
                 whereClause.status = status;
+            }
+            else {
+                whereClause.status = { not: 'pending' };
             }
             const skip = (page - 1) * limit;
             const [records, total] = yield Promise.all([

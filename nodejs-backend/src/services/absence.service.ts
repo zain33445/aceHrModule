@@ -2,29 +2,54 @@ import prisma from '../prisma';
 import { DisputeService } from './dispute.service';
 
 export class AbsenceService {
+  private static getUtcDateKey(date: Date): string {
+    return date.toISOString().split('T')[0];
+  }
+
+  private static getCanonicalUtcDate(dateRaw: Date): Date {
+    return new Date(`${this.getUtcDateKey(dateRaw)}T12:00:00.000Z`);
+  }
+
+  private static getUtcDayWindow(dateRaw: Date) {
+    const dateKey = this.getUtcDateKey(dateRaw);
+    return {
+      startOfWindow: new Date(`${dateKey}T00:00:00.000Z`),
+      endOfWindow: new Date(`${dateKey}T23:59:59.999Z`)
+    };
+  }
+
+  private static formatAttendanceClockTime(date: Date): string {
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Karachi'
+    });
+  }
+
   /**
    * Helper function to convert time HH:MM to comparable format
    */
   public static timeToMinutes(timeStr: string): number {
     if (!timeStr) return 0;
-    
+
     // Normalize string: lowercase and remove extra spaces
     const normalized = timeStr.toLowerCase().replace(/\s+/g, '');
-    
+
     // Check for am/pm
     const isPM = normalized.includes('pm');
     const isAM = normalized.includes('am');
-    
+
     // Strip am/pm for parsing
     const timeOnly = normalized.replace(/[ap]m/g, '');
     const [hoursStr, minutesStr] = timeOnly.split(':');
-    
+
     let hours = parseInt(hoursStr, 10);
     const minutes = parseInt(minutesStr, 10) || 0;
-    
+
     if (isPM && hours < 12) hours += 12;
     if (isAM && hours === 12) hours = 0;
-    
+
     return hours * 60 + minutes;
   }
 
@@ -34,27 +59,22 @@ export class AbsenceService {
    */
   static async processDailyAbsences(checkDate?: Date) {
     const targetDate = checkDate || new Date();
-    targetDate.setDate(targetDate.getDate() - 1); // Check yesterday by default
+    if (!checkDate) {
+      targetDate.setUTCDate(targetDate.getUTCDate() - 1); // Check yesterday by default
+    }
 
-    // Set time window: 06:00 AM on target date to 06:00 AM on the following day
-    // This captures even late night shifts (e.g., 7:30 PM to 3:00 AM) in one record.
-    const startOfWindow = new Date(targetDate);
-    startOfWindow.setHours(6, 0, 0, 0);
-
-    const endOfWindow = new Date(targetDate);
-    endOfWindow.setDate(endOfWindow.getDate() + 1);
-    endOfWindow.setHours(6, 0, 0, 0);
+    const { startOfWindow, endOfWindow } = this.getUtcDayWindow(targetDate);
 
     try {
       // Get all users
       const allUsers = await prisma.user.findMany({
         where: { role: 'employee' },
-        include: { 
-          department: { 
-            include: { 
-              shift: true 
-            } 
-          } 
+        include: {
+          department: {
+            include: {
+              shift: true
+            }
+          }
         }
       });
 
@@ -95,51 +115,47 @@ export class AbsenceService {
   }
 
   /**
-   * Run real-time sync for specific users who just registered a biometric punch
+   * Run real-time sync for specific users who just registered a biometric punch.
+   * Processes the UTC calendar date(s) present in the incoming logs.
    */
-  static async processLiveSync(userIds: string[], targetDate: Date = new Date()) {
+  static async processLiveSync(userIds: string[], targetDate: Date | Date[] = new Date()) {
     try {
-      const startOfWindow = new Date(targetDate);
-      startOfWindow.setHours(6, 0, 0, 0);
-
-      const endOfWindow = new Date(targetDate);
-      endOfWindow.setDate(endOfWindow.getDate() + 1);
-      endOfWindow.setHours(6, 0, 0, 0);
-
-      // Midnight version of target date for record-keeping
-      const startOfDay = new Date(targetDate);
-      startOfDay.setHours(0, 0, 0, 0);
+      const targetDates = Array.isArray(targetDate) ? targetDate : [targetDate];
+      const uniqueDateKeys = [...new Set(targetDates.map((date) => this.getUtcDateKey(date)))];
 
       const usersToSync = await prisma.user.findMany({
         where: { id: { in: userIds } },
-        include: { 
-          department: { 
-            include: { 
-              shift: true 
-            } 
-          } 
+        include: {
+          department: {
+            include: {
+              shift: true
+            }
+          }
         }
       });
 
       let processedCount = 0;
 
       for (const user of usersToSync) {
-        // Fetch logs for today
-        const attendanceLogs = await prisma.attendanceLog.findMany({
-          where: {
-            user_id: user.id,
-            timestamp: { gte: startOfWindow, lte: endOfWindow }
-          }
-        });
+        for (const dateKey of uniqueDateKeys) {
+          const date = new Date(`${dateKey}T12:00:00.000Z`);
+          const { startOfWindow, endOfWindow } = this.getUtcDayWindow(date);
 
-        if (attendanceLogs.length > 0) {
-          // Pass startOfDay (midnight) instead of targetDate (which has ms precision)
-          await this.calculateAndRecordAttendance(user.id, startOfDay, attendanceLogs, user.monthly_salary, (user as any).department?.shift);
-          processedCount++;
+          const attendanceLogs = await prisma.attendanceLog.findMany({
+            where: {
+              user_id: user.id,
+              timestamp: { gte: startOfWindow, lte: endOfWindow }
+            }
+          });
+
+          if (attendanceLogs.length > 0) {
+            await this.calculateAndRecordAttendance(user.id, date, attendanceLogs, user.monthly_salary, (user as any).department?.shift);
+            processedCount++;
+          }
         }
       }
 
-      console.log(`Live sync completed: updated attendance for ${processedCount} users.`);
+      console.log(`Live sync completed: updated ${processedCount} user/date attendance records.`);
     } catch (error) {
       console.error('Error during live sync processing:', error);
     }
@@ -173,13 +189,8 @@ export class AbsenceService {
     for (const record of staleRecords) {
       try {
         console.log(`[AbsenceService] Finalizing past record for user ${record.user_id} on ${record.date.toDateString()}`);
-        
-        // Re-calculate based on existing logs for that date
-        const startOfWindow = new Date(record.date);
-        startOfWindow.setHours(6, 0, 0, 0);
-        const endOfWindow = new Date(record.date);
-        endOfWindow.setDate(endOfWindow.getDate() + 1);
-        endOfWindow.setHours(6, 0, 0, 0);
+
+        const { startOfWindow, endOfWindow } = this.getUtcDayWindow(record.date);
 
         const logs = await prisma.attendanceLog.findMany({
           where: {
@@ -207,13 +218,11 @@ export class AbsenceService {
    */
   private static async calculateAndRecordAttendance(userId: string, targetDateRaw: Date, attendanceLogs: any[], monthlySalary: number, userShift?: any) {
     try {
-      // FORCE absolute pure YYYY-MM-DD noon UTC representation to mathematically prevent ms-precision duplicates entirely.
-      const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-      const date = new Date(localDateStr + "T12:00:00.000Z");
-      
+      const date = this.getCanonicalUtcDate(targetDateRaw);
+
       // Use provided shift or fallback to first shift
       const shift = userShift || await prisma.shift.findFirst();
-      
+
       if (!shift) {
         console.warn(`No shift configuration found`);
         return;
@@ -222,40 +231,45 @@ export class AbsenceService {
       // Filter logs by status: 0 represents Check-In, 1 represents Check-Out
       const inLogs = attendanceLogs.filter(l => l.status === 0).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
       const outLogs = attendanceLogs.filter(l => l.status === 1).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-      
+
       const checkInLog = inLogs.length > 0 ? inLogs[0] : null;
       const checkOutLog = outLogs.length > 0 ? outLogs[outLogs.length - 1] : null;
-      
+
       // If no explicit status logs exist, fallback to earliest/latest chronological punches
       // as a safety measure for other devices or legacy logs.
       let checkInTime: string | null = null;
       let checkOutTime: string | null = null;
 
       if (checkInLog) {
-        checkInTime = checkInLog.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        checkInTime = this.formatAttendanceClockTime(checkInLog.timestamp);
       } else if (attendanceLogs.length > 0) {
-        // Fallback to earliest punch if no explicit "In" status found
+        // Fallback to earliest punch if no explicit "In" status found, BUT DO NOT use a checkout log as an IN log
         const firstPunch = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())[0];
-        checkInTime = firstPunch.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        if (firstPunch.status !== 1) {
+          checkInTime = this.formatAttendanceClockTime(firstPunch.timestamp);
+        }
       }
 
       if (checkOutLog) {
-        checkOutTime = checkOutLog.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        checkOutTime = this.formatAttendanceClockTime(checkOutLog.timestamp);
       } else if (attendanceLogs.length > 1) {
-        // Fallback to latest punch only if multiple punches exist
-        const lastPunch = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())[attendanceLogs.length - 1];
-        if (lastPunch.timestamp.getTime() !== (checkInLog?.timestamp.getTime() || 0)) {
-           checkOutTime = lastPunch.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        // Fallback to latest punch only if multiple punches exist, BUT DO NOT use a checkin log as an OUT log
+        const sorted = [...attendanceLogs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        const lastPunch = sorted[sorted.length - 1];
+        const firstPunchOffset = checkInLog ? checkInLog.timestamp.getTime() : sorted[0].timestamp.getTime();
+
+        if (lastPunch.status !== 0 && lastPunch.timestamp.getTime() !== firstPunchOffset) {
+          checkOutTime = this.formatAttendanceClockTime(lastPunch.timestamp);
         }
       }
 
       // Determine if it's today
       const now = new Date();
-      const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+      const todayStr = this.getUtcDateKey(now);
       const isToday = date.toISOString().startsWith(todayStr);
 
       // Determine if weekend
-      const dayOfWeek = date.getDay();
+      const dayOfWeek = date.getUTCDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
       // Determine status based on Rules
@@ -282,8 +296,8 @@ export class AbsenceService {
       }
 
       // Ensure mutually exclusive logic, isLate and isHalfday directly map from the status
-      const isLate = status === 'late';
-      const isHalfday = status === 'halfday';
+      let isLate = status === 'late';
+      let isHalfday = status === 'halfday';
 
       // Check if record already exists for this user and date
       const existingRecord = await prisma.attendanceRecord.findUnique({
@@ -298,15 +312,18 @@ export class AbsenceService {
       if (existingRecord) {
         // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
         let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
-        
+
         let finalCheckOut = checkOutTime ? checkOutTime : existingRecord.check_out_time;
 
         // Recalculate status based on the merged earliest check-in
         let finalStatus = status;
-        if (finalCheckIn) {
+        if (finalCheckIn && !isWeekend) {
           const currentShiftType = this.determineShiftType(finalCheckIn, shift);
           finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType);
         }
+
+        isLate = finalStatus === 'late';
+        isHalfday = finalStatus === 'halfday';
 
         await prisma.attendanceRecord.update({
           where: { id: existingRecord.id },
@@ -314,8 +331,8 @@ export class AbsenceService {
             check_in_time: finalCheckIn,
             check_out_time: finalCheckOut,
             status: finalStatus,
-            is_late: finalStatus === 'late',
-            is_halfday: finalStatus === 'halfday'
+            is_late: isLate,
+            is_halfday: isHalfday
           }
         });
       } else {
@@ -339,7 +356,7 @@ export class AbsenceService {
         where: {
           user_id: userId,
           date: date,
-          type: { in: ['late', 'half-day'] } 
+          type: { in: ['late', 'half-day'] }
         }
       });
 
@@ -382,8 +399,23 @@ export class AbsenceService {
    * Night shift: check-in in evening/night (18:00-23:59)
    */
   public static determineShiftType(checkInTime: string, shift: any): 'day' | 'night' {
+    if (shift?.shiftid && String(shift.shiftid).toLowerCase().includes('night')) {
+      return 'night';
+    }
+
+    if (shift?.checkin && shift?.checkout) {
+      const shiftCheckInMinutes = this.timeToMinutes(shift.checkin);
+      const shiftCheckOutMinutes = this.timeToMinutes(shift.checkout);
+
+      if (shiftCheckInMinutes >= 13 * 60 || shiftCheckOutMinutes <= shiftCheckInMinutes) {
+        return 'night';
+      }
+
+      return 'day';
+    }
+
     const checkInMinutes = this.timeToMinutes(checkInTime);
-    
+
     // If check-in is before 13:00 (1 PM), it's day shift
     if (checkInMinutes < 13 * 60) {
       return 'day';
@@ -394,7 +426,7 @@ export class AbsenceService {
   public static getAdjustedMinutes(timeStr: string, shiftType: 'day' | 'night'): number {
     const minutes = this.timeToMinutes(timeStr);
     // For night shift, early morning hours (00:00 to 11:59 AM) logically occur AFTER the evening check-in time.
-    if (shiftType === 'night' && minutes < 720) { 
+    if (shiftType === 'night' && minutes < 720) {
       return minutes + 1440; // Add 24 hours to ensure mathematical continuity
     }
     return minutes;
@@ -402,7 +434,7 @@ export class AbsenceService {
 
   public static determineAttendanceStatus(checkInTime: string | null, shift: any, shiftType: 'day' | 'night'): string {
     if (!checkInTime) return 'present'; // Fallback for punch anomalies
-    
+
     const checkInMins = this.getAdjustedMinutes(checkInTime, shiftType);
     const halfdayMins = this.getAdjustedMinutes(shift.halfday, shiftType);
     const lateMins = this.getAdjustedMinutes(shift.latetiming, shiftType);
@@ -420,13 +452,11 @@ export class AbsenceService {
    * Process absence for a specific user on a specific date (no attendance logs)
    */
   private static async processAttendance(userId: string, targetDateRaw: Date, monthlySalary: number, userShift?: any) {
-    // FORCE absolute pure YYYY-MM-DD noon UTC representation
-    const localDateStr = new Date(targetDateRaw.getTime() - (targetDateRaw.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-    const date = new Date(localDateStr + "T12:00:00.000Z");
-    
+    const date = this.getCanonicalUtcDate(targetDateRaw);
+
     // Use provided shift or fallback to first shift
     const shift = userShift || await prisma.shift.findFirst();
-    
+
 
     // Clean up previous deductions for this specific date and user to avoid duplicates or orphaned deductions
     await prisma.deduction.deleteMany({
@@ -437,7 +467,7 @@ export class AbsenceService {
     });
 
     // Check if it's a weekend BEFORE deducting leaves or marking absent
-    const dayOfWeek = date.getDay();
+    const dayOfWeek = date.getUTCDay();
     if (dayOfWeek === 0 || dayOfWeek === 6) {
       const weekendRec = await prisma.attendanceRecord.findUnique({
         where: { user_id_date: { user_id: userId, date: date } }
@@ -467,7 +497,7 @@ export class AbsenceService {
     const leaveBankRecord = await this.ensureMonthlyReset(userId, date);
 
     const now = new Date();
-    const todayStr = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    const todayStr = this.getUtcDateKey(now);
     const isToday = date.toISOString().startsWith(todayStr);
 
     let status: 'leave' | 'absent' | 'pending';
@@ -590,28 +620,21 @@ export class AbsenceService {
    */
   static async processDateRange(startDate: Date, endDate: Date) {
     const dates: Date[] = [];
-    let current = new Date(startDate);
-    current.setHours(0, 0, 0, 0);
+    let current = this.getCanonicalUtcDate(startDate);
 
-    const end = new Date(endDate);
-    end.setHours(0, 0, 0, 0);
+    const end = this.getCanonicalUtcDate(endDate);
 
     while (current <= end) {
       dates.push(new Date(current));
-      current.setDate(current.getDate() + 1);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
 
     console.log(`Processing ${dates.length} days...`);
     const results = [];
 
     for (const date of dates) {
-      // processDailyAbsences(d) processes d-1 by default. 
-      // We want to process exactly the dates provided, so we pass date + 1 day
-      const checkDate = new Date(date);
-      checkDate.setDate(checkDate.getDate() + 1);
-      
-      console.log(`Processing ${date.toDateString()}...`);
-      const result = await this.processDailyAbsences(checkDate);
+      console.log(`Processing ${date.toISOString().split('T')[0]}...`);
+      const result = await this.processDailyAbsences(date);
       results.push(result);
     }
 
@@ -633,7 +656,7 @@ export class AbsenceService {
     if (status && status !== 'all') {
       whereClause.status = status;
     } else {
-      whereClause.status = { not: 'pending' };
+      whereClause.status = { notIn: ['pending', 'weekend'] };
     }
 
     const skip = (page - 1) * limit;
@@ -680,9 +703,9 @@ export class AbsenceService {
     if (status && status !== 'all') {
       whereClause.status = status;
     } else {
-      whereClause.status = { not: 'pending' };
+      whereClause.status = { notIn: ['pending', 'weekend'] };
     }
-
+    
     const skip = (page - 1) * limit;
 
     const [records, total] = await Promise.all([
@@ -734,7 +757,7 @@ export class AbsenceService {
         where: { id: userId },
         select: { leave_bank: true }
       });
-      
+
       if (!user) {
         throw new Error(`User ${userId} not found`);
       }
@@ -861,7 +884,7 @@ export class AbsenceService {
     const leaveBankRecord = await prisma.leaveBank.upsert({
       where: { user_id: userId },
       update: { leaves_remaining: leavesRemaining },
-      create: { 
+      create: {
         user_id: userId,
         leaves_remaining: leavesRemaining
       },

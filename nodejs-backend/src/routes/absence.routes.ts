@@ -8,7 +8,13 @@ router.get('/', async (req, res) => {
   try {
     const { startDate, endDate, status, userId, page, limit } = req.query;
     const start = startDate ? new Date(startDate as string) : undefined;
-    const end = endDate ? new Date(endDate as string) : undefined;
+    
+    let end: Date | undefined = undefined;
+    if (endDate) {
+      end = new Date(endDate as string);
+      end.setUTCHours(23, 59, 59, 999);
+    }
+
     const p = page ? parseInt(page as string) : 1;
     const l = limit ? parseInt(limit as string) : 20;
 
@@ -26,7 +32,13 @@ router.get('/user/:userId', async (req, res) => {
 
   try {
     const start = startDate ? new Date(startDate as string) : undefined;
-    const end = endDate ? new Date(endDate as string) : undefined;
+
+    let end: Date | undefined = undefined;
+    if (endDate) {
+      end = new Date(endDate as string);
+      end.setUTCHours(23, 59, 59, 999);
+    }
+    
     const p = page ? parseInt(page as string) : 1;
     const l = limit ? parseInt(limit as string) : 20;
 

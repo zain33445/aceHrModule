@@ -17,7 +17,11 @@ router.get('/', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { startDate, endDate, status, userId, page, limit } = req.query;
         const start = startDate ? new Date(startDate) : undefined;
-        const end = endDate ? new Date(endDate) : undefined;
+        let end = undefined;
+        if (endDate) {
+            end = new Date(endDate);
+            end.setUTCHours(23, 59, 59, 999);
+        }
         const p = page ? parseInt(page) : 1;
         const l = limit ? parseInt(limit) : 20;
         const result = yield absence_service_1.AbsenceService.getAllAttendances(start, end, status, userId, p, l);
@@ -33,7 +37,11 @@ router.get('/user/:userId', (req, res) => __awaiter(void 0, void 0, void 0, func
     const { startDate, endDate, status, page, limit } = req.query;
     try {
         const start = startDate ? new Date(startDate) : undefined;
-        const end = endDate ? new Date(endDate) : undefined;
+        let end = undefined;
+        if (endDate) {
+            end = new Date(endDate);
+            end.setUTCHours(23, 59, 59, 999);
+        }
         const p = page ? parseInt(page) : 1;
         const l = limit ? parseInt(limit) : 20;
         const result = yield absence_service_1.AbsenceService.getUserAttendances(userId, start, end, status, p, l);
