@@ -19,8 +19,12 @@ router.post('/screenshot', async (req: Request, res: Response) => {
     }
 
     const eventTime = new Date(timestamp);
-    const dateStr = eventTime.toISOString().split('T')[0];
-    const timeStr = eventTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }); // "HH:MM"
+    const timeStr = eventTime.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Karachi'
+    }); // "HH:MM" in Karachi time
 
     let finalUserId = null;
     if (userId && userId !== 'electron-monitor') {
@@ -41,16 +45,30 @@ router.post('/screenshot', async (req: Request, res: Response) => {
     // 2. Sync with AttendanceRecord if it's a valid user and check-in/out event
     if (finalUserId && (type === 'check-in' || type === 'check-out')) {
       try {
-        const attendanceDate = new Date(dateStr);
-        
-        if (type === 'check-in') {
-          // Fetch user shift for status calculation
-          const userWithShift = await prisma.user.findUnique({
-            where: { id: finalUserId },
-            include: { department: { include: { shift: true } } }
-          });
+        // Fetch user with shift details first to determine date mapping
+        const userWithShift = await prisma.user.findUnique({
+          where: { id: finalUserId },
+          include: { department: { include: { shift: true } } }
+        });
 
-          const shift = (userWithShift as any)?.department?.shift || await prisma.shift.findFirst();
+        const shift = (userWithShift as any)?.department?.shift || await prisma.shift.findFirst();
+        const isNightShift = shift?.shiftid && String(shift.shiftid).toLowerCase().includes('night');
+
+        // Determine local Karachi date and hour
+        const karachiDateStr = eventTime.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' }); // "YYYY-MM-DD"
+        const karachiHour = parseInt(eventTime.toLocaleTimeString('en-US', { hour: '2-digit', hour12: false, timeZone: 'Asia/Karachi' }), 10);
+
+        let dateKey = karachiDateStr;
+        if (isNightShift && karachiHour >= 0 && karachiHour < 12) {
+          // Night shift crossover: early morning activity belongs to the previous day's shift
+          const localDate = new Date(karachiDateStr);
+          localDate.setDate(localDate.getDate() - 1);
+          dateKey = localDate.toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' });
+        }
+
+        const attendanceDate = new Date(`${dateKey}T12:00:00.000Z`);
+
+        if (type === 'check-in') {
           let status = 'present';
           let isLate = false;
           let isHalfday = false;
@@ -68,7 +86,7 @@ router.post('/screenshot', async (req: Request, res: Response) => {
           });
 
           if (!existingRecord) {
-            console.log(`[ATTENDANCE ROUTE] Creating entirely new record for user ${finalUserId} with check-in: ${timeStr}`);
+            console.log(`[ATTENDANCE ROUTE] Creating entirely new record for user ${finalUserId} on ${dateKey} with check-in: ${timeStr}`);
             // Create today's record
             await prisma.attendanceRecord.create({
               data: {
@@ -81,7 +99,7 @@ router.post('/screenshot', async (req: Request, res: Response) => {
               }
             });
           } else if (existingRecord.check_in_time === null) {
-            console.log(`[ATTENDANCE ROUTE] Updating existing 'pending' record for user ${finalUserId} to set check-in: ${timeStr}`);
+            console.log(`[ATTENDANCE ROUTE] Updating existing 'pending' record for user ${finalUserId} on ${dateKey} to set check-in: ${timeStr}`);
             // Update today's record ONLY if check-in time is currently null
             await prisma.attendanceRecord.update({
               where: { id: existingRecord.id },
@@ -93,16 +111,16 @@ router.post('/screenshot', async (req: Request, res: Response) => {
               }
             });
           } else {
-            console.log(`[ATTENDANCE ROUTE] Check-in already exists (${existingRecord.check_in_time}) for user ${finalUserId}. Ignoring duplicate check-in to preserve start time!`);
+            console.log(`[ATTENDANCE ROUTE] Check-in already exists (${existingRecord.check_in_time}) for user ${finalUserId} on ${dateKey}. Ignoring duplicate check-in to preserve start time!`);
           }
           // If existingRecord.check_in_time is NOT null, we do not overwrite it.
           // This preserves the very first check-in of the day.
         } 
         else if (type === 'check-out') {
-          console.log(`[ATTENDANCE ROUTE] Updating check-out time for user ${finalUserId} to ${timeStr}`);
+          console.log(`[ATTENDANCE ROUTE] Updating check-out time for user ${finalUserId} on ${dateKey} to ${timeStr}`);
           // Update today's record with check-out time
-          await prisma.attendanceRecord.updateMany({
-            where: { user_id: finalUserId, date: attendanceDate },
+          await prisma.attendanceRecord.update({
+            where: { user_id_date: { user_id: finalUserId, date: attendanceDate } },
             data: { check_out_time: timeStr }
           });
         }
