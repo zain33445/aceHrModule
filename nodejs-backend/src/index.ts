@@ -82,9 +82,19 @@ app.listen(PORT, () => {
   // 5-minute cron for live sync fallback
   setInterval(async () => {
     try {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      await AbsenceService.processDailyAbsences(tomorrow);
+      // Extract the current DATE string in Karachi timezone (YYYY-MM-DD) — independent of Windows system clock
+      const todayKarachi = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
+      const yesterdayKarachi = new Date(Date.now() - 86400000).toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
+
+      // Build canonical UTC noon dates for processing
+      const today = new Date(`${todayKarachi}T12:00:00.000Z`);
+      const yesterday = new Date(`${yesterdayKarachi}T12:00:00.000Z`);
+
+      // Process TODAY (Karachi Time)
+      await AbsenceService.processDailyAbsences(today);
+      
+      // Also process YESTERDAY (Karachi Time)
+      await AbsenceService.processDailyAbsences(yesterday);
       
       // Also cleanup any past pending records
       await AbsenceService.processMissedAbsences();
