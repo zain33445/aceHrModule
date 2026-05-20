@@ -55,20 +55,47 @@
   --animate-fade-in: fade-in 0.3s ease-out;
 
   @keyframes pulse-glow {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.8; }
+
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.8;
+    }
   }
+
   @keyframes shimmer {
-    0% { background-position: -1000px 0; }
-    100% { background-position: 1000px 0; }
+    0% {
+      background-position: -1000px 0;
+    }
+
+    100% {
+      background-position: 1000px 0;
+    }
   }
+
   @keyframes slide-up {
-    from { transform: translateY(20px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
+
   @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
   }
 }
 
@@ -193,7 +220,7 @@ table {
 }
 
 th {
-  text-align: left;
+  text-align: center;
   padding: 12px 16px;
   color: #6B7280;
   font-size: 0.75rem;
@@ -224,22 +251,27 @@ tbody tr:hover {
 }
 
 .badge-success {
-  background-color: rgba(16, 185, 129, 0.1);
+  /* background-color: rgba(16, 185, 129, 0.159); */
   color: #10B981;
 }
 
 .badge-warning {
-  background-color: rgba(245, 158, 11, 0.1);
-  color: #F59E0B;
+  /* background-color: rgba(255, 179, 46, 0.159); */
+  color: #e59100;
 }
 
-.badge-error {
-  background-color: rgba(239, 68, 68, 0.1);
+.badge-not-danger {
+  /* background-color: rgba(18, 18, 18, 0.244); */
+  color: #474747;
+}
+
+.badge-danger {
+  /* background-color: rgba(239, 68, 68, 0.159); */
   color: #EF4444;
 }
 
 .badge-info {
-  background-color: rgba(59, 130, 246, 0.1);
+  background-color: rgba(57, 62, 69, 0.1);
   color: #3B82F6;
 }
 
@@ -256,6 +288,7 @@ tbody tr:hover {
   from {
     opacity: 0;
   }
+
   to {
     opacity: 1;
   }
@@ -266,6 +299,7 @@ tbody tr:hover {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -285,6 +319,7 @@ tbody tr:hover {
   appearance: none;
   margin: 0;
 }
+
 .no-spinners {
   -moz-appearance: textfield;
   appearance: textfield;
@@ -315,8 +350,17 @@ tbody tr:hover {
 
 /* Hide scrollbar for IE, Edge and Firefox */
 .no-scrollbar {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
 
-.no-scrollbar::-webkit-scrollbar { display: none; } .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
