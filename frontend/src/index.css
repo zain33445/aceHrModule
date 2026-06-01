@@ -250,6 +250,91 @@ tbody tr:hover {
   font-weight: 600;
 }
 
+.chatbot-btn {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 9999;
+
+  width: 68px;
+  height: 68px;
+
+  border: none;
+  border-radius: 50%;
+
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: linear-gradient(135deg, #2563eb, #111827);
+
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.25),
+    0 0 20px rgba(37, 99, 235, 0.4);
+
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease;
+
+  animation: floatBubble 3s ease-in-out infinite;
+}
+
+#bp-webchat {
+  --bp-brand-color: #2563eb;
+  --bp-z-index: 9999;
+}
+
+#bp-toggle-chat::part(button) {
+  position: fixed !important;
+  bottom: 20px !important;
+  right: 20px !important;
+
+  width: 65px !important;
+  height: 65px !important;
+
+  border-radius: 50% !important;
+  border: none !important;
+
+  background:
+    linear-gradient(135deg, #111827, #2563eb) !important;
+
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.25),
+    0 0 20px rgba(37, 99, 235, 0.35) !important;
+
+  transition: all 0.3s ease !important;
+}
+
+#bp-toggle-chat::part(button):hover {
+  transform: scale(1.08);
+  box-shadow:
+    0 14px 35px rgba(0, 0, 0, 0.35),
+    0 0 30px rgba(37, 99, 235, 0.5) !important;
+}
+
+/* Hide default icon */
+#bp-toggle-chat::part(icon) {
+  display: none !important;
+}
+
+/* Custom image/icon */
+#bp-toggle-chat::part(button)::before {
+  content: "";
+
+  width: 32px;
+  height: 32px;
+
+  background-image: url('./aceLogo.png');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+
+  display: block;
+  margin: auto;
+}
+
 .badge-success {
   /* background-color: rgba(16, 185, 129, 0.159); */
   color: #10B981;

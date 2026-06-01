@@ -310,6 +310,19 @@ export class AbsenceService {
       });
 
       if (existingRecord) {
+        // If status was manually set to 'leave' (via leave bank deduction), preserve it
+        if (existingRecord.status === 'leave') {
+          // Still update check-in/out times from biometric data, but don't touch status or deductions
+          await prisma.attendanceRecord.update({
+            where: { id: existingRecord.id },
+            data: {
+              check_in_time: checkInTime || existingRecord.check_in_time,
+              check_out_time: checkOutTime || existingRecord.check_out_time,
+            }
+          });
+          return; // Skip deduction logic entirely
+        }
+
         // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
         let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
 
@@ -537,6 +550,11 @@ export class AbsenceService {
         }
       });
     } else {
+      // If status was manually set to 'leave', don't overwrite
+      if (existingRec.status === 'leave') {
+        return;
+      }
+
       // Record exists. Only update status if check_in_time is still null
       // (meaning the Electron monitor hasn't set it yet).
       // If the monitor already set check_in_time, do NOT overwrite anything.
@@ -915,6 +933,79 @@ export class AbsenceService {
 
     return await this.updateLeaveBank(userId, user.leave_bank);
   }
+
+  /**
+   * Deduct a fractional amount from a user's leave bank (employee self-service).
+   * Throws 'INSUFFICIENT_LEAVES' if the user doesn't have enough leaves.
+   * Deduction amounts: absent = 1.0, half-day = 0.5, late = 0.3
+   */
+  static async deductLeaveBank(userId: string, amount: number, reason: string = 'manual', recordDate?: Date) {
+    const leaveBankRecord = await prisma.leaveBank.findUnique({
+      where: { user_id: userId },
+      include: {
+        user: {
+          select: { id: true, name: true, leave_bank: true }
+        }
+      }
+    });
+
+    if (!leaveBankRecord) {
+      throw new Error(`Leave bank not found for user ${userId}`);
+    }
+
+    const currentBalance = leaveBankRecord.leaves_remaining;
+
+    if (currentBalance < amount) {
+      throw new Error('INSUFFICIENT_LEAVES');
+    }
+
+    const newBalance = Math.max(0, parseFloat((currentBalance - amount).toFixed(2)));
+
+    // 1. Deduct leaves from leave bank
+    const updated = await prisma.leaveBank.update({
+      where: { user_id: userId },
+      data: { leaves_remaining: newBalance },
+      include: {
+        user: {
+          select: { id: true, name: true, leave_bank: true }
+        }
+      }
+    });
+
+    console.log(`[LeaveBank] Deducted ${amount} leaves from user ${userId} (reason: ${reason}). Balance: ${currentBalance} → ${newBalance}`);
+
+    // 2. If a specific date is provided, clean up attendance and delete cash deductions
+    if (recordDate) {
+      const canonicalDate = this.getCanonicalUtcDate(new Date(recordDate));
+      
+      // Update AttendanceRecord to status 'leave'
+      await prisma.attendanceRecord.updateMany({
+        where: {
+          user_id: userId,
+          date: canonicalDate
+        },
+        data: {
+          status: 'leave',
+          is_late: false,
+          is_halfday: false
+        }
+      });
+
+      // Delete corresponding cash deduction records
+      const deletedDeductions = await prisma.deduction.deleteMany({
+        where: {
+          user_id: userId,
+          date: canonicalDate,
+          type: { in: ['late', 'half-day', 'absent'] }
+        }
+      });
+
+      console.log(`[LeaveBank] Attendance status set to 'leave' and deleted ${deletedDeductions.count} cash deductions for user ${userId} on date ${canonicalDate.toISOString().split('T')[0]}`);
+    }
+
+    return updated;
+  }
+
 
   /**
    * Get attendance statistics for a user

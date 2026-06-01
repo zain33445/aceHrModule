@@ -19,6 +19,7 @@ import {
   ChevronRight,
   UserCheck,
   Shield,
+  Video,
 } from 'lucide-react';
 import LayoutContainer from './layout/LayoutContainer';
 import StatCard from './dashboard/StatCard';
@@ -38,6 +39,7 @@ import { LeaveRequestHub } from './leaves/LeaveRequestHub';
 import { AuditLogTab } from './audit/AuditLogTab';
 import { DataExportPanel } from './export/DataExportPanel';
 import ScreenshotsTab from './dashboard/ScreenshotsTab';
+import RecordingTab from './dashboard/RecordingTab';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { SettingsTab } from './dashboard/SettingsTab';
 import { formatTime12h } from '../utils/formatters';
@@ -341,6 +343,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       disputes: 'Disputes',
       export: 'Data Export',
       audit: 'Audit Logs',
+      recording: 'Recording',
       settings: 'Settings'
     };
     return labels[id] || id.charAt(0).toUpperCase() + id.slice(1);
@@ -413,6 +416,12 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
           />
         </div>
       ),
+    },
+    {
+      id: 'recording',
+      label: 'Recording',
+      icon: Video,
+      content: <RecordingTab adminId={user?.user_id} employees={employees} />,
     },
     {
       id: 'holidays',

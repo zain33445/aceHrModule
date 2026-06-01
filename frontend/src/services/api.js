@@ -75,10 +75,12 @@ const api = {
     axios.get(`${API_BASE}/absences/leave-bank/user/${userId}`),
   updateLeaveBank: (userId, leavesRemaining) =>
     axios.put(`${API_BASE}/absences/leave-bank/user/${userId}`, {
-      leaves_remaining: parseInt(leavesRemaining),
+      leaves_remaining: parseFloat(leavesRemaining),
     }),
   resetLeaveBank: (userId) =>
     axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/reset`),
+  deductLeaveBank: (userId, amount, reason, date) =>
+    axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/deduct`, { amount, reason, date }),
 
   // Dispute Management APIs
   createDispute: (data) => axios.post(`${API_BASE}/disputes`, data),
@@ -164,6 +166,36 @@ const api = {
     `${API_BASE}/export/attendance?start_date=${startDate || ''}&end_date=${endDate || ''}`,
   getExportSalaryUrl: (startDate, endDate) => 
     `${API_BASE}/export/salary?start_date=${startDate || ''}&end_date=${endDate || ''}`,
+
+  // ── Recording System APIs ──────────────────────────────────────────────────
+  recordingGetAgents: (adminId) =>
+    axios.get(`${API_BASE}/recording/agents`, {
+      headers: { 'X-Admin-Id': String(adminId) },
+    }),
+  recordingGetSessions: (adminId, userId) =>
+    axios.get(`${API_BASE}/recording/sessions`, {
+      headers: { 'X-Admin-Id': String(adminId) },
+      params: userId ? { userId } : {},
+    }),
+  recordingGetStatus: (adminId, userId) =>
+    axios.get(`${API_BASE}/recording/status/${userId}`, {
+      headers: { 'X-Admin-Id': String(adminId) },
+    }),
+  recordingStartSession: (adminId, userId, quality = '720p') =>
+    axios.post(
+      `${API_BASE}/recording/session/start`,
+      { user_id: String(userId), quality },
+      { headers: { 'X-Admin-Id': String(adminId) } }
+    ),
+  recordingStopSession: (adminId, sessionId) =>
+    axios.post(
+      `${API_BASE}/recording/session/stop`,
+      { session_id: sessionId },
+      { headers: { 'X-Admin-Id': String(adminId) } }
+    ),
+  recordingGetDownloadUrl: (sessionId) =>
+    `${API_BASE}/recording/sessions/${sessionId}/file`,
 };
+
 
 export default api;

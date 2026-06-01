@@ -102,6 +102,17 @@ function EmployeeDashboard({ user, onLogout }) {
     category: 'all'
   });
   const [isSyncing, setIsSyncing] = useState(false);
+  const [recordingState, setRecordingState] = useState('idle');
+
+  // Subscribe to recording state changes from the Electron main process.
+  // Shows an in-app transparency banner whenever the admin has started a recording session.
+  useEffect(() => {
+    const api = window.electronAPI?.recording;
+    if (!api) return; // Not running in Electron — skip
+    api.getState().then((s) => setRecordingState(s?.state ?? 'idle'));
+    api.onStateChange((s) => setRecordingState(s?.state ?? 'idle'));
+    return () => api.removeStateListeners();
+  }, []);
 
   const handleSyncAttendance = async () => {
     setIsSyncing(true);
@@ -427,6 +438,39 @@ function EmployeeDashboard({ user, onLogout }) {
 
   return (
     <>
+      {/* ── Recording Transparency Banner ─────────────────────────────────────
+          Shown when the admin has started a recording session on this device.
+          Legal requirement: employees must know they are being recorded.
+      ─────────────────────────────────────────────────────────────────────── */}
+      {(recordingState === 'recording' || recordingState === 'starting') && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0,
+            zIndex: 99999,
+            background: 'linear-gradient(90deg, #dc2626, #b91c1c)',
+            color: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: '10px',
+            padding: '6px 16px',
+            fontSize: '13px',
+            fontWeight: 600,
+            letterSpacing: '0.02em',
+            boxShadow: '0 2px 12px rgba(220,38,38,0.35)',
+            userSelect: 'none',
+          }}
+        >
+          <span style={{
+            width: 10, height: 10, borderRadius: '50%',
+            background: '#fff',
+            display: 'inline-block',
+            animation: 'pulse 1.2s ease-in-out infinite',
+          }} />
+          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
+          Screen Recording Active — This session is being recorded by your administrator
+        </div>
+      )}
+
+      <Button onClick={() => console.log(window.bp)} id="bp-toggle-chat" className="chatbot-btn">Chat</Button>
       <LayoutContainer
         user={user}
         onLogout={onLogout}

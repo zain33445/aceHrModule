@@ -20,46 +20,51 @@ model Shift {
 }
 
 model Department {
-  id       Int    @id @default(autoincrement())
-  name     String @unique
+  id       Int     @id @default(autoincrement())
+  name     String  @unique
   shift_id Int?
-  shift    Shift? @relation(fields: [shift_id], references: [id])
   lead_id  String?
-  lead     User?  @relation("DepartmentLead", fields: [lead_id], references: [id])
+  lead     User?   @relation("DepartmentLead", fields: [lead_id], references: [id])
+  shift    Shift?  @relation(fields: [shift_id], references: [id])
   users    User[]
 
   @@map("departments")
 }
 
 model User {
-  id                 String             @id @unique
-  username           String?            @unique
-  name               String
-  role               String             @default("employee")
-  email              String?            @unique
-  password_hash      String?
-  monthly_salary     Float              @default(0.0)
-  leave_bank         Int                @default(5)
-  department_id      Int?
-  created_at         DateTime           @default(now())
-  attendance_logs    AttendanceLog[]
-  attendance_records AttendanceRecord[]
-  audit_logs         AuditLog[]
-  commissions        Commission[]
-  deductions         Deduction[]
-  disputes_app       Dispute[]          @relation("DisputeApprover")
-  disputes_req       Dispute[]          @relation("DisputeRequester")
-  disputes_lead      Dispute[]          @relation("DisputeLeadApprover")
-  disputes_admin     Dispute[]          @relation("DisputeAdminApprover")
-  dispute_histories  DisputeHistory[]   @relation("HistoryActor")
-  led_departments    Department[]       @relation("DepartmentLead")
-  leaveBank          LeaveBank?
-  leave_reviews      LeaveRequest[]     @relation("LeaveReviewer")
-  leave_requests     LeaveRequest[]     @relation("LeaveRequester")
-  monitoring_logs    MonitoringLog[]
-  notifications      Notification[]
-  salaries           Salary[]
-  department         Department?        @relation(fields: [department_id], references: [id])
+  id                  String              @id @unique
+  username            String?             @unique
+  name                String
+  role                String              @default("employee")
+  email               String?             @unique
+  password_hash       String?
+  monthly_salary      Float               @default(0.0)
+  leave_bank          Int                 @default(5)
+  department_id       Int?
+  created_at          DateTime            @default(now())
+  agent_token         AgentToken?
+  attendance_logs     AttendanceLog[]
+  attendance_records  AttendanceRecord[]
+  audit_logs          AuditLog[]
+  commissions         Commission[]
+  deductions          Deduction[]
+  led_departments     Department[]        @relation("DepartmentLead")
+  dispute_histories   DisputeHistory[]    @relation("HistoryActor")
+  disputes_admin      Dispute[]           @relation("DisputeAdminApprover")
+  disputes_app        Dispute[]           @relation("DisputeApprover")
+  disputes_lead       Dispute[]           @relation("DisputeLeadApprover")
+  disputes_req        Dispute[]           @relation("DisputeRequester")
+  leaveBank           LeaveBank?
+  leave_reviews       LeaveRequest[]      @relation("LeaveReviewer")
+  leave_requests      LeaveRequest[]      @relation("LeaveRequester")
+  monitoring_logs     MonitoringLog[]
+  notifications       Notification[]
+  created_schedules   RecordingSchedule[] @relation("AdminCreatedSchedules")
+  recording_schedules RecordingSchedule[] @relation("EmployeeSchedules")
+  created_sessions    RecordingSession[]  @relation("AdminCreatedSessions")
+  recording_sessions  RecordingSession[]  @relation("EmployeeRecordings")
+  salaries            Salary[]
+  department          Department?         @relation(fields: [department_id], references: [id])
 
   @@map("users")
 }
@@ -111,27 +116,27 @@ model Dispute {
   status            String           @default("pending")
   category          String
   dispute_date      DateTime
-  lead_status       String           @default("pending")
-  admin_status      String           @default("pending")
-  final_status      String           @default("pending")
-  lead_approved_by  String?
-  lead_approved_at  DateTime?
-  lead_remarks      String?
-  admin_approved_by String?
   admin_approved_at DateTime?
+  admin_approved_by String?
   admin_remarks     String?
-  salary_restored   Boolean          @default(false)
-  is_escalated      Boolean          @default(false)
-  is_deleted        Boolean          @default(false)
+  admin_status      String           @default("pending")
   deleted_at        DateTime?
+  final_status      String           @default("pending")
+  is_deleted        Boolean          @default(false)
+  is_escalated      Boolean          @default(false)
+  lead_approved_at  DateTime?
+  lead_approved_by  String?
+  lead_remarks      String?
+  lead_status       String           @default("pending")
+  salary_restored   Boolean          @default(false)
   updated_at        DateTime         @updatedAt
   deductions        Deduction[]
+  history           DisputeHistory[]
+  adminApprover     User?            @relation("DisputeAdminApprover", fields: [admin_approved_by], references: [id])
   approver          User?            @relation("DisputeApprover", fields: [approved_by], references: [id])
   leadApprover      User?            @relation("DisputeLeadApprover", fields: [lead_approved_by], references: [id])
-  adminApprover     User?            @relation("DisputeAdminApprover", fields: [admin_approved_by], references: [id])
   requester         User             @relation("DisputeRequester", fields: [req_by], references: [id], onDelete: Cascade)
   salaries          Salary[]
-  history           DisputeHistory[]
 
   @@map("disputes")
 }
@@ -169,7 +174,7 @@ model AttendanceRecord {
 model LeaveBank {
   id               Int     @id @default(autoincrement())
   user_id          String  @unique
-  leaves_remaining Int     @default(0)
+  leaves_remaining Float   @default(0)
   last_reset_month String?
   user             User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -245,4 +250,59 @@ model MonitoringLog {
   user           User?    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("monitoring_logs")
+}
+
+model AgentToken {
+  id         Int       @id @default(autoincrement())
+  user_id    String    @unique
+  token      String    @unique
+  created_at DateTime  @default(now())
+  last_seen  DateTime?
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("agent_tokens")
+}
+
+model RecordingSession {
+  id         String           @id @default(uuid())
+  user_id    String
+  status     String           @default("pending")
+  started_at DateTime?
+  ended_at   DateTime?
+  file_path  String?
+  created_by String
+  created_at DateTime         @default(now())
+  updated_at DateTime         @updatedAt
+  chunks     RecordingChunk[]
+  creator    User             @relation("AdminCreatedSessions", fields: [created_by], references: [id])
+  employee   User             @relation("EmployeeRecordings", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("recording_sessions")
+}
+
+model RecordingChunk {
+  id          String           @id @default(uuid())
+  session_id  String
+  chunk_index Int
+  file_path   String
+  file_size   Int              @default(0)
+  uploaded_at DateTime         @default(now())
+  session     RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@unique([session_id, chunk_index])
+  @@map("recording_chunks")
+}
+
+model RecordingSchedule {
+  id         Int      @id @default(autoincrement())
+  user_id    String
+  cron_expr  String
+  action     String
+  enabled    Boolean  @default(true)
+  created_by String
+  created_at DateTime @default(now())
+  creator    User     @relation("AdminCreatedSchedules", fields: [created_by], references: [id])
+  employee   User     @relation("EmployeeSchedules", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("recording_schedules")
 }

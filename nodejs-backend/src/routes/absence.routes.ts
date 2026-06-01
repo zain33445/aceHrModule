@@ -118,10 +118,35 @@ router.put('/leave-bank/user/:userId', async (req, res) => {
   const { leaves_remaining } = req.body;
 
   try {
-    const leaveBank = await AbsenceService.updateLeaveBank(userId, parseInt(leaves_remaining));
+    const leaveBank = await AbsenceService.updateLeaveBank(userId, parseFloat(leaves_remaining));
     res.json({ message: "Leave bank updated", leaveBank });
   } catch (error) {
     res.status(500).json({ error: "Failed to update leave bank" });
+  }
+});
+
+// Deduct fractional leaves from a user's leave bank (employee self-service)
+router.post('/leave-bank/user/:userId/deduct', async (req, res) => {
+  const { userId } = req.params;
+  const { amount, reason, date } = req.body;
+
+  if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+    return res.status(400).json({ error: "Invalid deduction amount" });
+  }
+
+  try {
+    const leaveBank = await AbsenceService.deductLeaveBank(
+      userId,
+      parseFloat(amount),
+      reason || 'manual',
+      date ? new Date(date) : undefined
+    );
+    res.json({ message: "Leave deducted successfully", leaveBank });
+  } catch (error: any) {
+    if (error.message === 'INSUFFICIENT_LEAVES') {
+      return res.status(400).json({ error: "Insufficient leaves in leave bank" });
+    }
+    res.status(500).json({ error: "Failed to deduct from leave bank" });
   }
 });
 

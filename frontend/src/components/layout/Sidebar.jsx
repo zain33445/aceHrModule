@@ -16,7 +16,8 @@ import {
   PlaneTakeoff,
   Activity,
   Download,
-  Camera
+  Camera,
+  Video,
 } from 'lucide-react';
 
 export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
@@ -86,9 +87,9 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
           { id: 'payroll', label: 'Payroll', icon: Banknote },
           { id: 'disputes', label: 'Disputes', icon: FileText },
           { id: 'screenshots', label: 'Screenshots', icon: Camera },
+          { id: 'recording', label: 'Recording', icon: Video },
           { id: 'employees', label: 'Employees', icon: Users },
           { id: 'departments', label: 'Departments', icon: Building2 },
-          // { id: 'leaves', label: 'Leave Requests', icon: PlaneTakeoff },
           { id: 'holidays', label: 'Holidays', icon: CalendarHeart },
           { id: 'export', label: 'Data Export', icon: Download },
           { id: 'audit', label: 'Audit Logs', icon: Activity },

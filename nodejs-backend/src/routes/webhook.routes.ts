@@ -97,22 +97,24 @@ router.post('/users', async (req, res) => {
     return res.status(400).json({ error: "Users must be an array" });
   }
 
-  // Only proceed if the users table is currently empty
-  const currentTotalUsers = await prisma.user.count();
-  if (currentTotalUsers > 0) {
-    return res.json({
-      message: "Users sync skipped: user table is not empty",
-      inserted: 0
-    });
-  }
-
   let insertedCount = 0;
 
   for (const user of users) {
     try {
+      const userId = String(user.user_id);
+      
+      // Check if user already exists
+      const userExists = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+
+      if (userExists) {
+        continue; // Skip existing user
+      }
+
       const newUser = await prisma.user.create({
         data: {
-          id: String(user.user_id),
+          id: userId,
           name: user.name,
           role: 'employee',
           password_hash: '1234'
@@ -122,9 +124,11 @@ router.post('/users', async (req, res) => {
       // Create leave bank record for new user
       const now = new Date();
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      await prisma.leaveBank.create({
-        data: {
-          user_id: String(user.user_id),
+      await prisma.leaveBank.upsert({
+        where: { user_id: userId },
+        update: {},
+        create: {
+          user_id: userId,
           leaves_remaining: newUser.leave_bank,
           last_reset_month: currentMonth
         }
@@ -132,7 +136,7 @@ router.post('/users', async (req, res) => {
 
       insertedCount++;
     } catch (error) {
-      console.log(error)
+      console.log(`[Users Webhook Error] Failed to insert user ${user.user_id}:`, error);
     }
   }
 

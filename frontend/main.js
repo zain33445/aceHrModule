@@ -19,6 +19,11 @@ import { fileURLToPath } from 'url';
 import { startMonitor, stopMonitor, setUserId } from './electron/monitor.js';
 import { logger } from './electron/logger.js';
 
+// Recording system modules (NEW)
+import { initRecorderMain, getRecordingState } from './electron/recorder-main.js';
+import { initWsClient, setWsUserId, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
+import { stopScheduler } from './electron/scheduler.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -267,18 +272,37 @@ app.whenReady().then(() => {
   // Start the desktop monitoring system
   startMonitor();
 
+  // Initialize the recording engine (hidden window + IPC listeners)
+  initRecorderMain(
+    getAgentToken,
+    (state, sessionId) => {
+      // Push recording state to main window for transparency banner
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('recording:state-update', { state, sessionId });
+      }
+      logger.info(`[Main] Recording state broadcast to UI: ${state}`);
+    }
+  );
+
+  // Start the WebSocket client (connects when userId is set)
+  initWsClient(null).catch((err) => logger.error(`[Main] WS client init error: ${err.message}`));
+
   // Listen for the frontend sending the user's ID
   ipcMain.on('set-user-id', (event, userId) => {
     setUserId(userId);
+    setWsUserId(userId); // Also update the recording WS client
     logger.info(`Main process received userId from frontend: ${userId}`);
   });
+
+  // Recording state query from renderer (transparency layer)
+  ipcMain.handle('recording:get-state', () => getRecordingState());
 
   logger.info('All systems initialized');
 });
 
 // Keep the app running when all windows are closed (tray mode)
 app.on('window-all-closed', () => {
-  // Do NOT quit — the monitor keeps running in the background
+  // Do NOT quit — the monitor and WS client keep running in the background
   // The user can quit via the tray menu
 });
 
@@ -290,5 +314,7 @@ app.on('activate', () => {
 app.on('before-quit', () => {
   app.isQuitting = true;
   stopMonitor();
+  shutdownWsClient();
+  stopScheduler();
   logger.info('=== ACE HR Electron App Shutting Down ===');
 });

@@ -3,6 +3,7 @@ dotenv.config();
 
 import express from 'express';
 import cors from 'cors';
+import { createServer } from 'http';
 
 import authRoutes from './routes/auth.routes';
 import employeeRoutes from './routes/employee.routes';
@@ -20,6 +21,8 @@ import leaveRequestRoutes from './routes/leave-request.routes';
 import auditRoutes from './routes/audit.routes';
 import exportRoutes from './routes/export.routes';
 import monitoringRoutes from './routes/monitoring.routes';
+import recordingRoutes from './routes/recording.routes';
+import { initGateway } from './gateways/recording.gateway';
 
 import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
@@ -30,6 +33,9 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Raw binary parser for video chunk uploads (agent uses Content-Type: application/octet-stream)
+app.use('/api/recording/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+
 
 // Audit Middleware
 app.use(async (req, res, next) => {
@@ -71,13 +77,59 @@ app.use('/api/leave-requests', leaveRequestRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/recording', recordingRoutes);
+
 
 app.get('/', (req, res) => {
   res.send('Node.js Attendance API is running.');
 });
 
-app.listen(PORT, () => {
+const server = createServer(app);
+
+// Initialize WebSocket gateway for recording control
+const recordingGateway = initGateway(server);
+console.log('[Server] Recording WebSocket gateway attached to HTTP server');
+
+server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+
+  // ── Startup: assemble any orphaned sessions ─────────────────────────────
+  setTimeout(async () => {
+    try {
+      const { assembleSession } = await import('./services/recording.service');
+      const orphaned = await prisma.recordingSession.findMany({
+        where: { status: { in: ['stopped', 'recording'] } },
+        include: { _count: { select: { chunks: true } } },
+      });
+      if (orphaned.length === 0) return;
+      console.log(`[Startup] Found ${orphaned.length} orphaned session(s) — assembling...`);
+      for (const session of orphaned) {
+        if (session._count.chunks === 0) {
+          // No chunks at all — just mark as stopped, nothing to assemble
+          await prisma.recordingSession.update({
+            where: { id: session.id },
+            data: { status: 'stopped', ended_at: new Date() },
+          });
+          console.log(`[Startup] Session ${session.id} had 0 chunks — marked stopped.`);
+          continue;
+        }
+        console.log(`[Startup] Assembling session ${session.id} (${session._count.chunks} chunks)...`);
+        // Mark stopped first so assembly can proceed
+        if (session.status === 'recording') {
+          await prisma.recordingSession.update({
+            where: { id: session.id },
+            data: { status: 'stopped', ended_at: new Date() },
+          });
+        }
+        assembleSession(session.id).catch((err) => {
+          console.error(`[Startup] Assembly failed for ${session.id}: ${err.message}`);
+        });
+      }
+    } catch (err) {
+      console.error('[Startup] Orphan cleanup failed:', err);
+    }
+  }, 3000); // wait 3s for DB connections to settle
+
   
   // 5-minute cron for live sync fallback
   setInterval(async () => {

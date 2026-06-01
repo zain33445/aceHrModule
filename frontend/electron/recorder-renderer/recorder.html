@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; media-src 'self' blob:;" />
+  <title>aceHRM Recording Engine</title>
+  <style>
+    /* This window is hidden — minimal styles */
+    body {
+      background: #000;
+      color: #0f0;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      margin: 0;
+      overflow: hidden;
+    }
+    #status {
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Recording engine idle.</div>
+  <script src="recorder-renderer.js"></script>
+</body>
+</html>
