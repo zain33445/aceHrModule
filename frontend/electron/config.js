@@ -51,10 +51,11 @@ export const DEFAULT_USER_ID = null;
 // ─────────────────────────────────────────
 
 // Derive WebSocket URL from API base (https → wss, http → ws)
+// IMPORTANT: swap protocol first, then strip trailing /api suffix only
 const wsBase = envApiBase
-  .replace('/api', '')           // strip /api path
   .replace('https://', 'wss://') // upgrade to wss
-  .replace('http://', 'ws://');  // or ws for local dev
+  .replace('http://', 'ws://')   // or ws for local dev
+  .replace(/\/api$/, '');        // strip trailing /api path only (avoids hitting api. subdomain)
 
 export const WS_ENDPOINT = `${wsBase}/recording-ws`;
 
