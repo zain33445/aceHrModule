@@ -161,7 +161,7 @@ router.get('/salary', async (req, res) => {
       { header: 'Absents', key: 'absents', width: 10 },
       { header: 'Leaves', key: 'leaves', width: 10 },
       { header: 'Late', key: 'late', width: 10 },
-      { header: 'Half Day', key: 'halfDay', width: 12 },
+      { header: 'Half Day', key: 'halfday', width: 12 },
       { header: 'Base Salary', key: 'baseSalary', width: 15 },
       { header: 'Total Deductions', key: 'deductions', width: 18 },
       { header: 'Net Salary', key: 'netSalary', width: 15 },

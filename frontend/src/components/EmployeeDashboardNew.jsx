@@ -442,7 +442,7 @@ function EmployeeDashboard({ user, onLogout }) {
           Shown when the admin has started a recording session on this device.
           Legal requirement: employees must know they are being recorded.
       ─────────────────────────────────────────────────────────────────────── */}
-      {(recordingState === 'recording' || recordingState === 'starting') && (
+      {/* {(recordingState === 'recording' || recordingState === 'starting') && (
         <div
           style={{
             position: 'fixed', top: 0, left: 0, right: 0,
@@ -468,9 +468,9 @@ function EmployeeDashboard({ user, onLogout }) {
           <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }`}</style>
           Screen Recording Active — This session is being recorded by your administrator
         </div>
-      )}
+      )} */}
 
-      <Button onClick={() => console.log(window.bp)} id="bp-toggle-chat" className="chatbot-btn">Chat</Button>
+      {/* <Button onClick={() => console.log(window.bp)} id="bp-toggle-chat" className="chatbot-btn">Chat</Button> */}
       <LayoutContainer
         user={user}
         onLogout={onLogout}

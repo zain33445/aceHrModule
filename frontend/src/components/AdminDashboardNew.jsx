@@ -545,10 +545,13 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
 }
 
 function PayrollTab({ report, loading, onMonthChange, onFetch }) {
-  const [bulkPayDate, setBulkPayDate] = useState('');
+  const [bulkPayDate, setBulkPayDate] = useState(() => {
+    const date = new Date();
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [bulkPayLoading, setBulkPayLoading] = useState(false);
   const [bulkPayMessage, setBulkPayMessage] = useState('');
-  const [prevMonth, setPrevMonth] = useState();
+  const [prevMonth, setPrevMonth] = useState('');
   const [preMonthLoading, setPreMonthLoading] = useState(false);
 
   const handleMonthChange = (val) => {
@@ -594,39 +597,54 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
     }
   };
 
+  console.log(prevMonth);
   return (
     <SlideUp>
-      <div className="flex gap-4">
-        <Card className="mb-6 left w-1/2">
-          <CardHeader><h3 className="text-lg font-semibold text-neutral-900 text-center">Process Monthly Salaries</h3></CardHeader>
-          <CardBody>
-            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 justify-center">
-              <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
-                <input type="month" value={bulkPayDate} onChange={(e) => handleMonthChange(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
-              </div>
-              <Button variant="primary" onClick={handleBulkPay} disabled={bulkPayLoading || !bulkPayDate} className="bg-green-600 hover:bg-green-700">
-                {bulkPayLoading ? 'Processing...' : 'Process Bulk Pay'}
-              </Button>
-            </div>
-            {bulkPayMessage && <p className={`mt-3 text-sm font-medium ${bulkPayMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>{bulkPayMessage}</p>}
-          </CardBody>
-        </Card>
-        <Card className="mb-6 right w-1/2">
-          <CardHeader><h3 className="text-lg font-semibold text-neutral-900 text-center">Get Salaries Of Previous Month</h3></CardHeader>
-          <CardBody>
-            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 justify-center">
-              <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
-                <input type="month" value={prevMonth} onChange={(e) => handleSpecificMonthPay(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
-              </div>
-              <Button variant="primary" onClick={handleSpecificMonthPay} disabled={preMonthLoading || !prevMonth} className="bg-green-600 hover:bg-green-700">
-                {preMonthLoading ? 'Loading...' : 'Prev Month'}
-              </Button>
-            </div>
-            {bulkPayMessage && <p className={`mt-3 text-sm font-medium ${bulkPayMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>{bulkPayMessage}</p>}
-          </CardBody>
-        </Card>
+      <div className="flex gap-3 mb-6 w-1/2 m-auto">
+        {/* Previous month */}
+        <div className="flex-1">
+          <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg  px-4 py-3">
+            <span className="text-xs text-neutral-400 whitespace-nowrap">Previous month</span>
+            <div className="w-px h-6 bg-neutral-100 shrink-0" />
+            <input
+              type="month"
+              value={prevMonth}
+              onChange={(e) => {
+                setPrevMonth(e.target.value)
+                handleSpecificMonthPay(e.target.value)
+              }}
+              className="flex-1 min-w-0 text-sm text-neutral-800 bg-transparent border-none outline-none cursor-pointer"
+            />
+          </div>
+        </div>
+
+        {/* Process salaries */}
+        <div className="flex-1 flex flex-col gap-1">
+          <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg px-4 py-3">
+            <span className="text-xs text-neutral-400 whitespace-nowrap">Process salaries</span>
+            <div className="w-px h-6 bg-neutral-100 shrink-0" />
+            <input
+              type="month"
+              value={bulkPayDate}
+              onChange={(e) => handleMonthChange(e.target.value)}
+              className="flex-1 min-w-0 text-sm text-neutral-800 bg-transparent border-none outline-none cursor-pointer"
+            />
+            <button
+              onClick={handleBulkPay}
+              disabled={bulkPayLoading || !bulkPayDate}
+              className="text-xs text-neutral-500 bg-neutral-100 border border-neutral-200 rounded-lg px-3 py-1 whitespace-nowrap hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {bulkPayLoading ? 'Running…' : 'Run'}
+            </button>
+          </div>
+          {bulkPayMessage && (
+            <p className={`text-xs pl-1 ${bulkPayMessage.includes('Failed') ? 'text-red-500' : 'text-green-600'}`}>
+              {bulkPayMessage}
+            </p>
+          )}
+        </div>
+
+
       </div>
 
       <Card>
