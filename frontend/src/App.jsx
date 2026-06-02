@@ -22,14 +22,14 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (month = null) => {
     setLoading(true);
     try {
       const now = new Date();
-
+      console.log(month);
       // Set default to current month
-      const start = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
-      const end = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+      const start = month ? month.start : formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+      const end = month ? month.end : formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
       const [empRes, repRes] = await Promise.all([
         api.getEmployees(),
@@ -47,7 +47,7 @@ function App() {
     if (auth?.role === 'admin') {
       fetchData();
     }
-    
+
     // Pass user ID to Electron Desktop Monitor if available
     if (auth && auth.user_id && window.electronAPI) {
       window.electronAPI.setUserId(auth.user_id);
@@ -57,7 +57,7 @@ function App() {
   const handleLoginSuccess = (authData) => {
     setAuth(authData);
     localStorage.setItem('bio_auth', JSON.stringify(authData));
-    
+
     // Pass user ID to Electron Desktop Monitor immediately on login
     if (authData && authData.user_id && window.electronAPI) {
       window.electronAPI.setUserId(authData.user_id);

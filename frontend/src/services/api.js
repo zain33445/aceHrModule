@@ -135,7 +135,9 @@ const api = {
   // Holidays
   getHolidays: () => axios.get(`${API_BASE}/holidays`),
   createHoliday: (data) => axios.post(`${API_BASE}/holidays`, data),
+  createHolidayRange: (data) => axios.post(`${API_BASE}/holidays/bulk`, data),
   deleteHoliday: (id) => axios.delete(`${API_BASE}/holidays/${id}`),
+  processHolidays: () => axios.post(`${API_BASE}/holidays/process`),
 
   // Leave Requests
   getLeaveRequests: (userId, status) => {

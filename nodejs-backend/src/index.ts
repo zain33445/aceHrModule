@@ -26,6 +26,7 @@ import { initGateway } from './gateways/recording.gateway';
 
 import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
+import { HolidayService } from './services/holiday.service';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -129,6 +130,30 @@ server.listen(PORT, () => {
       console.error('[Startup] Orphan cleanup failed:', err);
     }
   }, 3000); // wait 3s for DB connections to settle
+
+  // ── Startup: process any pending holidays created while server was down ──
+  setTimeout(async () => {
+    try {
+      const result = await HolidayService.processHolidays();
+      if (result.processed > 0) {
+        console.log(`[HolidayCron] Startup processed ${result.processed} pending holiday(s), updated ${result.recordsUpdated} attendance records, refunded ${result.leavesRefunded} leaves, removed ${result.deductionsRemoved} deductions`);
+      }
+    } catch (err) {
+      console.error('[HolidayCron] Startup run failed:', err);
+    }
+  }, 5000); // run 5s after server is up
+
+  // ── 8-hour cron for holiday enforcement (runs 3× per day) ────────────────
+  setInterval(async () => {
+    try {
+      const result = await HolidayService.processHolidays();
+      if (result.processed > 0) {
+        console.log(`[HolidayCron] Processed ${result.processed} holiday(s) | attendance: ${result.recordsUpdated} | leaves refunded: ${result.leavesRefunded} | deductions removed: ${result.deductionsRemoved}`);
+      }
+    } catch (err) {
+      console.error('[HolidayCron] 8-hour run failed:', err);
+    }
+  }, 8 * 60 * 60 * 1000);
 
   
   // 5-minute cron for live sync fallback

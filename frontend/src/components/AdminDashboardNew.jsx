@@ -42,7 +42,7 @@ import ScreenshotsTab from './dashboard/ScreenshotsTab';
 import RecordingTab from './dashboard/RecordingTab';
 import { PayslipPDFButton } from './salary/PayslipPDFButton';
 import { SettingsTab } from './dashboard/SettingsTab';
-import { formatTime12h } from '../utils/formatters';
+import { formatDateLocal, formatTime12h } from '../utils/formatters';
 
 function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
   const [activeTab, setActiveTab] = useState(() => {
@@ -113,11 +113,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         id: n.id,
         type: n.type,
         title: n.type === 'new_dispute' ? 'New Dispute' :
-               n.type === 'dispute_approved' ? 'Dispute Approved' :
-               n.type === 'dispute_rejected' ? 'Dispute Rejected' : 
-               n.type === 'new_leave_request' ? 'New Leave Request' :
-               n.type === 'leave_approved' ? 'Leave Approved' :
-               n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
+          n.type === 'dispute_approved' ? 'Dispute Approved' :
+            n.type === 'dispute_rejected' ? 'Dispute Rejected' :
+              n.type === 'new_leave_request' ? 'New Leave Request' :
+                n.type === 'leave_approved' ? 'Leave Approved' :
+                  n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
         message: n.message,
         read: n.is_read,
         created_at: n.created_at
@@ -142,7 +142,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         console.error('Error marking notification as read:', err);
       }
     }
-    
+
     if (notif.type === 'new_dispute' || notif.type === 'dispute_approved' || notif.type === 'dispute_rejected') {
       setActiveTab('disputes');
     } else if (notif.type === 'new_leave_request' || notif.type === 'leave_approved' || notif.type === 'leave_rejected') {
@@ -157,7 +157,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       lastWeek.setDate(lastWeek.getDate() - 7);
       const absencesRes = await api.getAbsences(lastWeek.toISOString(), undefined, 'all', 'all', 1, 500);
       const { records: absen = [] } = absencesRes.data || {};
-      
+
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayEnd = new Date(today);
@@ -229,10 +229,10 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
   const handleAdminApproval = async (disputeId, action, remarks) => {
     try {
-      const res = await api.adminApproveDispute(disputeId, { 
-        admin_id: user.user_id, 
-        action, 
-        remarks 
+      const res = await api.adminApproveDispute(disputeId, {
+        admin_id: user.user_id,
+        action,
+        remarks
       });
       if (res.data?.success) {
         fetchDisputeData(disputePagination.currentPage);
@@ -271,7 +271,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
   const [isExporting, setIsExporting] = useState(false);
 
-  const handleExport = async () => {
+  const handleExport = async (month = null) => {
     const baseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
     let url = '';
     let filename = 'export.xlsx';
@@ -288,10 +288,12 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       let start = '';
       let end = '';
       if (payrollExportMonth) {
-        const [year, month] = payrollExportMonth.split('-').map(Number);
-        start = new Date(year, month - 1, 1).toISOString();
-        end = new Date(year, month, 0, 23, 59, 59, 999).toISOString();
+        console.log(payrollExportMonth);
+        const [year, currentMonth] = payrollExportMonth.split('-').map(Number);
+        start = new Date(year, currentMonth - 1, 1).toISOString();
+        end = new Date(year, currentMonth, 0, 23, 59, 59, 999).toISOString();
         filename = `payroll_${payrollExportMonth}.xlsx`;
+
       } else {
         filename = `payroll_current_month.xlsx`;
       }
@@ -377,7 +379,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     {
       id: 'payroll',
       label: 'Payroll',
-      content: <PayrollTab report={report} loading={false} onMonthChange={setPayrollExportMonth} />,
+      content: <PayrollTab report={report} loading={false} onMonthChange={setPayrollExportMonth} onFetch={onRefresh} />,
     },
     {
       id: 'disputes',
@@ -456,19 +458,19 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       onNotificationClick={handleNotificationClick}
     >
       {(activeTab === 'attendance' || activeTab === 'payroll') && (
-      <div className="flex justify-end mb-6">
-        <Button
-          variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
-          size="medium"
-          className="flex items-center gap-2 shadow-sm p-3"
-          onClick={handleExport}
-          disabled={isExporting}
-          title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
-        >
-          <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
-          {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Quick Export'}
-        </Button>
-      </div>
+        <div className="flex justify-end mb-6">
+          <Button
+            variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
+            size="medium"
+            className="flex items-center gap-2 shadow-sm p-3"
+            onClick={handleExport}
+            disabled={isExporting}
+            title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
+          >
+            <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
+            {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Quick Export'}
+          </Button>
+        </div>
       )}
 
       {/* Main Content Area */}
@@ -478,7 +480,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
       <AnimatePresence>
         {showDisputeDetail && selectedDispute && (
-          <DisputeDetailModal 
+          <DisputeDetailModal
             dispute={selectedDispute}
             onClose={() => setShowDisputeDetail(false)}
             onAction={handleAdminApproval}
@@ -542,14 +544,39 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
   );
 }
 
-function PayrollTab({ report, loading, onMonthChange }) {
+function PayrollTab({ report, loading, onMonthChange, onFetch }) {
   const [bulkPayDate, setBulkPayDate] = useState('');
   const [bulkPayLoading, setBulkPayLoading] = useState(false);
   const [bulkPayMessage, setBulkPayMessage] = useState('');
+  const [prevMonth, setPrevMonth] = useState();
+  const [preMonthLoading, setPreMonthLoading] = useState(false);
 
   const handleMonthChange = (val) => {
     setBulkPayDate(val);
     if (onMonthChange) onMonthChange(val);
+  };
+
+  const handleSpecificMonthPay = (prevMonth) => {
+    const [year, m] = prevMonth.split("-").map(Number);
+
+    // start of month
+    const start = formatDateLocal(new Date(year, m - 1, 1));
+
+    // end of month (last day)
+    const end = formatDateLocal(new Date(year, m, 0));
+
+    const month = {
+      start,
+      end
+    }
+    console.log(month);
+    try {
+      onFetch(month);
+      if (onMonthChange) onMonthChange(prevMonth);
+
+    } catch (err) {
+      alert(err)
+    }
   };
 
   const handleBulkPay = async () => {
@@ -569,21 +596,38 @@ function PayrollTab({ report, loading, onMonthChange }) {
 
   return (
     <SlideUp>
-      <Card className="mb-6">
-        <CardHeader><h3 className="text-lg font-semibold text-neutral-900">Process Monthly Salaries</h3></CardHeader>
-        <CardBody>
-          <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4">
-            <div>
-              <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
-              <input type="month" value={bulkPayDate} onChange={(e) => handleMonthChange(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
+      <div className="flex gap-4">
+        <Card className="mb-6 left w-1/2">
+          <CardHeader><h3 className="text-lg font-semibold text-neutral-900 text-center">Process Monthly Salaries</h3></CardHeader>
+          <CardBody>
+            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 justify-center">
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
+                <input type="month" value={bulkPayDate} onChange={(e) => handleMonthChange(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
+              </div>
+              <Button variant="primary" onClick={handleBulkPay} disabled={bulkPayLoading || !bulkPayDate} className="bg-green-600 hover:bg-green-700">
+                {bulkPayLoading ? 'Processing...' : 'Process Bulk Pay'}
+              </Button>
             </div>
-            <Button variant="primary" onClick={handleBulkPay} disabled={bulkPayLoading || !bulkPayDate} className="bg-green-600 hover:bg-green-700">
-              {bulkPayLoading ? 'Processing...' : 'Process Bulk Pay'}
-            </Button>
-          </div>
-          {bulkPayMessage && <p className={`mt-3 text-sm font-medium ${bulkPayMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>{bulkPayMessage}</p>}
-        </CardBody>
-      </Card>
+            {bulkPayMessage && <p className={`mt-3 text-sm font-medium ${bulkPayMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>{bulkPayMessage}</p>}
+          </CardBody>
+        </Card>
+        <Card className="mb-6 right w-1/2">
+          <CardHeader><h3 className="text-lg font-semibold text-neutral-900 text-center">Get Salaries Of Previous Month</h3></CardHeader>
+          <CardBody>
+            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-4 justify-center">
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 mb-1">Select Month</label>
+                <input type="month" value={prevMonth} onChange={(e) => handleSpecificMonthPay(e.target.value)} className="px-3 py-2 border border-neutral-300 rounded-md shadow-sm" />
+              </div>
+              <Button variant="primary" onClick={handleSpecificMonthPay} disabled={preMonthLoading || !prevMonth} className="bg-green-600 hover:bg-green-700">
+                {preMonthLoading ? 'Loading...' : 'Prev Month'}
+              </Button>
+            </div>
+            {bulkPayMessage && <p className={`mt-3 text-sm font-medium ${bulkPayMessage.includes('Failed') ? 'text-red-600' : 'text-green-600'}`}>{bulkPayMessage}</p>}
+          </CardBody>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader><h3 className="text-lg font-semibold text-neutral-900">Payroll Summary</h3></CardHeader>
@@ -605,9 +649,9 @@ function PayrollTab({ report, loading, onMonthChange }) {
                       <td>{emp.paid_leaves_used} days</td>
                       <td className="font-bold text-primary-600">PKR {emp.total_salary?.toLocaleString()}</td>
                       <td>
-                        <PayslipPDFButton 
-                          employeeName={emp.name} 
-                          salaryData={{ userId: emp.id, monthly_salary: emp.monthly_salary, deductions: emp.deductions, paid_leaves_used: emp.paid_leaves_used, total_salary: emp.total_salary, date: new Date() }} 
+                        <PayslipPDFButton
+                          employeeName={emp.name}
+                          salaryData={{ userId: emp.id, monthly_salary: emp.monthly_salary, deductions: emp.deductions, paid_leaves_used: emp.paid_leaves_used, total_salary: emp.total_salary, date: new Date() }}
                         />
                       </td>
                     </tr>
@@ -649,10 +693,10 @@ function DisputesTab({ disputes, pagination, onPageChange, onViewDetail }) {
         )}
 
         {pagination.totalPages > 1 && (
-          <Pagination 
-            currentPage={pagination.currentPage} 
-            totalPages={pagination.totalPages} 
-            onPageChange={onPageChange} 
+          <Pagination
+            currentPage={pagination.currentPage}
+            totalPages={pagination.totalPages}
+            onPageChange={onPageChange}
           />
         )}
       </div>
@@ -704,17 +748,15 @@ function DisputeCard({ dispute, onClick }) {
       <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
         <div className="flex -space-x-2">
           {/* Lead Status Circle */}
-          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${
-            dispute.lead_status === 'approved' ? 'bg-green-500' : 
+          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${dispute.lead_status === 'approved' ? 'bg-green-500' :
             dispute.lead_status === 'rejected' ? 'bg-red-500' : 'bg-neutral-200'
-          }`} title={`Lead: ${dispute.lead_status}`}>
+            }`} title={`Lead: ${dispute.lead_status}`}>
             <UserCheck size={10} className="text-white" />
           </div>
           {/* Admin Status Circle */}
-          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${
-            dispute.admin_status === 'approved' ? 'bg-green-500' : 
+          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${dispute.admin_status === 'approved' ? 'bg-green-500' :
             dispute.admin_status === 'rejected' ? 'bg-red-500' : 'bg-neutral-200'
-          }`} title={`Admin: ${dispute.admin_status}`}>
+            }`} title={`Admin: ${dispute.admin_status}`}>
             <ShieldCheck size={10} className="text-white" />
           </div>
         </div>
@@ -796,16 +838,16 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
               <ShieldCheck size={16} className="text-green-500" /> Approval Status
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <StatusBox 
-                label="Team Lead Approval" 
-                status={dispute.lead_status} 
+              <StatusBox
+                label="Team Lead Approval"
+                status={dispute.lead_status}
                 approver={dispute.leadApprover?.name}
                 date={dispute.lead_approved_at}
                 remarks={dispute.lead_remarks}
               />
-              <StatusBox 
-                label="Admin Final Approval" 
-                status={dispute.admin_status} 
+              <StatusBox
+                label="Admin Final Approval"
+                status={dispute.admin_status}
                 approver={dispute.adminApprover?.name}
                 date={dispute.admin_approved_at}
                 remarks={dispute.admin_remarks}
@@ -822,10 +864,9 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
               <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-neutral-100">
                 {dispute.history.map((item, idx) => (
                   <div key={idx} className="relative pl-8">
-                    <div className={`absolute left-0 top-1 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${
-                      item.action.includes('APPROVED') ? 'bg-green-500' : 
+                    <div className={`absolute left-0 top-1 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${item.action.includes('APPROVED') ? 'bg-green-500' :
                       item.action.includes('REJECTED') ? 'bg-red-500' : 'bg-primary-500'
-                    }`}>
+                      }`}>
                     </div>
                     <div className="text-sm">
                       <p className="font-semibold text-neutral-900">{item.action.replace('_', ' ')}</p>
@@ -842,7 +883,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           {isAdmin && dispute.final_status === 'pending' || dispute.final_status === 'partially_approved' && (
             <div className="pt-6 border-t border-neutral-100">
               <label className="block text-sm font-semibold text-neutral-900 mb-2">Internal Remarks</label>
-              <textarea 
+              <textarea
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
                 placeholder="Enter remarks for the employee..."
@@ -857,15 +898,15 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           <Button variant="ghost" onClick={onClose}>Close</Button>
           {isAdmin && (dispute.final_status === 'pending' || dispute.final_status === 'partially_approved') && (
             <>
-              <Button 
-                variant="danger" 
+              <Button
+                variant="danger"
                 onClick={() => handleAction('reject')}
                 disabled={isSubmitting}
               >
                 Reject Dispute
               </Button>
-              <Button 
-                variant="primary" 
+              <Button
+                variant="primary"
                 onClick={() => handleAction('approve')}
                 disabled={isSubmitting}
                 className="bg-green-600 hover:bg-green-700"
@@ -882,7 +923,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
 
 function StatusBox({ label, status, approver, date, remarks }) {
   const getStatusInfo = (s) => {
-    switch(s) {
+    switch (s) {
       case 'approved': return { color: 'bg-green-50 border-green-200', text: 'text-green-700', label: 'Approved' };
       case 'rejected': return { color: 'bg-red-50 border-red-200', text: 'text-red-700', label: 'Rejected' };
       default: return { color: 'bg-neutral-50 border-neutral-200', text: 'text-neutral-500', label: 'Pending' };

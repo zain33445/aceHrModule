@@ -207,9 +207,10 @@ model Notification {
 }
 
 model Holiday {
-  id   Int      @id @default(autoincrement())
-  name String
-  date DateTime @unique
+  id     Int      @id @default(autoincrement())
+  name   String
+  date   DateTime @unique
+  status String   @default("pending")
 
   @@map("holidays")
 }
