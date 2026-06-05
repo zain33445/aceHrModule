@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
 // Bulk pay salaries for all active users for a month
 router.post('/bulk-pay', async (req, res) => {
   const { date } = req.body;
-  
+
   if (!date) return res.status(400).json({ error: 'Date is required' });
 
   try {
@@ -46,7 +46,7 @@ router.post('/bulk-pay', async (req, res) => {
       // 1. Calculate deductions for this month
       const startOfMonth = new Date(paymentDate.getFullYear(), paymentDate.getMonth(), 1);
       const endOfMonth = new Date(paymentDate.getFullYear(), paymentDate.getMonth() + 1, 0, 23, 59, 59);
-      
+
       const deductionAgg = await prisma.deduction.aggregate({
         where: {
           user_id: user.id,
@@ -54,7 +54,7 @@ router.post('/bulk-pay', async (req, res) => {
         },
         _sum: { amount: true }
       });
-      
+
       const deductions = deductionAgg._sum.amount || 0;
       const finalSalary = Math.max(0, user.monthly_salary - deductions);
 
@@ -71,7 +71,7 @@ router.post('/bulk-pay', async (req, res) => {
           data: {
             user_id: user.id,
             date: paymentDate,
-            payable_salary: user.monthly_salary,
+            // base_salary: user.monthly_salary,
             deduction: deductions,
             paid_salary: finalSalary
           }
@@ -113,13 +113,15 @@ router.get('/user/:userId', async (req, res) => {
 
 // Create a salary record
 router.post('/', async (req, res) => {
-  const { user_id, paid_salary, date } = req.body;
+  const { user_id, paid_salary, date, base_salary, deduction } = req.body;
   try {
     const salary = await prisma.salary.create({
       data: {
         user_id,
         paid_salary: parseFloat(paid_salary),
-        date: new Date(date)
+        date: new Date(date),
+        // base_salary: parseFloat(base_salary),
+        deduction: parseFloat(deduction),
       },
       include: {
         user: {

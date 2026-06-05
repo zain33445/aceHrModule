@@ -44,10 +44,13 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
       if (edits.leave_bank !== undefined) {
         await api.updateLeaves(emp.id, edits.leave_bank);
       }
-      
+      if (edits.username !== undefined) {
+        await api.updateUsername(emp.id, edits.username);
+      }
+
       setRibbon({ type: 'success', text: 'Parameters updated successfully', show: true });
       setTimeout(() => setRibbon({ type: '', text: '', show: false }), 2000);
-      
+
       setEditedValues(prev => {
         const next = { ...prev };
         delete next[emp.id];
@@ -56,10 +59,10 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
 
       if (onRefresh) onRefresh();
     } catch (err) {
-      setRibbon({ 
-        type: 'error', 
-        text: err.response?.data?.detail || err.response?.data?.error || err.message || 'Failed to update', 
-        show: true 
+      setRibbon({
+        type: 'error',
+        text: err.response?.data?.detail || err.response?.data?.error || err.message || 'Failed to update',
+        show: true
       });
     }
   };
@@ -71,17 +74,27 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
   const handleAddSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (!newEmp.id || !newEmp.name) {
-      setError('ID and Name are required');
+    // For manual creation, ID is no longer strictly required if backend auto-generates, 
+    // but if the frontend form still asks for it, we'll keep the name check at least.
+    if (!newEmp.name) {
+      setError('Name is required');
       return;
     }
     try {
-      await api.createEmployee(newEmp);
+      const res = await api.createEmployee(newEmp);
       setShowAddForm(false);
       setNewEmp({ id: '', username: '', name: '', monthly_salary: 0, leave_bank: 5, password: '1234', role: 'employee', department_id: '' });
-      window.location.reload();
+      
+      if (res.data?.device_sync === 'pending') {
+        setRibbon({ type: 'error', text: 'User created in DB, but biometric device is offline. Sync queued.', show: true });
+      } else {
+        setRibbon({ type: 'success', text: 'Employee created successfully!', show: true });
+      }
+      setTimeout(() => setRibbon({ type: '', text: '', show: false }), 4000);
+      
+      if (onRefresh) onRefresh();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to create employee');
+      setError(err.response?.data?.detail || err.response?.data?.error || 'Failed to create employee');
     }
   };
 
@@ -133,54 +146,65 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
       {showAddForm && (
         <div className="glass-panel" style={{ border: '1px solid rgba(56, 189, 248, 0.3)' }}>
           <h4 style={{ marginBottom: '1.5rem' }}>Create New Employee Record</h4>
-          <form onSubmit={handleAddSubmit} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem' }}>
+          <form onSubmit={handleAddSubmit}
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: '1.5rem',
+              flexDirection: 'column',
+              width: '25%',
+              margin: 'auto',
+
+            }}>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Employee ID (ZK ID)</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Salary</label>
               <input
-                type="text" className="input-field" placeholder="e.g. 101"
-                value={newEmp.id} onChange={e => setNewEmp({ ...newEmp, id: e.target.value })}
+                type="number" className="input-field" placeholder="e.g. 101"
+                value={newEmp.monthly_salary} onChange={e => setNewEmp({ ...newEmp, monthly_salary: e.target.value })}
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Full Name</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.1rem' }}>Full Name</label>
               <input
                 type="text" className="input-field" placeholder="John Doe"
                 value={newEmp.name} onChange={e => setNewEmp({ ...newEmp, name: e.target.value })}
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Username</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.1rem' }}>Username</label>
               <input
                 type="text" className="input-field" placeholder="johndoe"
                 value={newEmp.username} onChange={e => setNewEmp({ ...newEmp, username: e.target.value })}
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Login Password</label>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#94a3b8', marginBottom: '0.1rem' }}>Login Password</label>
               <input
                 type="text" className="input-field" placeholder="1234"
                 value={newEmp.password} onChange={e => setNewEmp({ ...newEmp, password: e.target.value })}
               />
             </div>
-            <div>
-              <Select
-                label="Role"
-                value={newEmp.role}
-                onChange={val => setNewEmp({ ...newEmp, role: val })}
-                options={[
-                  { value: 'employee', label: 'Employee' },
-                  { value: 'admin', label: 'Admin' }
-                ]}
-              />
-            </div>
-            <div>
-              <Select
-                label="Department"
-                value={newEmp.department_id}
-                onChange={val => setNewEmp({ ...newEmp, department_id: val })}
-                placeholder="Select Department"
-                options={departments.map(dep => ({ value: dep.id, label: dep.name }))}
-              />
+            <div style={{ display: 'flex', gap: '1.5rem' }}>
+              <div>
+                <Select
+                  label="Role"
+                  value={newEmp.role}
+                  onChange={val => setNewEmp({ ...newEmp, role: val })}
+                  options={[
+                    { value: 'employee', label: 'Employee' },
+                    { value: 'admin', label: 'Admin' }
+                  ]}
+                />
+              </div>
+              <div>
+                <Select
+                  label="Department"
+                  value={newEmp.department_id}
+                  onChange={val => setNewEmp({ ...newEmp, department_id: val })}
+                  placeholder="Select Department"
+                  options={departments.map(dep => ({ value: dep.id, label: dep.name }))}
+                />
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'flex-end' }}>
               <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Create Record</button>
@@ -197,6 +221,7 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
           <thead>
             <tr>
               <th>Name & ID</th>
+              <th>Username</th>
               <th>Monthly Salary</th>
               <th>Leave Bank</th>
               <th>Access Key</th>
@@ -209,6 +234,16 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
                 <td>
                   <div style={{ fontWeight: 600 }}>{emp.name}</div>
                   <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>ID: {emp.id}</div>
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    className="input-field"
+                    defaultValue={emp.username || ''}
+                    onChange={(e) => handleEdit(emp.id, 'username', e.target.value)}
+                    style={{ width: '120px' }}
+                    placeholder="Set username"
+                  />
                 </td>
                 <td>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -240,7 +275,7 @@ function StaffManager({ employees, onUpdate, onShowHistory, onUpdatePassword, on
                       onBlur={(e) => onUpdatePassword(emp.id, e.target.value)}
                       style={{ width: '120px', letterSpacing: showPasswords[emp.id] ? 'normal' : '2px', fontWeight: 600, paddingRight: '2rem' }}
                     />
-                    <button 
+                    <button
                       type="button"
                       onClick={() => togglePassword(emp.id)}
                       style={{ position: 'absolute', right: '5px', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer' }}

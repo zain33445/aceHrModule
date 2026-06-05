@@ -103,6 +103,7 @@ function EmployeeDashboard({ user, onLogout }) {
   });
   const [isSyncing, setIsSyncing] = useState(false);
   const [recordingState, setRecordingState] = useState('idle');
+  const [leaveTypes, setLeaveTypes] = useState([]);
 
   // Subscribe to recording state changes from the Electron main process.
   // Shows an in-app transparency banner whenever the admin has started a recording session.
@@ -112,6 +113,13 @@ function EmployeeDashboard({ user, onLogout }) {
     api.getState().then((s) => setRecordingState(s?.state ?? 'idle'));
     api.onStateChange((s) => setRecordingState(s?.state ?? 'idle'));
     return () => api.removeStateListeners();
+  }, []);
+
+  // Fetch leave types once on mount (for AttendanceTab leave request flow)
+  useEffect(() => {
+    api.getLeaveTypes()
+      .then(r => setLeaveTypes((r.data || []).filter(t => t.name !== 'Legacy')))
+      .catch(console.error);
   }, []);
 
   const handleSyncAttendance = async () => {
@@ -157,8 +165,8 @@ function EmployeeDashboard({ user, onLogout }) {
       setNotifications((res.data || []).map(n => ({
         id: n.id,
         type: n.type,
-        title: n.type === 'dispute_approved' ? 'Dispute Approved' :
-          n.type === 'dispute_rejected' ? 'Dispute Rejected' :
+        title: n.type === 'dispute_approved' ? 'Appeal Approved' :
+          n.type === 'dispute_rejected' ? 'Appeal Rejected' :
             n.type === 'leave_approved' ? 'Leave Approved' :
               n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
         message: n.message,
@@ -338,13 +346,13 @@ function EmployeeDashboard({ user, onLogout }) {
         dispute_date: disputeForm.dispute_date,
         description: disputeForm.description
       });
-      alert('Dispute submitted successfully!');
+      alert('Appeal submitted successfully!');
       setDisputeForm({ category: 'absent', dispute_date: '', description: '' });
       setShowDisputeModal(false);
       fetchDisputeData();
     } catch (error) {
       console.error('Error submitting dispute:', error);
-      alert('Failed to submit dispute');
+      alert('Failed to submit appeal');
     }
   };
 
@@ -381,6 +389,8 @@ function EmployeeDashboard({ user, onLogout }) {
             pagination={attendancePagination}
             leaveBank={leaveBank}
             userId={user.user_id}
+            user={user}
+            leaveTypes={leaveTypes}
             onFilterChange={(f) => fetchAbsenceData(f.startDate, f.endDate, f.category, 1)}
             onPageChange={(page) => fetchAbsenceData(undefined, undefined, undefined, page)}
             onRefresh={() => fetchAbsenceData()}
@@ -405,8 +415,13 @@ function EmployeeDashboard({ user, onLogout }) {
         ),
       },
       {
+        id: 'leaves',
+        label: 'Leave Requests',
+        content: <LeaveRequestHub user={user} isAdmin={false} />,
+      },
+      {
         id: 'disputes',
-        label: 'Disputes',
+        label: 'Appeals',
         content: (
           <DisputesTab
             disputes={disputes}
@@ -428,7 +443,7 @@ function EmployeeDashboard({ user, onLogout }) {
     if (user?.is_lead) {
       baseTabs.splice(4, 0, {
         id: 'team_disputes',
-        label: 'Team Disputes',
+        label: 'Team Appeals',
         content: <LeadDisputeDashboard user={user} />,
       });
     }
@@ -536,7 +551,7 @@ function EmployeeDashboard({ user, onLogout }) {
         className="w-1/2 h-[95%] rounded-2xl"
         isOpen={showDisputeModal}
         onClose={() => setShowDisputeModal(false)}
-        title="File New Dispute"
+        title="File New Appeal"
         size="full"
         fullHeight={false}
         footer={
@@ -546,7 +561,7 @@ function EmployeeDashboard({ user, onLogout }) {
             </Button>
             <Button variant="primary" className="flex-1 py-1 text-md shadow-lg shadow-primary-200" onClick={handleDisputeSubmit}>
               <Send size={20} />
-              Submit Dispute
+              Submit Appeal
             </Button>
           </div>
         }
@@ -562,7 +577,7 @@ function EmployeeDashboard({ user, onLogout }) {
               <Info size={20} className="text-primary-600" />
             </div>
             <p className="leading-relaxed">
-              <strong>Submitting Request:</strong> File disputes only for <strong>current month</strong>. Ensure description is entered.
+              <strong>Submitting Request:</strong> File appeals only for <strong>current month</strong>. Ensure description is entered.
             </p>
           </motion.div>
 
@@ -570,7 +585,7 @@ function EmployeeDashboard({ user, onLogout }) {
             <StaggerChildren stagger={0.1}>
               {/* Category Selector Cards */}
               <motion.div className="space-y-3" variants={SlideUp}>
-                <label className="text-sm font-semibold text-neutral-700 ml-1 mb-1">Select Dispute Category</label>
+                <label className="text-sm font-semibold text-neutral-700 ml-1 mb-1">Select Appeal Category</label>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 my-3">
                   {[
                     { id: 'absent', label: 'Absent', icon: AlertOctagon, color: 'hover:border-error-500 hover:bg-error-50 text-error-600' },
@@ -604,7 +619,7 @@ function EmployeeDashboard({ user, onLogout }) {
               {/* Form Inputs Grid */}
               <motion.div className="grid grid-cols-1 md:grid-cols-2 gap-6" variants={SlideUp}>
                 <Input
-                  label="Dispute Date"
+                  label="Appeal Date"
                   type="date"
                   required
                   icon={CalendarIcon}
@@ -723,7 +738,7 @@ function OverviewTab({ stats, logs, loading, setActiveTab, setShowDisputeModal, 
               });
             }}>
               <Plus size={18} />
-              File Dispute
+              File Appeal
             </Button>
           </CardBody>
         </Card>
@@ -733,32 +748,11 @@ function OverviewTab({ stats, logs, loading, setActiveTab, setShowDisputeModal, 
 }
 
 // Attendance Tab Component
-function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRefresh, onFilterChange, onPageChange }) {
+function AttendanceTab({ absences, loading, pagination, leaveBank, userId, user, leaveTypes = [], onRefresh, onFilterChange, onPageChange }) {
   const LEAVE_COSTS = { absent: 1, 'half-day': 0.5, halfday: 0.5, late: 0.3 };
   const STATUS_LABELS = { absent: 'Absent', 'half-day': 'Half Day', halfday: 'Half Day', late: 'Late Arrival' };
 
   const [expandedRowIdx, setExpandedRowIdx] = useState(null);
-  const [deductLoading, setDeductLoading] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-
-  const handleDeduct = async (log, cost) => {
-    setDeductLoading(true);
-    setFeedback(null);
-    try {
-      await api.deductLeaveBank(userId, cost, log.status, log.date);
-      setFeedback({ type: 'success', message: `✅ Deducted ${cost} leave(s)` });
-      if (onRefresh) onRefresh();
-      setTimeout(() => {
-        setExpandedRowIdx(null);
-        setFeedback(null);
-
-      }, 1200);
-    } catch (err) {
-      const msg = err?.response?.data?.error || 'Failed to deduct leave';
-      setFeedback({ type: 'error', message: `❌ ${msg}` });
-    }
-    setDeductLoading(false);
-  };
 
   return (
     <SlideUp>
@@ -785,7 +779,7 @@ function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRef
                       <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Check In</th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Check Out</th>
                       <th className="px-6 py-3 text-center text-xs font-semibold text-neutral-500 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">Leave Cost</th>
+                      <th className="px-6 py-3 text-center text-xs font-semibold text-neutral-500 uppercase tracking-wider">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
@@ -794,8 +788,6 @@ function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRef
                       const cost = LEAVE_COSTS[statusKey];
                       const isActionable = !!cost;
                       const isExpanded = expandedRowIdx === idx;
-                      const balance = leaveBank?.leaves_remaining ?? 0;
-                      const canDeduct = cost && balance >= cost;
 
                       return (
                         <React.Fragment key={idx}>
@@ -803,14 +795,12 @@ function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRef
                             onClick={() => {
                               if (isActionable) {
                                 setExpandedRowIdx(isExpanded ? null : idx);
-                                setFeedback(null);
                               }
                             }}
                             className={`transition-colors text-center ${isActionable
                               ? 'cursor-pointer hover:bg-primary-50 hover:shadow-sm'
                               : 'cursor-default hover:bg-neutral-50'
                               } ${isExpanded ? 'bg-primary-50/30' : ''}`}
-                            title={isActionable ? 'Click to use leave bank' : ''}
                           >
                             <td className="px-6 py-4 whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
                             <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">{formatTime12h(log.check_in_time)}</td>
@@ -825,50 +815,28 @@ function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRef
                             <td className="px-6 py-4 whitespace-nowrap relative text-center">
                               {cost ? (
                                 <span className="text-xs font-semibold text-orange-600 px-2 py-1 rounded-full flex items-center justify-center gap-1 w-max mx-auto">
-                                  LEAVE
-                                  <span
-                                    className={`inline-block text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                                  >▼</span>
+                                  {cost} leave{cost !== 1 ? 's' : ''}
+                                  <span className={`inline-block text-[10px] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
                                 </span>
                               ) : (
                                 <span className="text-xs text-neutral-400">—</span>
                               )}
 
-                              {/* Expanded Action Panel Popup */}
+                              {/* Expanded Action Panel */}
                               {isExpanded && (
-                                <div
-                                  className="absolute right-10 top-[70%] z-[99] bg-white border border-primary-300 rounded-xl shadow-2xl w-[450px] p-5 flex flex-col gap-4 cursor-default transform origin-top-right transition-all"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <div>
-                                    <p className="text-sm font-bold text-neutral-900">Use Leave Bank for {STATUS_LABELS[statusKey] || log.status}</p>
-                                    <p className="text-xs text-neutral-500 mt-0.5">
-                                      This will deduct <strong className="text-primary-700">{cost} leave{cost !== 1 ? 's' : ''}</strong> from your balance of {balance}.
-                                    </p>
-                                  </div>
-                                  <div className="flex items-center justify-end gap-4 mt-1">
-                                    {feedback && (
-                                      <span className={`text-sm font-medium ${feedback.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
-                                        {feedback.message}
-                                      </span>
-                                    )}
-                                    {!canDeduct && !feedback && (
-                                      <span className="text-sm font-medium text-red-600 bg-red-50 px-3 py-1 rounded-md">
-                                        Insufficient balance
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleDeduct(log, cost); }}
-                                      disabled={!canDeduct || deductLoading}
-                                      className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all ${canDeduct && !deductLoading
-                                        ? 'bg-primary-600 hover:bg-primary-700 text-white shadow-md active:scale-95'
-                                        : 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                                        }`}
-                                    >
-                                      {deductLoading ? 'Processing...' : 'Adjust from Leaves'}
-                                    </button>
-                                  </div>
-                                </div>
+                                <AttendanceActionPanel
+                                  log={log}
+                                  statusKey={statusKey}
+                                  cost={cost}
+                                  userId={userId}
+                                  STATUS_LABELS={STATUS_LABELS}
+                                  leaveTypes={leaveTypes}
+                                  onSuccess={() => {
+                                    if (onRefresh) onRefresh();
+                                    setTimeout(() => setExpandedRowIdx(null), 1800);
+                                  }}
+                                  onClose={() => setExpandedRowIdx(null)}
+                                />
                               )}
                             </td>
                           </tr>
@@ -888,6 +856,180 @@ function AttendanceTab({ absences, loading, pagination, leaveBank, userId, onRef
         </CardBody>
       </Card>
     </SlideUp>
+  );
+}
+
+// ─── Attendance Action Panel ─────────────────────────────────────────────────
+function AttendanceActionPanel({ log, statusKey, cost, userId, STATUS_LABELS, leaveTypes = [], onSuccess, onClose }) {
+  const [mode, setMode] = useState(null);          // null | 'appeal' | 'leave'
+  const [leaveTypeId, setLeaveTypeId] = useState(null);
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [feedback, setFeedback] = useState(null);
+
+  const isHalfDay = statusKey === 'half-day' || statusKey === 'halfday';
+  const isLate = statusKey === 'late';
+  const daysCost = isHalfDay ? 0.5 : isLate ? 0.3 : cost;
+
+  const handleSubmitAppeal = async () => {
+    if (!reason.trim()) return;
+    setLoading(true);
+    try {
+      await api.createDispute({
+        req_by: userId,
+        category: statusKey,
+        dispute_date: log.date,
+        description: reason.trim(),
+      });
+      setFeedback({ type: 'success', message: '✅ Appeal submitted!' });
+      onSuccess();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err?.response?.data?.error || '❌ Failed to submit appeal.' });
+    }
+    setLoading(false);
+  };
+
+  const handleSubmitLeaveRequest = async () => {
+    if (!reason.trim() || !leaveTypeId) return;
+    setLoading(true);
+    try {
+      const recordDate = log.date?.split('T')[0] ?? log.date;
+      await api.createLeaveRequest({
+        user_id: userId,
+        leave_type_id: parseInt(leaveTypeId),
+        start_date: recordDate,
+        end_date: recordDate,
+        reason: reason.trim(),
+        is_half_day: isHalfDay,
+        half_day_session: isHalfDay ? 'morning' : undefined,
+        days_consumed: daysCost,
+        idempotency_key: `ATT-LR-${userId}-${recordDate}-${leaveTypeId}-${Date.now()}`,
+      });
+      setFeedback({ type: 'success', message: `✅ Leave request submitted (${daysCost} day${daysCost !== 1 ? 's' : ''}).` });
+      onSuccess();
+    } catch (err) {
+      setFeedback({ type: 'error', message: err?.response?.data?.error || '❌ Failed to submit request.' });
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div
+      className="absolute right-0 top-[80%] z-[99] bg-white border border-neutral-200 rounded-2xl shadow-2xl w-[400px] p-5 flex flex-col gap-4 cursor-default text-left"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm font-bold text-neutral-900">
+            {STATUS_LABELS[statusKey] || log.status} &mdash; {new Date(log.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+          </p>
+          <p className="text-xs text-neutral-500 mt-0.5">
+            Cost: <strong className="text-orange-600">{daysCost} leave{daysCost !== 1 ? 's' : ''}</strong>
+          </p>
+        </div>
+        <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600 text-lg leading-none mt-0.5">✕</button>
+      </div>
+
+      {/* Feedback banner */}
+      {feedback && (
+        <div className={`px-3 py-2 rounded-lg text-xs font-medium ${feedback.type === 'success'
+            ? 'bg-green-50 text-green-700 border border-green-200'
+            : 'bg-red-50 text-red-700 border border-red-200'
+          }`}>
+          {feedback.message}
+        </div>
+      )}
+
+      {/* Step 1: Choose action */}
+      {!mode && !feedback && (
+        <div className="flex gap-3">
+          <button
+            onClick={() => setMode('appeal')}
+            className="flex-1 py-2.5 rounded-xl border-2 border-amber-300 bg-amber-50 text-amber-800 text-sm font-semibold hover:bg-amber-100 transition-colors"
+          >
+            Appeal
+          </button>
+          <button
+            onClick={() => setMode('leave')}
+            className="flex-1 py-2.5 rounded-xl border-2 border-blue-300 bg-blue-50 text-blue-800 text-sm font-semibold hover:bg-blue-100 transition-colors"
+          >
+            Take Leave
+          </button>
+        </div>
+      )}
+
+      {/* Step 2a: Appeal reason */}
+      {mode === 'appeal' && !feedback && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-neutral-500">Provide a reason. HR will review your appeal.</p>
+          <textarea
+            autoFocus
+            rows={3}
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="e.g. I was present but my biometric didn't register…"
+            className="w-full px-3 py-2 rounded-xl border border-neutral-200 bg-neutral-50 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:bg-white resize-none"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => { setMode(null); setReason(''); }} className="flex-1 py-2 rounded-xl border border-neutral-200 text-sm text-neutral-600 hover:bg-neutral-50">Back</button>
+            <button
+              onClick={handleSubmitAppeal}
+              disabled={!reason.trim() || loading}
+              className="flex-1 py-2 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? 'Submitting…' : 'Submit Appeal'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2b: Choose leave type */}
+      {mode === 'leave' && !leaveTypeId && !feedback && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-neutral-500">Deduct <strong>{daysCost} day(s)</strong> from:</p>
+          <div className="flex flex-wrap gap-2">
+            {leaveTypes.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setLeaveTypeId(t.id)}
+                className="flex-1 min-w-[110px] py-2.5 rounded-xl border-2 border-blue-200 bg-blue-50 text-blue-800 text-sm font-semibold hover:bg-blue-100 transition-colors"
+              >
+                {t.name === 'Casual' ? '🏖️' : t.name === 'Medical' ? '🏥' : '📄'} {t.name}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setMode(null)} className="py-2 rounded-xl border border-neutral-200 text-sm text-neutral-600 hover:bg-neutral-50">Back</button>
+        </div>
+      )}
+
+      {/* Step 2c: Leave reason */}
+      {mode === 'leave' && leaveTypeId && !feedback && (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-neutral-500">
+            Requesting <strong>{daysCost} {leaveTypes.find(t => t.id === leaveTypeId)?.name}</strong> leave. Provide a reason:
+          </p>
+          <textarea
+            autoFocus
+            rows={3}
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="e.g. Feeling unwell / family emergency…"
+            className="w-full px-3 py-2 rounded-xl border border-neutral-200 bg-neutral-50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white resize-none"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => { setLeaveTypeId(null); setReason(''); }} className="flex-1 py-2 rounded-xl border border-neutral-200 text-sm text-neutral-600 hover:bg-neutral-50">Back</button>
+            <button
+              onClick={handleSubmitLeaveRequest}
+              disabled={!reason.trim() || loading}
+              className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? 'Submitting…' : 'Submit Request'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1057,17 +1199,17 @@ function SalaryTab({
   );
 }
 
-// Disputes Tab Component
+// Appeals Tab Component
 function DisputesTab({ disputes, loading, pagination, onFilterChange, onPageChange, onNewDispute }) {
   return (
     <SlideUp>
       <AttendanceFilters onFilterChange={onFilterChange} />
       <Card>
         <CardHeader className="flex justify-between items-center">
-          <h3 className="text-lg font-semibold text-neutral-900">Disputes</h3>
+          <h3 className="text-lg font-semibold text-neutral-900">Appeals</h3>
           <Button size="sm" variant="primary" onClick={onNewDispute}>
             <Plus size={16} />
-            File New Dispute
+            File New Appeal
           </Button>
         </CardHeader>
         <CardBody>
@@ -1111,7 +1253,7 @@ function DisputesTab({ disputes, loading, pagination, onFilterChange, onPageChan
           ) : (
             <div className="text-center py-12">
               <AlertCircle size={48} className="mx-auto text-neutral-300 mb-4" />
-              <p className="text-neutral-600">No disputes filed</p>
+              <p className="text-neutral-600">No appeals filed</p>
             </div>
           )}
         </CardBody>

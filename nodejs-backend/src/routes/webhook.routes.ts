@@ -121,17 +121,11 @@ router.post('/users', async (req, res) => {
         }
       });
 
-      // Create leave bank record for new user
-      const now = new Date();
-      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      await prisma.leaveBank.upsert({
+      // Provision the UserLeaveLock for the new ledger architecture
+      await prisma.userLeaveLock.upsert({
         where: { user_id: userId },
         update: {},
-        create: {
-          user_id: userId,
-          leaves_remaining: newUser.leave_bank,
-          last_reset_month: currentMonth
-        }
+        create: { user_id: userId }
       });
 
       insertedCount++;

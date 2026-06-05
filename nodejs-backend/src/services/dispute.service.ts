@@ -19,7 +19,7 @@ export class DisputeService {
   // Calculate deduction amount based on category
   public static calculateDeductionAmount(category: string, employeeSalary: number, date: Date): number {
     const workingDays = this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
-    
+
     switch (category) {
       case 'absent':
         return employeeSalary / workingDays;
@@ -251,7 +251,8 @@ export class DisputeService {
         });
 
         if (deduction) {
-          await tx.deduction.delete({ where: { id: deduction.id } });
+          // await tx.deduction.delete({ where: { id: deduction.id } });
+          await tx.deduction.update({ where: { id: deduction.id }, data: { status: 'REVERSED' } });
           await tx.dispute.update({
             where: { id: disputeId },
             data: { salary_restored: true }

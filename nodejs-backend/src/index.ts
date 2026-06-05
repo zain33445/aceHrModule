@@ -18,11 +18,15 @@ import notificationRoutes from './routes/notification.routes';
 import departmentRoutes from './routes/department.routes';
 import holidayRoutes from './routes/holiday.routes';
 import leaveRequestRoutes from './routes/leave-request.routes';
+import leaveLedgerRoutes from './routes/leave-ledger.routes';
+import leavePolicyRoutes from './routes/leave-policy.routes';
+import leaveTypeRoutes from './routes/leave-type.routes';
 import auditRoutes from './routes/audit.routes';
 import exportRoutes from './routes/export.routes';
 import monitoringRoutes from './routes/monitoring.routes';
 import recordingRoutes from './routes/recording.routes';
 import { initGateway } from './gateways/recording.gateway';
+import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
 import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
@@ -75,6 +79,9 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/departments', departmentRoutes);
 app.use('/api/holidays', holidayRoutes);
 app.use('/api/leave-requests', leaveRequestRoutes);
+app.use('/api/leave-ledger', leaveLedgerRoutes);
+app.use('/api/leave-policies', leavePolicyRoutes);
+app.use('/api/leave-types', leaveTypeRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/monitoring', monitoringRoutes);
@@ -202,4 +209,16 @@ server.listen(PORT, () => {
       console.error(`[Cron] 3-day retention cleanup failed`, err);
     }
   }, 60 * 60 * 1000); // Run every hour
+
+  // ── Background Workers ──────────────────────────────────────────────────
+  // Process outbox events every 10 seconds
+  setInterval(async () => {
+    await processOutboxEvents();
+  }, 10000);
+
+  // Recover stuck outbox events every 5 minutes
+  setInterval(async () => {
+    await recoverStuckEvents();
+  }, 5 * 60 * 1000);
+
 });

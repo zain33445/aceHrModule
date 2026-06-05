@@ -11,7 +11,8 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [rangeMode, setRangeMode] = useState(false); // false = single day, true = date range
-  const [form, setForm] = useState({ name: '', date: '', startDate: '', endDate: '' });
+  const [form, setForm] = useState({ name: '', date: '', startDate: '', endDate: '', department_id: '' });
+  const [departments, setDepartments] = useState([]);
   const [modalError, setModalError] = useState(null);
   const [modalSubmitting, setModalSubmitting] = useState(false);
 
@@ -33,8 +34,18 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
     }
   };
 
+  const fetchDepartments = async () => {
+    try {
+      const res = await api.getDepartments();
+      setDepartments(res.data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchHolidays();
+    fetchDepartments();
   }, []);
 
   const handleSubmit = async (e) => {
@@ -46,7 +57,8 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
         const res = await api.createHolidayRange({
           name: form.name,
           startDate: form.startDate,
-          endDate: form.endDate
+          endDate: form.endDate,
+          department_id: form.department_id
         });
         const { created, total } = res.data;
         if (created < total) {
@@ -55,7 +67,7 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
           closeModal();
         }
       } else {
-        await api.createHoliday({ name: form.name, date: form.date });
+        await api.createHoliday({ name: form.name, date: form.date, department_id: form.department_id });
         closeModal();
       }
       fetchHolidays();
@@ -70,7 +82,7 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
   const closeModal = () => {
     setShowModal(false);
     setRangeMode(false);
-    setForm({ name: '', date: '', startDate: '', endDate: '' });
+    setForm({ name: '', date: '', startDate: '', endDate: '', department_id: '' });
     setModalError(null);
   };
 
@@ -234,6 +246,11 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
                                   weekday: 'short', month: 'short', day: 'numeric'
                                 })}
                               </span></p>
+                              {holiday.department && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                                  {holiday.department.name}
+                                </span>
+                              )}
                             </div>
                             <div>
                             </div>
@@ -290,6 +307,25 @@ export const HolidayCalendar = ({ isAdmin = false }) => {
               placeholder={rangeMode ? 'e.g. Eid Holidays' : 'e.g. Independence Day'}
               required
             />
+
+            {/* Department */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
+                Department
+              </label>
+              <select
+                className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                value={form.department_id}
+                onChange={(e) => setForm({ ...form, department_id: e.target.value })}
+              >
+                <option value="">All Departments</option>
+                {departments.map((dept) => (
+                  <option key={dept.id} value={dept.id}>
+                    {dept.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
             {/* Date fields */}
             {rangeMode ? (

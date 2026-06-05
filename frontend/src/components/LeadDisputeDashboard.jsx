@@ -115,7 +115,7 @@ export const LeadDisputeDashboard = ({ user }) => {
       setRemarks('');
       fetchDisputes();
     } catch (err) {
-      alert(err.response?.data?.message || 'Failed to update dispute');
+      alert(err.response?.data?.message || 'Failed to update appeal');
     } finally {
       setActionLoading(false);
     }
@@ -128,9 +128,9 @@ export const LeadDisputeDashboard = ({ user }) => {
         <div>
           <h2 className="text-2xl font-bold text-neutral-900 flex items-center gap-2">
             <Users className="text-primary-600" />
-            Team Disputes
+            Team Appeals
           </h2>
-          <p className="text-neutral-500">Manage and approve disputes for your department.</p>
+          <p className="text-neutral-500">Manage and approve appeals for your department.</p>
         </div>
         
         <div className="flex items-center gap-3">
@@ -215,8 +215,8 @@ export const LeadDisputeDashboard = ({ user }) => {
             <div className="w-16 h-16 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4 text-neutral-400">
               <FileText size={32} />
             </div>
-            <h3 className="text-lg font-bold text-neutral-900">No disputes found</h3>
-            <p className="text-neutral-500">Great! No pending disputes in your team.</p>
+            <h3 className="text-lg font-bold text-neutral-900">No appeals found</h3>
+            <p className="text-neutral-500">Great! No pending appeals in your team.</p>
           </div>
         ) : (
           filteredDisputes.map(dispute => (
@@ -299,7 +299,7 @@ export const LeadDisputeDashboard = ({ user }) => {
           <Modal
             isOpen={true}
             onClose={() => setSelectedDispute(null)}
-            title="Dispute Approval"
+            title="Appeal Approval"
             size="lg"
           >
             <div className="space-y-6">
@@ -326,7 +326,7 @@ export const LeadDisputeDashboard = ({ user }) => {
                 {/* Details Section */}
                 <div className="space-y-4">
                   <div>
-                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest block mb-2">Dispute Description</label>
+                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-widest block mb-2">Appeal Description</label>
                     <div className="p-4 bg-white rounded-xl border-2 border-neutral-100 shadow-sm min-h-[100px]">
                       <p className="text-neutral-700">{selectedDispute.description}</p>
                     </div>

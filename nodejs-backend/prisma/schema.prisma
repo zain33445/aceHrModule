@@ -20,51 +20,57 @@ model Shift {
 }
 
 model Department {
-  id       Int     @id @default(autoincrement())
-  name     String  @unique
+  id       Int       @id @default(autoincrement())
+  name     String    @unique
   shift_id Int?
   lead_id  String?
-  lead     User?   @relation("DepartmentLead", fields: [lead_id], references: [id])
-  shift    Shift?  @relation(fields: [shift_id], references: [id])
+  lead     User?     @relation("DepartmentLead", fields: [lead_id], references: [id])
+  shift    Shift?    @relation(fields: [shift_id], references: [id])
+  holidays Holiday[]
   users    User[]
 
   @@map("departments")
 }
 
 model User {
-  id                  String              @id @unique
-  username            String?             @unique
-  name                String
-  role                String              @default("employee")
-  email               String?             @unique
-  password_hash       String?
-  monthly_salary      Float               @default(0.0)
-  leave_bank          Int                 @default(5)
-  department_id       Int?
-  created_at          DateTime            @default(now())
-  agent_token         AgentToken?
-  attendance_logs     AttendanceLog[]
-  attendance_records  AttendanceRecord[]
-  audit_logs          AuditLog[]
-  commissions         Commission[]
-  deductions          Deduction[]
-  led_departments     Department[]        @relation("DepartmentLead")
-  dispute_histories   DisputeHistory[]    @relation("HistoryActor")
-  disputes_admin      Dispute[]           @relation("DisputeAdminApprover")
-  disputes_app        Dispute[]           @relation("DisputeApprover")
-  disputes_lead       Dispute[]           @relation("DisputeLeadApprover")
-  disputes_req        Dispute[]           @relation("DisputeRequester")
-  leaveBank           LeaveBank?
-  leave_reviews       LeaveRequest[]      @relation("LeaveReviewer")
-  leave_requests      LeaveRequest[]      @relation("LeaveRequester")
-  monitoring_logs     MonitoringLog[]
-  notifications       Notification[]
-  created_schedules   RecordingSchedule[] @relation("AdminCreatedSchedules")
-  recording_schedules RecordingSchedule[] @relation("EmployeeSchedules")
-  created_sessions    RecordingSession[]  @relation("AdminCreatedSessions")
-  recording_sessions  RecordingSession[]  @relation("EmployeeRecordings")
-  salaries            Salary[]
-  department          Department?         @relation(fields: [department_id], references: [id])
+  id                     String                @id @unique
+  username               String?               @unique
+  name                   String
+  role                   String                @default("employee")
+  email                  String?               @unique
+  password_hash          String?
+  monthly_salary         Float                 @default(0.0)
+  leave_bank             Int                   @default(5)
+  department_id          Int?
+  created_at             DateTime              @default(now())
+  agent_token            AgentToken?
+  attendance_logs        AttendanceLog[]
+  attendance_records     AttendanceRecord[]
+  audit_logs             AuditLog[]
+  commissions            Commission[]
+  deductions             Deduction[]
+  led_departments        Department[]          @relation("DepartmentLead")
+  dispute_histories      DisputeHistory[]      @relation("HistoryActor")
+  disputes_admin         Dispute[]             @relation("DisputeAdminApprover")
+  disputes_app           Dispute[]             @relation("DisputeApprover")
+  disputes_lead          Dispute[]             @relation("DisputeLeadApprover")
+  disputes_req           Dispute[]             @relation("DisputeRequester")
+  leave_policies_updated EmployeeLeavePolicy[] @relation("PolicyUpdater")
+  leave_policies         EmployeeLeavePolicy[]
+  leaveBank              LeaveBank?
+  ledger_entries_created LeaveLedger[]         @relation("LedgerCreator")
+  ledger_entries         LeaveLedger[]
+  leave_reviews          LeaveRequest[]        @relation("LeaveReviewer")
+  leave_requests         LeaveRequest[]        @relation("LeaveRequester")
+  monitoring_logs        MonitoringLog[]
+  notifications          Notification[]
+  created_schedules      RecordingSchedule[]   @relation("AdminCreatedSchedules")
+  recording_schedules    RecordingSchedule[]   @relation("EmployeeSchedules")
+  created_sessions       RecordingSession[]    @relation("AdminCreatedSessions")
+  recording_sessions     RecordingSession[]    @relation("EmployeeRecordings")
+  salaries               Salary[]
+  leave_locks            UserLeaveLock?
+  department             Department?           @relation(fields: [department_id], references: [id])
 
   @@map("users")
 }
@@ -86,7 +92,7 @@ model Salary {
   paid_salary      Float    @default(0.0)
   date             DateTime
   dispute_id       Int?
-  payable_salary   Float    @default(0.0)
+  base_salary      Float    @default(0.0)
   deduction        Float    @default(0.0)
   deduction_reason String?  @default("absence")
   dispute          Dispute? @relation(fields: [dispute_id], references: [id])
@@ -188,6 +194,7 @@ model Deduction {
   type       String
   amount     Float
   dispute_id Int?
+  status     String   @default("ACTIVE") @db.VarChar(20)
   dispute    Dispute? @relation(fields: [dispute_id], references: [id])
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -207,25 +214,35 @@ model Notification {
 }
 
 model Holiday {
-  id     Int      @id @default(autoincrement())
-  name   String
-  date   DateTime @unique
-  status String   @default("pending")
+  id            Int         @id @default(autoincrement())
+  name          String
+  date          DateTime    @unique
+  status        String      @default("pending")
+  department_id Int?
+  department    Department? @relation(fields: [department_id], references: [id])
 
   @@map("holidays")
 }
 
 model LeaveRequest {
-  id          Int      @id @default(autoincrement())
-  user_id     String
-  start_date  DateTime
-  end_date    DateTime
-  reason      String
-  status      String   @default("pending")
-  reviewed_by String?
-  created_at  DateTime @default(now())
-  reviewer    User?    @relation("LeaveReviewer", fields: [reviewed_by], references: [id])
-  user        User     @relation("LeaveRequester", fields: [user_id], references: [id], onDelete: Cascade)
+  id                       Int                @id @default(autoincrement())
+  user_id                  String
+  start_date               DateTime
+  end_date                 DateTime
+  reason                   String
+  reviewed_by              String?
+  created_at               DateTime           @default(now())
+  days_consumed            Decimal            @default(0) @db.Decimal(10, 2)
+  half_day_session         String?
+  idempotency_key          String?            @unique
+  is_half_day              Boolean            @default(false)
+  leave_type_id            Int?
+  original_source_metadata Json?
+  status                   LeaveRequestStatus @default(PENDING)
+  ledger_entries           LeaveLedger[]
+  leave_type               LeaveType?         @relation(fields: [leave_type_id], references: [id])
+  reviewer                 User?              @relation("LeaveReviewer", fields: [reviewed_by], references: [id])
+  user                     User               @relation("LeaveRequester", fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("leave_requests")
 }
@@ -306,4 +323,96 @@ model RecordingSchedule {
   employee   User     @relation("EmployeeSchedules", fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("recording_schedules")
+}
+
+model UserLeaveLock {
+  user_id    String   @id
+  updated_at DateTime @updatedAt
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("user_leave_locks")
+}
+
+model LeaveType {
+  id             Int                   @id @default(autoincrement())
+  name           String                @unique
+  is_paid        Boolean               @default(true)
+  created_at     DateTime              @default(now())
+  policies       EmployeeLeavePolicy[]
+  ledger_entries LeaveLedger[]
+  requests       LeaveRequest[]
+
+  @@map("leave_types")
+}
+
+model EmployeeLeavePolicy {
+  id             Int       @id @default(autoincrement())
+  user_id        String
+  leave_type_id  Int
+  accrual_rate   Decimal   @db.Decimal(10, 2)
+  previous_rate  Decimal?  @db.Decimal(10, 2)
+  effective_from DateTime  @default(now())
+  effective_to   DateTime?
+  change_reason  String?
+  updated_by     String?
+  created_at     DateTime  @default(now())
+  leave_type     LeaveType @relation(fields: [leave_type_id], references: [id], onDelete: Cascade)
+  updater        User?     @relation("PolicyUpdater", fields: [updated_by], references: [id])
+  user           User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, leave_type_id, effective_from])
+  @@map("employee_leave_policies")
+}
+
+model LeaveLedger {
+  id                 Int                  @id @default(autoincrement())
+  user_id            String
+  leave_type_id      Int
+  transaction_type   LeaveTransactionType
+  amount             Decimal              @db.Decimal(10, 2)
+  leave_request_id   Int?
+  idempotency_key    String               @unique
+  notes              String?
+  created_by_type    String               @default("SYSTEM")
+  created_by_user_id String?
+  created_at         DateTime             @default(now())
+  created_by_user    User?                @relation("LedgerCreator", fields: [created_by_user_id], references: [id])
+  leave_request      LeaveRequest?        @relation(fields: [leave_request_id], references: [id])
+  leave_type         LeaveType            @relation(fields: [leave_type_id], references: [id], onDelete: Cascade)
+  user               User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, leave_type_id, created_at])
+  @@index([user_id, created_at])
+  @@index([transaction_type])
+  @@map("leave_ledger")
+}
+
+model OutboxEvent {
+  id            Int       @id @default(autoincrement())
+  type          String
+  payload       Json
+  status        String    @default("PENDING")
+  processing_id String?
+  processed_at  DateTime?
+  retry_count   Int       @default(0)
+  error         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  @@map("outbox_events")
+}
+
+enum LeaveTransactionType {
+  ACCRUAL
+  CONSUMPTION
+  ADJUSTMENT
+  RESERVED
+  REVERSAL
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }

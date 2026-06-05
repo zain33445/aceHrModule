@@ -85,7 +85,9 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
           { id: 'overview', label: 'Analytics', icon: LayoutDashboard },
           { id: 'attendance', label: 'Attendance', icon: Clock },
           { id: 'payroll', label: 'Payroll', icon: Banknote },
-          { id: 'disputes', label: 'Disputes', icon: FileText },
+          { id: 'leaves', label: 'Leave Requests', icon: PlaneTakeoff },
+          { id: 'leave-allocation', label: 'Leave Allocation', icon: CalendarHeart },
+          { id: 'disputes', label: 'Appeals', icon: FileText },
           { id: 'screenshots', label: 'Screenshots', icon: Camera },
           { id: 'recording', label: 'Recording', icon: Video },
           { id: 'employees', label: 'Employees', icon: Users },
@@ -99,7 +101,8 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
           { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
           { id: 'attendance', label: 'Attendance Log', icon: Clock },
           { id: 'salary', label: 'Salary History', icon: Banknote },
-          { id: 'disputes', label: 'My Disputes', icon: FileText },
+          { id: 'leaves', label: 'Leave Requests', icon: PlaneTakeoff },
+          { id: 'disputes', label: 'My Appeals', icon: FileText },
           { id: 'settings', label: 'Settings', icon: Settings },
         ];
 
@@ -107,7 +110,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
   if (normalizedRole !== 'admin' && isLead) {
     navItems.splice(4, 0, {
       id: 'team_disputes',
-      label: 'Team Disputes',
+      label: 'Team Appeals',
       icon: Users,
     });
   }

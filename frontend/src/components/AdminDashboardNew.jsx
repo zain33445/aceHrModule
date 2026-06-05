@@ -36,6 +36,7 @@ import { DashboardAnalytics } from './analytics/DashboardAnalytics';
 import { DepartmentManager } from './departments/DepartmentManager';
 import { HolidayCalendar } from './calendar/HolidayCalendar';
 import { LeaveRequestHub } from './leaves/LeaveRequestHub';
+import { LeaveAllocationTab } from './leaves/LeaveAllocationTab';
 import { AuditLogTab } from './audit/AuditLogTab';
 import { DataExportPanel } from './export/DataExportPanel';
 import ScreenshotsTab from './dashboard/ScreenshotsTab';
@@ -112,9 +113,9 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       setNotifications((res.data || []).map(n => ({
         id: n.id,
         type: n.type,
-        title: n.type === 'new_dispute' ? 'New Dispute' :
-          n.type === 'dispute_approved' ? 'Dispute Approved' :
-            n.type === 'dispute_rejected' ? 'Dispute Rejected' :
+        title: n.type === 'new_dispute' ? 'New Appeal' :
+          n.type === 'dispute_approved' ? 'Appeal Approved' :
+            n.type === 'dispute_rejected' ? 'Appeal Rejected' :
               n.type === 'new_leave_request' ? 'New Leave Request' :
                 n.type === 'leave_approved' ? 'Leave Approved' :
                   n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
@@ -342,7 +343,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       leaves: 'Leave Requests',
       holidays: 'Holidays',
       payroll: 'Payroll',
-      disputes: 'Disputes',
+      disputes: 'Appeals',
       export: 'Data Export',
       audit: 'Audit Logs',
       recording: 'Recording',
@@ -382,8 +383,18 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       content: <PayrollTab report={report} loading={false} onMonthChange={setPayrollExportMonth} onFetch={onRefresh} />,
     },
     {
+      id: 'leaves',
+      label: 'Leave Requests',
+      content: <LeaveRequestHub user={user} isAdmin={true} />,
+    },
+    {
+      id: 'leave-allocation',
+      label: 'Leave Allocation',
+      content: <LeaveAllocationTab employees={employees} user={user} />,
+    },
+    {
       id: 'disputes',
-      label: 'Disputes',
+      label: 'Appeals',
       content: (
         <DisputesTab
           disputes={disputes}
@@ -691,7 +702,7 @@ function DisputesTab({ disputes, pagination, onPageChange, onViewDetail }) {
     <SlideUp>
       <div className="grid grid-cols-1 gap-6">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-neutral-900">Dispute Management</h3>
+          <h3 className="text-lg font-semibold text-neutral-900">Appeal Management</h3>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm"><Filter size={16} /> Filters</Button>
           </div>
@@ -706,7 +717,7 @@ function DisputesTab({ disputes, pagination, onPageChange, onViewDetail }) {
         ) : (
           <Card className="py-12 text-center">
             <AlertCircle size={48} className="mx-auto text-neutral-300 mb-4" />
-            <p className="text-neutral-500">No active disputes found</p>
+            <p className="text-neutral-500">No active appeals found</p>
           </Card>
         )}
 
@@ -815,7 +826,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
               <AlertCircle size={24} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-neutral-900">Dispute Details</h3>
+              <h3 className="text-xl font-bold text-neutral-900">Appeal Details</h3>
               <p className="text-sm text-neutral-500">ID: DISP-{dispute.id.toString().padStart(5, '0')}</p>
             </div>
           </div>

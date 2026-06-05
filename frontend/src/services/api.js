@@ -24,6 +24,11 @@ const api = {
       user_id: userId,
       leave_bank: parseInt(leaves),
     }),
+  updateUsername: (userId, username) =>
+    axios.post(`${API_BASE}/employees/update-username`, {
+      user_id: userId,
+      username: username,
+    }),
   createEmployee: (data) => axios.post(`${API_BASE}/employees`, data),
   deleteEmployee: (userId) => axios.delete(`${API_BASE}/employees/${userId}`),
   login: (username, password) => axios.post(`${API_BASE}/auth/login`, { username, password }),
@@ -139,16 +144,31 @@ const api = {
   deleteHoliday: (id) => axios.delete(`${API_BASE}/holidays/${id}`),
   processHolidays: () => axios.post(`${API_BASE}/holidays/process`),
 
+  // Leave Types
+  getLeaveTypes: () => axios.get(`${API_BASE}/leave-types`),
+
   // Leave Requests
   getLeaveRequests: (userId, status) => {
     const params = {};
     if (userId) params.user_id = userId;
-    if (status) params.status = status;
+    if (status && status !== 'all') params.status = status;
     return axios.get(`${API_BASE}/leave-requests`, { params });
   },
   createLeaveRequest: (data) => axios.post(`${API_BASE}/leave-requests`, data),
-  updateLeaveRequestStatus: (id, status, reviewed_by) => 
+  // Status must now be uppercase enum: 'APPROVED' | 'REJECTED' | 'CANCELLED'
+  updateLeaveRequestStatus: (id, status, reviewed_by) =>
     axios.put(`${API_BASE}/leave-requests/${id}/status`, { status, reviewed_by }),
+
+  // Leave Ledger (Balance & History)
+  getLeaveBalance: (userId) => axios.get(`${API_BASE}/leave-ledger/balance/${userId}`),
+  getLedgerHistory: (userId) => axios.get(`${API_BASE}/leave-ledger/history/${userId}`),
+  applyLeaveAdjustment: (data) => axios.post(`${API_BASE}/leave-ledger/adjust`, data),
+
+  // Leave Policies (Employee-specific accrual rules)
+  getLeavePolicies: (userId) => axios.get(`${API_BASE}/leave-policies/${userId}`),
+  upsertLeavePolicy: (data) => axios.post(`${API_BASE}/leave-policies`, data),
+  createLeavePoliciesBulk: (data) => axios.post(`${API_BASE}/leave-policies/bulk`, data),
+  applyActivePolicies: () => axios.post(`${API_BASE}/leave-policies/apply-active`),
 
   // Audit Logs
   getAuditLogs: (page = 1, limit = 100) => 

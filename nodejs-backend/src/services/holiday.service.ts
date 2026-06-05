@@ -36,17 +36,22 @@ export class HolidayService {
       return { processed: 0, recordsUpdated: 0, leavesRefunded: 0, deductionsRemoved: 0 };
     }
 
-    const allEmployees = await prisma.user.findMany({
-      where: { role: 'employee' },
-      select: { id: true }
-    });
-
     let recordsUpdated = 0;
     let leavesRefunded = 0;
     let deductionsRemoved = 0;
 
     for (const holiday of pendingHolidays) {
       const canonicalDate = this.getCanonicalUtcDate(holiday.date);
+
+      const employeeWhereClause: any = { role: 'employee' };
+      if (holiday.department_id) {
+        employeeWhereClause.department_id = holiday.department_id;
+      }
+
+      const allEmployees = await prisma.user.findMany({
+        where: employeeWhereClause,
+        select: { id: true }
+      });
 
       for (const employee of allEmployees) {
         try {

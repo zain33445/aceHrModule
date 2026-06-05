@@ -8,7 +8,10 @@ const router = Router();
 router.get('/', async (req, res) => {
   try {
     const holidays = await prisma.holiday.findMany({
-      orderBy: { date: 'asc' }
+      orderBy: { date: 'asc' },
+      include: {
+        department: { select: { name: true } }
+      }
     });
     res.json(holidays);
   } catch (error) {
@@ -18,10 +21,14 @@ router.get('/', async (req, res) => {
 
 // Create holiday (status defaults to "pending" via schema)
 router.post('/', async (req, res) => {
-  const { name, date } = req.body;
+  const { name, date, department_id } = req.body;
   try {
     const holiday = await prisma.holiday.create({
-      data: { name, date: new Date(date) }
+      data: { 
+        name, 
+        date: new Date(date),
+        department_id: department_id ? parseInt(department_id) : null
+      }
     });
     res.json(holiday);
   } catch (error) {
@@ -41,7 +48,7 @@ router.delete('/:id', async (req, res) => {
 
 // Bulk create holidays for a date range
 router.post('/bulk', async (req, res) => {
-  const { name, startDate, endDate } = req.body;
+  const { name, startDate, endDate, department_id } = req.body;
 
   if (!name || !startDate || !endDate) {
     return res.status(400).json({ error: 'name, startDate and endDate are required' });
@@ -66,7 +73,11 @@ router.post('/bulk', async (req, res) => {
   try {
     // Use createMany with skipDuplicates so existing dates are not overwritten
     const result = await prisma.holiday.createMany({
-      data: dates.map(date => ({ name, date })),
+      data: dates.map(date => ({ 
+        name, 
+        date,
+        department_id: department_id ? parseInt(department_id) : null
+      })),
       skipDuplicates: true
     });
 
