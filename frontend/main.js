@@ -195,6 +195,10 @@ function setupAutoStart() {
 // 3.5. Auto-Updater Setup
 // ─────────────────────────────────────────
 function setupAutoUpdater() {
+  autoUpdater.requestHeaders = {
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+  };
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
