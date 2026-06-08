@@ -50,6 +50,7 @@
   "build": {
     "appId": "com.ace.app",
     "productName": "aceHRM",
+    "artifactName": "aceHRM-Setup-${version}.${ext}",
     "files": [
       "dist_build/**/*",
       "electron/**/*",
