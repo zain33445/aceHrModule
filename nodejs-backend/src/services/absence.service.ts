@@ -318,6 +318,8 @@ export class AbsenceService {
             data: {
               check_in_time: checkInTime || existingRecord.check_in_time,
               check_out_time: checkOutTime || existingRecord.check_out_time,
+              check_in_source: checkInTime ? 'fp' : existingRecord.check_in_source,
+              check_out_source: checkOutTime ? 'fp' : existingRecord.check_out_source,
             }
           });
           return; // Skip deduction logic entirely
@@ -325,8 +327,9 @@ export class AbsenceService {
 
         // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
         let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
-
         let finalCheckOut = checkOutTime ? checkOutTime : existingRecord.check_out_time;
+        let finalCheckInSource = checkInTime ? 'fp' : existingRecord.check_in_source;
+        let finalCheckOutSource = checkOutTime ? 'fp' : existingRecord.check_out_source;
 
         // Recalculate status based on the merged earliest check-in
         let finalStatus = status;
@@ -343,6 +346,8 @@ export class AbsenceService {
           data: {
             check_in_time: finalCheckIn,
             check_out_time: finalCheckOut,
+            check_in_source: finalCheckInSource,
+            check_out_source: finalCheckOutSource,
             status: finalStatus,
             is_late: isLate,
             is_halfday: isHalfday
@@ -356,6 +361,8 @@ export class AbsenceService {
             date: date,
             check_in_time: checkInTime,
             check_out_time: checkOutTime,
+            check_in_source: checkInTime ? 'fp' : null,
+            check_out_source: checkOutTime ? 'fp' : null,
             status: status,
             is_late: isLate,
             is_halfday: isHalfday

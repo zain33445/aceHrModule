@@ -12,7 +12,7 @@ router.get('/balance/:user_id', async (req, res) => {
     const balances: any[] = await prisma.$queryRaw`
       SELECT 
         lt.id as leave_type_id,
-        lt.name as leave_type_name,
+        lt.name,
         COALESCE(SUM(ll.amount), 0) as available_balance
       FROM leave_types lt
       LEFT JOIN leave_ledger ll ON lt.id = ll.leave_type_id AND ll.user_id = ${user_id}
@@ -20,6 +20,7 @@ router.get('/balance/:user_id', async (req, res) => {
     `;
 
     res.json(balances);
+    console.log(balances);
   } catch (error) {
     console.error('Failed to fetch balance:', error);
     res.status(500).json({ error: 'Failed to fetch balance' });

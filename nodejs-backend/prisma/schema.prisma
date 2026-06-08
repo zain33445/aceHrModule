@@ -162,15 +162,17 @@ model DisputeHistory {
 }
 
 model AttendanceRecord {
-  id             Int      @id @default(autoincrement())
-  user_id        String
-  status         String
-  date           DateTime
-  check_in_time  String?  @db.VarChar(5)
-  check_out_time String?  @db.VarChar(5)
-  is_late        Boolean  @default(false)
-  is_halfday     Boolean  @default(false)
-  user           User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id               Int      @id @default(autoincrement())
+  user_id          String
+  status           String
+  date             DateTime
+  check_in_time    String?  @db.VarChar(5)
+  check_out_time   String?  @db.VarChar(5)
+  check_in_source  String?  @default("monitoring") @db.VarChar(20)
+  check_out_source String?  @default("monitoring") @db.VarChar(20)
+  is_late          Boolean  @default(false)
+  is_halfday       Boolean  @default(false)
+  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@unique([user_id, date])
   @@unique([user_id, date], map: "absence_records_user_id_date_key")

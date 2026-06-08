@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
   Clock,
@@ -20,38 +20,44 @@ import {
   UserCheck,
   Shield,
   Video,
-} from 'lucide-react';
-import LayoutContainer from './layout/LayoutContainer';
-import StatCard from './dashboard/StatCard';
-import { Button } from './common/Button';
-import { Card, CardHeader, CardBody, CardFooter } from './common/Card';
-import { SlideUp, FadeIn } from './animations';
-import { Badge } from './common/Badge';
-import api from '../services/api';
-import StaffManager from './StaffManager';
-import { AttendanceFilters } from './common/AttendanceFilters';
-import { Pagination } from './common/Pagination';
+} from "lucide-react";
+import LayoutContainer from "./layout/LayoutContainer";
+import StatCard from "./dashboard/StatCard";
+import { Button } from "./common/Button";
+import { Card, CardHeader, CardBody, CardFooter } from "./common/Card";
+import { SlideUp, FadeIn } from "./animations";
+import { Badge } from "./common/Badge";
+import api from "../services/api";
+import StaffManager from "./StaffManager";
+import { AttendanceFilters } from "./common/AttendanceFilters";
+import { Pagination } from "./common/Pagination";
 
-import { DashboardAnalytics } from './analytics/DashboardAnalytics';
-import { DepartmentManager } from './departments/DepartmentManager';
-import { HolidayCalendar } from './calendar/HolidayCalendar';
-import { LeaveRequestHub } from './leaves/LeaveRequestHub';
-import { LeaveAllocationTab } from './leaves/LeaveAllocationTab';
-import { AuditLogTab } from './audit/AuditLogTab';
-import { DataExportPanel } from './export/DataExportPanel';
-import ScreenshotsTab from './dashboard/ScreenshotsTab';
-import RecordingTab from './dashboard/RecordingTab';
-import { PayslipPDFButton } from './salary/PayslipPDFButton';
-import { SettingsTab } from './dashboard/SettingsTab';
-import { formatDateLocal, formatTime12h } from '../utils/formatters';
+import { DashboardAnalytics } from "./analytics/DashboardAnalytics";
+import { DepartmentManager } from "./departments/DepartmentManager";
+import { HolidayCalendar } from "./calendar/HolidayCalendar";
+import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
+import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
+import { AuditLogTab } from "./audit/AuditLogTab";
+import { DataExportPanel } from "./export/DataExportPanel";
+import ScreenshotsTab from "./dashboard/ScreenshotsTab";
+import RecordingTab from "./dashboard/RecordingTab";
+import { PayslipPDFButton } from "./salary/PayslipPDFButton";
+import { SettingsTab } from "./dashboard/SettingsTab";
+import { formatDateLocal, formatTime12h } from "../utils/formatters";
 
-function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefresh }) {
+function AdminDashboardNew({
+  employees = [],
+  report = [],
+  user,
+  onLogout,
+  onRefresh,
+}) {
   const [activeTab, setActiveTab] = useState(() => {
-    return sessionStorage.getItem('adminDashboardActiveTab') || 'overview';
+    return sessionStorage.getItem("adminDashboardActiveTab") || "overview";
   });
 
   useEffect(() => {
-    sessionStorage.setItem('adminDashboardActiveTab', activeTab);
+    sessionStorage.setItem("adminDashboardActiveTab", activeTab);
   }, [activeTab]);
 
   const [absences, setAbsences] = useState([]);
@@ -59,20 +65,24 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [disputeLoading, setDisputeLoading] = useState(false);
   const [disputes, setDisputes] = useState([]);
-  const [disputePagination, setDisputePagination] = useState({ currentPage: 1, totalPages: 1, totalRecords: 0 });
+  const [disputePagination, setDisputePagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalRecords: 0,
+  });
   const [selectedDispute, setSelectedDispute] = useState(null);
   const [showDisputeDetail, setShowDisputeDetail] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [pagination, setPagination] = useState({
     currentPage: 1,
     totalPages: 1,
-    totalRecords: 0
+    totalRecords: 0,
   });
   const [attendanceFilters, setAttendanceFilters] = useState({
     startDate: undefined,
     endDate: undefined,
-    status: 'all',
-    userId: 'all'
+    status: "all",
+    userId: "all",
   });
   const [stats, setStats] = useState({
     total_employees: employees.length || 0,
@@ -81,27 +91,37 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     on_leave: 0,
   });
   const [isSyncing, setIsSyncing] = useState(false);
-  const [payrollExportMonth, setPayrollExportMonth] = useState('');
+  const [payrollExportMonth, setPayrollExportMonth] = useState("");
 
   const handleSyncAttendance = async () => {
     setIsSyncing(true);
     try {
       await api.syncAttendanceToday();
       fetchOverviewData();
-      if (activeTab === 'attendance') fetchAttendanceData(attendanceFilters.startDate, attendanceFilters.endDate, attendanceFilters.status, attendanceFilters.userId, pagination.currentPage);
+      if (activeTab === "attendance")
+        fetchAttendanceData(
+          attendanceFilters.startDate,
+          attendanceFilters.endDate,
+          attendanceFilters.status,
+          attendanceFilters.userId,
+          pagination.currentPage,
+        );
     } catch (err) {
-      console.error('Failed to sync', err);
-      alert('Failed to sync attendance');
+      console.error("Failed to sync", err);
+      alert("Failed to sync attendance");
     }
     setIsSyncing(false);
   };
 
   useEffect(() => {
-    if (activeTab === 'overview' || activeTab.toLocaleUpperCase() === 'analytics') {
+    if (
+      activeTab === "overview" ||
+      activeTab.toLocaleUpperCase() === "analytics"
+    ) {
       fetchOverviewData();
-    } else if (activeTab === 'attendance') {
+    } else if (activeTab === "attendance") {
       fetchAttendanceData();
-    } else if (activeTab?.toLocaleLowerCase() === 'disputes') {
+    } else if (activeTab?.toLocaleLowerCase() === "disputes") {
       fetchDisputeData();
     }
   }, [activeTab]);
@@ -110,21 +130,31 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     if (!user?.user_id) return;
     try {
       const res = await api.getNotifications(user.user_id);
-      setNotifications((res.data || []).map(n => ({
-        id: n.id,
-        type: n.type,
-        title: n.type === 'new_dispute' ? 'New Appeal' :
-          n.type === 'dispute_approved' ? 'Appeal Approved' :
-            n.type === 'dispute_rejected' ? 'Appeal Rejected' :
-              n.type === 'new_leave_request' ? 'New Leave Request' :
-                n.type === 'leave_approved' ? 'Leave Approved' :
-                  n.type === 'leave_rejected' ? 'Leave Rejected' : 'Notification',
-        message: n.message,
-        read: n.is_read,
-        created_at: n.created_at
-      })));
+      setNotifications(
+        (res.data || []).map((n) => ({
+          id: n.id,
+          type: n.type,
+          title:
+            n.type === "new_dispute"
+              ? "New Appeal"
+              : n.type === "dispute_approved"
+                ? "Appeal Approved"
+                : n.type === "dispute_rejected"
+                  ? "Appeal Rejected"
+                  : n.type === "new_leave_request"
+                    ? "New Leave Request"
+                    : n.type === "leave_approved"
+                      ? "Leave Approved"
+                      : n.type === "leave_rejected"
+                        ? "Leave Rejected"
+                        : "Notification",
+          message: n.message,
+          read: n.is_read,
+          created_at: n.created_at,
+        })),
+      );
     } catch (err) {
-      console.error('Error fetching notifications:', err);
+      console.error("Error fetching notifications:", err);
     }
   };
 
@@ -140,14 +170,22 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         await api.markNotificationRead(notif.id);
         fetchNotifications();
       } catch (err) {
-        console.error('Error marking notification as read:', err);
+        console.error("Error marking notification as read:", err);
       }
     }
 
-    if (notif.type === 'new_dispute' || notif.type === 'dispute_approved' || notif.type === 'dispute_rejected') {
-      setActiveTab('disputes');
-    } else if (notif.type === 'new_leave_request' || notif.type === 'leave_approved' || notif.type === 'leave_rejected') {
-      setActiveTab('leaves');
+    if (
+      notif.type === "new_dispute" ||
+      notif.type === "dispute_approved" ||
+      notif.type === "dispute_rejected"
+    ) {
+      setActiveTab("disputes");
+    } else if (
+      notif.type === "new_leave_request" ||
+      notif.type === "leave_approved" ||
+      notif.type === "leave_rejected"
+    ) {
+      setActiveTab("leaves");
     }
   };
 
@@ -156,7 +194,14 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
     try {
       const lastWeek = new Date();
       lastWeek.setDate(lastWeek.getDate() - 7);
-      const absencesRes = await api.getAbsences(lastWeek.toISOString(), undefined, 'all', 'all', 1, 500);
+      const absencesRes = await api.getAbsences(
+        lastWeek.toISOString(),
+        undefined,
+        "all",
+        "all",
+        1,
+        500,
+      );
       const { records: absen = [] } = absencesRes.data || {};
 
       const today = new Date();
@@ -169,9 +214,17 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         return rDate >= today && rDate <= todayEnd;
       });
 
-      const presentToday = new Set(todayRecords.filter((r) => r.status === 'present').map((r) => r.user_id)).size;
-      const absentToday = new Set(todayRecords.filter((r) => r.status === 'absent').map((r) => r.user_id)).size;
-      const onLeaveToday = new Set(todayRecords.filter((r) => r.status === 'leave').map((r) => r.user_id)).size;
+      const presentToday = new Set(
+        todayRecords
+          .filter((r) => r.status === "present")
+          .map((r) => r.user_id),
+      ).size;
+      const absentToday = new Set(
+        todayRecords.filter((r) => r.status === "absent").map((r) => r.user_id),
+      ).size;
+      const onLeaveToday = new Set(
+        todayRecords.filter((r) => r.status === "leave").map((r) => r.user_id),
+      ).size;
 
       setStats({
         total_employees: employees.length || 0,
@@ -182,33 +235,42 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
       setAbsences(absen);
     } catch (err) {
-      console.error('Error fetching overview:', err);
+      console.error("Error fetching overview:", err);
     }
     setOverviewLoading(false);
   }, [employees.length]);
 
-  const fetchAttendanceData = useCallback(async (startDate, endDate, status, userId, page = 1) => {
-    setAttendanceLoading(true);
-    const sDate = startDate !== undefined ? startDate : attendanceFilters.startDate;
-    const eDate = endDate !== undefined ? endDate : attendanceFilters.endDate;
-    const st = status !== undefined ? status : attendanceFilters.status;
-    const uId = userId !== undefined ? userId : attendanceFilters.userId;
+  const fetchAttendanceData = useCallback(
+    async (startDate, endDate, status, userId, page = 1) => {
+      setAttendanceLoading(true);
+      const sDate =
+        startDate !== undefined ? startDate : attendanceFilters.startDate;
+      const eDate = endDate !== undefined ? endDate : attendanceFilters.endDate;
+      const st = status !== undefined ? status : attendanceFilters.status;
+      const uId = userId !== undefined ? userId : attendanceFilters.userId;
 
-    try {
-      const absencesRes = await api.getAbsences(sDate, eDate, st, uId, page);
-      const { records, total } = absencesRes.data;
-      setAbsences(records || []);
-      setPagination({
-        currentPage: page,
-        totalPages: Math.ceil(total / 20),
-        totalRecords: total
-      });
-      setAttendanceFilters({ startDate: sDate, endDate: eDate, status: st, userId: uId });
-    } catch (err) {
-      console.error('Error fetching attendance:', err);
-    }
-    setAttendanceLoading(false);
-  }, [attendanceFilters]);
+      try {
+        const absencesRes = await api.getAbsences(sDate, eDate, st, uId, page);
+        const { records, total } = absencesRes.data;
+        setAbsences(records || []);
+        setPagination({
+          currentPage: page,
+          totalPages: Math.ceil(total / 20),
+          totalRecords: total,
+        });
+        setAttendanceFilters({
+          startDate: sDate,
+          endDate: eDate,
+          status: st,
+          userId: uId,
+        });
+      } catch (err) {
+        console.error("Error fetching attendance:", err);
+      }
+      setAttendanceLoading(false);
+    },
+    [attendanceFilters],
+  );
 
   const fetchDisputeData = useCallback(async (page = 1) => {
     setDisputeLoading(true);
@@ -219,11 +281,11 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         setDisputePagination({
           currentPage: page,
           totalPages: Math.ceil((res.data.data.total || 0) / 20),
-          totalRecords: res.data.data.total || 0
+          totalRecords: res.data.data.total || 0,
         });
       }
     } catch (err) {
-      console.error('Error fetching disputes:', err);
+      console.error("Error fetching disputes:", err);
     }
     setDisputeLoading(false);
   }, []);
@@ -233,7 +295,7 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       const res = await api.adminApproveDispute(disputeId, {
         admin_id: user.user_id,
         action,
-        remarks
+        remarks,
       });
       if (res.data?.success) {
         fetchDisputeData(disputePagination.currentPage);
@@ -241,22 +303,25 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
         // Toast or success message
       }
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update dispute');
+      alert(err.response?.data?.error || "Failed to update dispute");
     }
   };
 
-  const handleUpdateEmployee = useCallback(async (userId, value, key) => {
-    try {
-      if (key === 'monthly_salary') {
-        await api.updateEmployee(userId, value);
-      } else if (key === 'leave_bank') {
-        await api.updateLeaves(userId, value);
+  const handleUpdateEmployee = useCallback(
+    async (userId, value, key) => {
+      try {
+        if (key === "monthly_salary") {
+          await api.updateEmployee(userId, value);
+        } else if (key === "leave_bank") {
+          await api.updateLeaves(userId, value);
+        }
+        fetchOverviewData();
+      } catch {
+        alert("Failed to update setting");
       }
-      fetchOverviewData();
-    } catch {
-      alert("Failed to update setting");
-    }
-  }, [fetchOverviewData]);
+    },
+    [fetchOverviewData],
+  );
 
   const handleShowHistory = useCallback((user) => {
     alert(`Checking history for ${user.name}`);
@@ -273,53 +338,57 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExport = async (month = null) => {
-    const baseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
-    let url = '';
-    let filename = 'export.xlsx';
+    const baseUrl =
+      import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
+    let url = "";
+    let filename = "export.xlsx";
 
-    if (activeTab === 'attendance') {
+    if (activeTab === "attendance") {
       const { startDate, endDate, userId } = attendanceFilters;
       const params = new URLSearchParams();
-      if (startDate) params.set('start_date', startDate);
-      if (endDate) params.set('end_date', endDate);
-      if (userId && userId !== 'all') params.set('user_id', userId);
+      if (startDate) params.set("start_date", startDate);
+      if (endDate) params.set("end_date", endDate);
+      if (userId && userId !== "all") params.set("user_id", userId);
       url = `${baseUrl}/export/attendance?${params.toString()}`;
       filename = `attendance_export.xlsx`;
-    } else if (activeTab === 'payroll') {
-      let start = '';
-      let end = '';
+    } else if (activeTab === "payroll") {
+      let start = "";
+      let end = "";
       if (payrollExportMonth) {
         console.log(payrollExportMonth);
-        const [year, currentMonth] = payrollExportMonth.split('-').map(Number);
+        const [year, currentMonth] = payrollExportMonth.split("-").map(Number);
         start = new Date(year, currentMonth - 1, 1).toISOString();
         end = new Date(year, currentMonth, 0, 23, 59, 59, 999).toISOString();
         filename = `payroll_${payrollExportMonth}.xlsx`;
-
       } else {
         filename = `payroll_current_month.xlsx`;
       }
       url = `${baseUrl}/export/salary?start_date=${start}&end_date=${end}`;
     } else {
-      alert('Export is available for the Attendance and Payroll tabs.\nPlease switch to one of those tabs first.');
+      alert(
+        "Export is available for the Attendance and Payroll tabs.\nPlease switch to one of those tabs first.",
+      );
       return;
     }
 
     setIsExporting(true);
     try {
       const response = await fetch(url);
-      const contentType = response.headers.get('content-type') || '';
+      const contentType = response.headers.get("content-type") || "";
 
-      if (!response.ok || contentType.includes('application/json')) {
+      if (!response.ok || contentType.includes("application/json")) {
         // Server returned an error — read the JSON message and show alert
-        const errJson = await response.json().catch(() => ({ error: 'Export failed. Please try again.' }));
-        alert(`Export failed: ${errJson.error || 'Unknown error'}`);
+        const errJson = await response
+          .json()
+          .catch(() => ({ error: "Export failed. Please try again." }));
+        alert(`Export failed: ${errJson.error || "Unknown error"}`);
         return;
       }
 
       // Valid XLSX blob — trigger download without navigating away
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = objectUrl;
       a.download = filename;
       document.body.appendChild(a);
@@ -327,8 +396,10 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       document.body.removeChild(a);
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
-      console.error('Export error:', err);
-      alert('Export failed: Unable to reach the server. Please check your connection.');
+      console.error("Export error:", err);
+      alert(
+        "Export failed: Unable to reach the server. Please check your connection.",
+      );
     } finally {
       setIsExporting(false);
     }
@@ -336,131 +407,190 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
   const getTabLabel = (id) => {
     const labels = {
-      overview: 'Analytics',
-      departments: 'Departments',
-      employees: 'Staff Management',
-      attendance: 'Attendance',
-      leaves: 'Leave Requests',
-      holidays: 'Holidays',
-      payroll: 'Payroll',
-      disputes: 'Appeals',
-      export: 'Data Export',
-      audit: 'Audit Logs',
-      recording: 'Recording',
-      settings: 'Settings'
+      overview: "Analytics",
+      departments: "Departments",
+      employees: "Staff Management",
+      attendance: "Attendance",
+      leaves: "Leave Requests",
+      holidays: "Holidays",
+      payroll: "Payroll",
+      disputes: "Appeals",
+      export: "Data Export",
+      audit: "Audit Logs",
+      recording: "Recording",
+      settings: "Settings",
     };
     return labels[id] || id.charAt(0).toUpperCase() + id.slice(1);
   };
 
   const breadcrumbs = [
-    { label: 'Dashboard', active: activeTab === 'overview', href: '#' },
-    ...(activeTab !== 'overview' ? [{ label: getTabLabel(activeTab), active: true }] : []),
+    { label: "Dashboard", active: activeTab === "overview", href: "#" },
+    ...(activeTab !== "overview"
+      ? [{ label: getTabLabel(activeTab), active: true }]
+      : []),
   ];
 
-  const tabsConfig = useMemo(() => [
-    {
-      id: 'overview',
-      label: 'Overview',
-      content: <DashboardAnalytics stats={stats} employees={employees} absences={absences} />,
-    },
-    {
-      id: 'attendance',
-      label: 'Attendance',
-      content: (
-        <AttendanceTab
-          absences={absences}
-          employees={employees}
-          loading={attendanceLoading}
-          pagination={pagination}
-          onFilterChange={(f) => fetchAttendanceData(f.startDate, f.endDate, f.category, f.userId, 1)}
-          onPageChange={(page) => fetchAttendanceData(undefined, undefined, undefined, undefined, page)}
-        />
-      ),
-    },
-    {
-      id: 'payroll',
-      label: 'Payroll',
-      content: <PayrollTab report={report} loading={false} onMonthChange={setPayrollExportMonth} onFetch={onRefresh} />,
-    },
-    {
-      id: 'leaves',
-      label: 'Leave Requests',
-      content: <LeaveRequestHub user={user} isAdmin={true} />,
-    },
-    {
-      id: 'leave-allocation',
-      label: 'Leave Allocation',
-      content: <LeaveAllocationTab employees={employees} user={user} />,
-    },
-    {
-      id: 'disputes',
-      label: 'Appeals',
-      content: (
-        <DisputesTab
-          disputes={disputes}
-          loading={disputeLoading}
-          pagination={disputePagination}
-          onPageChange={fetchDisputeData}
-          onViewDetail={(d) => { setSelectedDispute(d); setShowDisputeDetail(true); }}
-        />
-      ),
-    },
-    {
-      id: 'departments',
-      label: 'Departments',
-      content: <DepartmentManager />,
-    },
-    {
-      id: 'screenshots',
-      label: 'Screenshots',
-      content: <ScreenshotsTab isAdmin={true} employees={employees} />,
-    },
-    {
-      id: 'employees',
-      label: 'Staff',
-      content: (
-        <div className="mt-6">
-          <StaffManager
+  const tabsConfig = useMemo(
+    () => [
+      {
+        id: "overview",
+        label: "Overview",
+        content: (
+          <DashboardAnalytics
+            stats={stats}
             employees={employees}
-            onUpdate={handleUpdateEmployee}
-            onShowHistory={handleShowHistory}
-            onUpdatePassword={handleUpdatePassword}
-            onRefresh={() => { fetchOverviewData(); if (onRefresh) onRefresh(); }}
+            absences={absences}
           />
-        </div>
-      ),
-    },
-    {
-      id: 'recording',
-      label: 'Recording',
-      icon: Video,
-      content: <RecordingTab adminId={user?.user_id} employees={employees} />,
-    },
-    {
-      id: 'holidays',
-      label: 'Holidays',
-      content: <HolidayCalendar isAdmin={true} />,
-    },
-    {
-      id: 'export',
-      label: 'Export',
-      content: <DataExportPanel />,
-    },
-    {
-      id: 'audit',
-      label: 'Logs',
-      content: <AuditLogTab />,
-    },
-    {
-      id: 'settings',
-      label: 'Settings',
-      content: <SettingsTab user={user} />,
-    },
-  ], [stats, employees, absences, attendanceLoading, pagination, report, disputes, disputeLoading, disputePagination, fetchAttendanceData, fetchDisputeData, fetchOverviewData, handleUpdateEmployee, handleShowHistory, handleUpdatePassword, onRefresh, setPayrollExportMonth, user]);
+        ),
+      },
+      {
+        id: "attendance",
+        label: "Attendance",
+        content: (
+          <AttendanceTab
+            absences={absences}
+            employees={employees}
+            loading={attendanceLoading}
+            pagination={pagination}
+            onFilterChange={(f) =>
+              fetchAttendanceData(
+                f.startDate,
+                f.endDate,
+                f.category,
+                f.userId,
+                1,
+              )
+            }
+            onPageChange={(page) =>
+              fetchAttendanceData(
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                page,
+              )
+            }
+          />
+        ),
+      },
+      {
+        id: "payroll",
+        label: "Payroll",
+        content: (
+          <PayrollTab
+            report={report}
+            loading={false}
+            onMonthChange={setPayrollExportMonth}
+            onFetch={onRefresh}
+          />
+        ),
+      },
+      {
+        id: "leaves",
+        label: "Leave Requests",
+        content: <LeaveRequestHub user={user} isAdmin={true} />,
+      },
+      {
+        id: "leave-allocation",
+        label: "Leave Allocation",
+        content: <LeaveAllocationTab employees={employees} user={user} />,
+      },
+      {
+        id: "disputes",
+        label: "Appeals",
+        content: (
+          <DisputesTab
+            disputes={disputes}
+            loading={disputeLoading}
+            pagination={disputePagination}
+            onPageChange={fetchDisputeData}
+            onViewDetail={(d) => {
+              setSelectedDispute(d);
+              setShowDisputeDetail(true);
+            }}
+          />
+        ),
+      },
+      {
+        id: "departments",
+        label: "Departments",
+        content: <DepartmentManager />,
+      },
+      {
+        id: "screenshots",
+        label: "Screenshots",
+        content: <ScreenshotsTab isAdmin={true} employees={employees} />,
+      },
+      {
+        id: "employees",
+        label: "Staff",
+        content: (
+          <div className="mt-6">
+            <StaffManager
+              employees={employees}
+              onUpdate={handleUpdateEmployee}
+              onShowHistory={handleShowHistory}
+              onUpdatePassword={handleUpdatePassword}
+              onRefresh={() => {
+                fetchOverviewData();
+                if (onRefresh) onRefresh();
+              }}
+            />
+          </div>
+        ),
+      },
+      {
+        id: "recording",
+        label: "Recording",
+        icon: Video,
+        content: <RecordingTab adminId={user?.user_id} employees={employees} />,
+      },
+      {
+        id: "holidays",
+        label: "Holidays",
+        content: <HolidayCalendar isAdmin={true} />,
+      },
+      {
+        id: "export",
+        label: "Export",
+        content: <DataExportPanel />,
+      },
+      {
+        id: "audit",
+        label: "Logs",
+        content: <AuditLogTab />,
+      },
+      {
+        id: "settings",
+        label: "Settings",
+        content: <SettingsTab user={user} />,
+      },
+    ],
+    [
+      stats,
+      employees,
+      absences,
+      attendanceLoading,
+      pagination,
+      report,
+      disputes,
+      disputeLoading,
+      disputePagination,
+      fetchAttendanceData,
+      fetchDisputeData,
+      fetchOverviewData,
+      handleUpdateEmployee,
+      handleShowHistory,
+      handleUpdatePassword,
+      onRefresh,
+      setPayrollExportMonth,
+      user,
+    ],
+  );
 
   return (
     <LayoutContainer
-      user={user || { name: 'Admin', role: 'admin' }}
+      user={user || { name: "Admin", role: "admin" }}
       onLogout={onLogout}
       activeTab={activeTab}
       onTabChange={setActiveTab}
@@ -468,18 +598,35 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
       notifications={notifications}
       onNotificationClick={handleNotificationClick}
     >
-      {(activeTab === 'attendance' || activeTab === 'payroll') && (
+      {(activeTab === "attendance" || activeTab === "payroll") && (
         <div className="flex justify-end mb-6">
           <Button
-            variant={activeTab === 'attendance' || activeTab === 'payroll' ? 'primary' : 'secondary'}
+            variant={
+              activeTab === "attendance" || activeTab === "payroll"
+                ? "primary"
+                : "secondary"
+            }
             size="medium"
             className="flex items-center gap-2 shadow-sm p-3"
             onClick={handleExport}
             disabled={isExporting}
-            title={activeTab !== 'attendance' && activeTab !== 'payroll' ? 'Switch to Attendance or Payroll tab to export' : ''}
+            title={
+              activeTab !== "attendance" && activeTab !== "payroll"
+                ? "Switch to Attendance or Payroll tab to export"
+                : ""
+            }
           >
-            <Download size={18} className={isExporting ? 'animate-bounce' : ''} />
-            {isExporting ? 'Generating...' : activeTab === 'attendance' ? 'Export Attendance' : activeTab === 'payroll' ? 'Export Payroll' : 'Quick Export'}
+            <Download
+              size={18}
+              className={isExporting ? "animate-bounce" : ""}
+            />
+            {isExporting
+              ? "Generating..."
+              : activeTab === "attendance"
+                ? "Export Attendance"
+                : activeTab === "payroll"
+                  ? "Export Payroll"
+                  : "Quick Export"}
           </Button>
         </div>
       )}
@@ -505,12 +652,26 @@ function AdminDashboardNew({ employees = [], report = [], user, onLogout, onRefr
 
 // --- Sub-components ---
 
-function AttendanceTab({ absences, employees, loading, pagination, onFilterChange, onPageChange }) {
+function AttendanceTab({
+  absences,
+  employees,
+  loading,
+  pagination,
+  onFilterChange,
+  onPageChange,
+}) {
   return (
     <SlideUp>
-      <AttendanceFilters onFilterChange={onFilterChange} employees={employees} />
+      <AttendanceFilters
+        onFilterChange={onFilterChange}
+        employees={employees}
+      />
       <Card>
-        <CardHeader><h3 className="text-lg font-semibold text-neutral-900">Attendance Records</h3></CardHeader>
+        <CardHeader>
+          <h3 className="text-lg font-semibold text-neutral-900">
+            Attendance Records
+          </h3>
+        </CardHeader>
         <CardBody className="p-0">
           {loading ? (
             <div className="text-center py-8">Loading...</div>
@@ -520,33 +681,72 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
                 <table className="w-full">
                   <thead className="bg-neutral-50 border-b border-neutral-200">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Employee</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Date</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Check In</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Check Out</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Hours</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">Status</th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Employee
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Date
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Check In
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Check Out
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Hours
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Status
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-200">
-                    {absences?.filter(record => record.status !== 'weekend').map((record, idx) => (
-                      <tr key={idx} className="hover:bg-neutral-50 transition-colors">
-                        <td className="px-6 py-4">{record.user?.name || `Employee #${record.user_id}`}</td>
-                        <td className="px-6 py-4">{new Date(record.date).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 font-mono text-sm">{formatTime12h(record.check_in_time)}</td>
-                        <td className="px-6 py-4 font-mono text-sm">{formatTime12h(record.check_out_time)}</td>
-                        <td className="px-6 py-4">{record.total_hours?.toFixed(2) || '-'} hrs</td>
-                        <td className="px-6 py-4">
-                          <Badge variant={record.status === 'present' ? 'success' : record.status === 'absent' ? 'error' : 'warning'}>
-                            {record.status}
-                          </Badge>
-                        </td>
-                      </tr>
-                    ))}
+                    {absences
+                      ?.filter((record) => record.status !== "weekend")
+                      .map((record, idx) => (
+                        <tr
+                          key={idx}
+                          className="hover:bg-neutral-50 transition-colors"
+                        >
+                          <td className="px-6 py-4">
+                            {record.user?.name || `Employee #${record.user_id}`}
+                          </td>
+                          <td className="px-6 py-4">
+                            {new Date(record.date).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-sm">
+                            {formatTime12h(record.check_in_time)}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-sm">
+                            {formatTime12h(record.check_out_time)}
+                          </td>
+                          <td className="px-6 py-4">
+                            {record.total_hours?.toFixed(2) || "-"} hrs
+                          </td>
+                          <td className="px-6 py-4">
+                            <Badge
+                              variant={
+                                record.status === "present"
+                                  ? "success"
+                                  : record.status === "absent"
+                                    ? "error"
+                                    : "warning"
+                              }
+                            >
+                              {record.status}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
-              <Pagination currentPage={pagination.currentPage} totalPages={pagination.totalPages} onPageChange={onPageChange} />
+              <Pagination
+                currentPage={pagination.currentPage}
+                totalPages={pagination.totalPages}
+                onPageChange={onPageChange}
+              />
             </>
           )}
         </CardBody>
@@ -558,11 +758,11 @@ function AttendanceTab({ absences, employees, loading, pagination, onFilterChang
 function PayrollTab({ report, loading, onMonthChange, onFetch }) {
   const [bulkPayDate, setBulkPayDate] = useState(() => {
     const date = new Date();
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
   });
   const [bulkPayLoading, setBulkPayLoading] = useState(false);
-  const [bulkPayMessage, setBulkPayMessage] = useState('');
-  const [prevMonth, setPrevMonth] = useState('');
+  const [bulkPayMessage, setBulkPayMessage] = useState("");
+  const [prevMonth, setPrevMonth] = useState("");
   const [preMonthLoading, setPreMonthLoading] = useState(false);
 
   const handleMonthChange = (val) => {
@@ -581,28 +781,34 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
 
     const month = {
       start,
-      end
-    }
-    console.log(month);
+      end,
+    };
     try {
       onFetch(month);
       if (onMonthChange) onMonthChange(prevMonth);
-
     } catch (err) {
-      alert(err)
+      alert(err);
     }
   };
 
   const handleBulkPay = async () => {
-    if (!bulkPayDate) { alert('Please select a month first'); return; }
-    if (!window.confirm(`Process salary payments for ${new Date(bulkPayDate).toLocaleString('default', { month: 'long', year: 'numeric' })}?`)) return;
+    if (!bulkPayDate) {
+      alert("Please select a month first");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Process salary payments for ${new Date(bulkPayDate).toLocaleString("default", { month: "long", year: "numeric" })}?`,
+      )
+    )
+      return;
     setBulkPayLoading(true);
-    setBulkPayMessage('');
+    setBulkPayMessage("");
     try {
       const res = await api.processBulkSalary(bulkPayDate);
-      setBulkPayMessage(res.data?.message || 'Salaries processed successfully');
+      setBulkPayMessage(res.data?.message || "Salaries processed successfully");
     } catch (err) {
-      setBulkPayMessage('Failed to process bulk salary');
+      setBulkPayMessage("Failed to process bulk salary");
     } finally {
       setBulkPayLoading(false);
     }
@@ -615,14 +821,16 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
         {/* Previous month */}
         <div className="flex-1">
           <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg  px-4 py-3">
-            <span className="text-xs text-neutral-400 whitespace-nowrap">Previous month</span>
+            <span className="text-xs text-neutral-400 whitespace-nowrap">
+              Previous month
+            </span>
             <div className="w-px h-6 bg-neutral-100 shrink-0" />
             <input
               type="month"
               value={prevMonth}
               onChange={(e) => {
-                setPrevMonth(e.target.value)
-                handleSpecificMonthPay(e.target.value)
+                setPrevMonth(e.target.value);
+                handleSpecificMonthPay(e.target.value);
               }}
               className="flex-1 min-w-0 text-sm text-neutral-800 bg-transparent border-none outline-none cursor-pointer"
             />
@@ -632,7 +840,9 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
         {/* Process salaries */}
         <div className="flex-1 flex flex-col gap-1">
           <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg px-4 py-3">
-            <span className="text-xs text-neutral-400 whitespace-nowrap">Process salaries</span>
+            <span className="text-xs text-neutral-400 whitespace-nowrap">
+              Process salaries
+            </span>
             <div className="w-px h-6 bg-neutral-100 shrink-0" />
             <input
               type="month"
@@ -645,21 +855,25 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
               disabled={bulkPayLoading || !bulkPayDate}
               className="text-xs text-neutral-500 bg-neutral-100 border border-neutral-200 rounded-lg px-3 py-1 whitespace-nowrap hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
-              {bulkPayLoading ? 'Running…' : 'Run'}
+              {bulkPayLoading ? "Running…" : "Run"}
             </button>
           </div>
           {bulkPayMessage && (
-            <p className={`text-xs pl-1 ${bulkPayMessage.includes('Failed') ? 'text-red-500' : 'text-green-600'}`}>
+            <p
+              className={`text-xs pl-1 ${bulkPayMessage.includes("Failed") ? "text-red-500" : "text-green-600"}`}
+            >
               {bulkPayMessage}
             </p>
           )}
         </div>
-
-
       </div>
 
       <Card>
-        <CardHeader><h3 className="text-lg font-semibold text-neutral-900">Payroll Summary</h3></CardHeader>
+        <CardHeader>
+          <h3 className="text-lg font-semibold text-neutral-900">
+            Payroll Summary
+          </h3>
+        </CardHeader>
         <CardBody>
           {loading ? (
             <div className="text-center py-8">Loading...</div>
@@ -667,20 +881,52 @@ function PayrollTab({ report, loading, onMonthChange, onFetch }) {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr><th>Employee</th><th>Base Salary</th><th>Deductions</th><th>Leaves Used</th><th>Net Payable</th><th>Actions</th></tr>
+                  <tr>
+                    <th>Employee</th>
+                    <th>Base Salary</th>
+                    <th>Deductions</th>
+                    <th>Leaves Used</th>
+                    <th>Net Payable</th>
+                    <th>Actions</th>
+                  </tr>
                 </thead>
                 <tbody>
                   {report?.slice(0, 20).map((emp) => (
                     <tr key={emp.id}>
-                      <td><p className="font-medium">{emp.name}</p><p className="text-xs text-neutral-600">ID: {emp.id}</p></td>
+                      {/* EMP */}
+                      <td>
+                        <p className="font-medium">{emp.name}</p>
+                        <p className="text-xs text-neutral-600">ID: {emp.id}</p>
+                      </td>
+
+                      {/* SaLARY */}
                       <td>PKR {emp.monthly_salary?.toLocaleString()}</td>
-                      <td className="text-error">PKR {emp.deductions?.toLocaleString()}</td>
+
+                      {/* Deductions */}
+                      <td className="text-error">
+                        PKR {emp.deductions?.toLocaleString()}
+                      </td>
+
+                      {/* Leaves */}
                       <td>{emp.paid_leaves_used} days</td>
-                      <td className="font-bold text-primary-600">PKR {emp.total_salary?.toLocaleString()}</td>
+
+                      {/* NET Payable */}
+                      <td className="font-bold text-primary-600">
+                        PKR {emp.total_salary?.toLocaleString()}
+                      </td>
+
+                      {/* Actions */}
                       <td>
                         <PayslipPDFButton
                           employeeName={emp.name}
-                          salaryData={{ userId: emp.id, monthly_salary: emp.monthly_salary, deductions: emp.deductions, paid_leaves_used: emp.paid_leaves_used, total_salary: emp.total_salary, date: new Date() }}
+                          salaryData={{
+                            userId: emp.id,
+                            monthly_salary: emp.monthly_salary,
+                            deductions: emp.deductions,
+                            paid_leaves_used: emp.paid_leaves_used,
+                            total_salary: emp.total_salary,
+                            date: new Date(),
+                          }}
                         />
                       </td>
                     </tr>
@@ -702,16 +948,24 @@ function DisputesTab({ disputes, pagination, onPageChange, onViewDetail }) {
     <SlideUp>
       <div className="grid grid-cols-1 gap-6">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-neutral-900">Appeal Management</h3>
+          <h3 className="text-lg font-semibold text-neutral-900">
+            Appeal Management
+          </h3>
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm"><Filter size={16} /> Filters</Button>
+            <Button variant="ghost" size="sm">
+              <Filter size={16} /> Filters
+            </Button>
           </div>
         </div>
 
         {disputes?.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {disputes.map((dispute) => (
-              <DisputeCard key={dispute.id} dispute={dispute} onClick={() => onViewDetail(dispute)} />
+              <DisputeCard
+                key={dispute.id}
+                dispute={dispute}
+                onClick={() => onViewDetail(dispute)}
+              />
             ))}
           </div>
         ) : (
@@ -736,56 +990,84 @@ function DisputesTab({ disputes, pagination, onPageChange, onViewDetail }) {
 function DisputeCard({ dispute, onClick }) {
   const getStatusColor = (status) => {
     switch (status) {
-      case 'approved': return 'success';
-      case 'rejected': return 'error';
-      case 'partially_approved': return 'warning';
-      default: return 'warning';
+      case "approved":
+        return "success";
+      case "rejected":
+        return "error";
+      case "partially_approved":
+        return "warning";
+      default:
+        return "warning";
     }
   };
 
   return (
     <motion.div
-      whileHover={{ y: -4, shadow: '0 10px 25px -5px rgba(0,0,0,0.1)' }}
+      whileHover={{ y: -4, shadow: "0 10px 25px -5px rgba(0,0,0,0.1)" }}
       className="bg-white rounded-xl border border-neutral-200 p-5 cursor-pointer transition-all hover:border-primary-300 shadow-sm"
       onClick={onClick}
     >
       <div className="flex justify-between items-start mb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center text-primary-600 font-bold">
-            {dispute.requester?.name?.charAt(0) || '?'}
+            {dispute.requester?.name?.charAt(0) || "?"}
           </div>
           <div>
-            <h4 className="font-semibold text-neutral-900 leading-none">{dispute.requester?.name}</h4>
-            <p className="text-xs text-neutral-500 mt-1">{dispute.requester?.department?.name || 'No Dept'}</p>
+            <h4 className="font-semibold text-neutral-900 leading-none">
+              {dispute.requester?.name}
+            </h4>
+            <p className="text-xs text-neutral-500 mt-1">
+              {dispute.requester?.department?.name || "No Dept"}
+            </p>
           </div>
         </div>
-        <Badge variant={getStatusColor(dispute.final_status)}>{dispute.final_status.replace('_', ' ')}</Badge>
+        <Badge variant={getStatusColor(dispute.final_status)}>
+          {dispute.final_status.replace("_", " ")}
+        </Badge>
       </div>
 
       <div className="space-y-3 mb-4">
         <div className="flex items-center gap-2 text-sm text-neutral-700">
           <Calendar size={14} className="text-neutral-400" />
-          <span>For: {new Date(dispute.dispute_date).toLocaleDateString()}</span>
+          <span>
+            For: {new Date(dispute.dispute_date).toLocaleDateString()}
+          </span>
         </div>
         <div className="flex items-center gap-2 text-sm text-neutral-700">
           <Shield size={14} className="text-neutral-400" />
           <span className="capitalize">{dispute.category}</span>
         </div>
-        <p className="text-sm text-neutral-600 line-clamp-2 italic">"{dispute.description}"</p>
+        <p className="text-sm text-neutral-600 line-clamp-2 italic">
+          "{dispute.description}"
+        </p>
       </div>
 
       <div className="flex items-center justify-between pt-4 border-t border-neutral-100">
         <div className="flex -space-x-2">
           {/* Lead Status Circle */}
-          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${dispute.lead_status === 'approved' ? 'bg-green-500' :
-            dispute.lead_status === 'rejected' ? 'bg-red-500' : 'bg-neutral-200'
-            }`} title={`Lead: ${dispute.lead_status}`}>
+          <div
+            className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${
+              dispute.lead_status === "approved"
+                ? "bg-green-500"
+                : dispute.lead_status === "rejected"
+                  ? "bg-red-500"
+                  : "bg-neutral-200"
+            }`}
+            title={`Lead: ${dispute.lead_status}`}
+          >
             <UserCheck size={10} className="text-white" />
           </div>
           {/* Admin Status Circle */}
-          <div className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${dispute.admin_status === 'approved' ? 'bg-green-500' :
-            dispute.admin_status === 'rejected' ? 'bg-red-500' : 'bg-neutral-200'
-            }`} title={`Admin: ${dispute.admin_status}`}>
+          <div
+            className={`w-6 h-6 rounded-full border-2 border-white flex items-center justify-center ${
+              dispute.admin_status === "approved"
+                ? "bg-green-500"
+                : dispute.admin_status === "rejected"
+                  ? "bg-red-500"
+                  : "bg-neutral-200"
+            }`}
+            title={`Admin: ${dispute.admin_status}`}
+          >
             <ShieldCheck size={10} className="text-white" />
           </div>
         </div>
@@ -798,12 +1080,12 @@ function DisputeCard({ dispute, onClick }) {
 }
 
 function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
-  const [remarks, setRemarks] = useState('');
+  const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleAction = async (action) => {
-    if (!remarks && action === 'reject') {
-      alert('Remarks are required for rejection');
+    if (!remarks && action === "reject") {
+      alert("Remarks are required for rejection");
       return;
     }
     setIsSubmitting(true);
@@ -817,7 +1099,8 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        style={{ maxWidth: '40rem' }} className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden max-h-[90vh] flex flex-col"
+        style={{ maxWidth: "40rem" }}
+        className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden max-h-[90vh] flex flex-col"
       >
         {/* Header */}
         <div className="p-6 border-b border-neutral-100 flex justify-between items-center bg-neutral-50/50">
@@ -826,11 +1109,18 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
               <AlertCircle size={24} />
             </div>
             <div>
-              <h3 className="text-xl font-bold text-neutral-900">Appeal Details</h3>
-              <p className="text-sm text-neutral-500">ID: DISP-{dispute.id.toString().padStart(5, '0')}</p>
+              <h3 className="text-xl font-bold text-neutral-900">
+                Appeal Details
+              </h3>
+              <p className="text-sm text-neutral-500">
+                ID: DISP-{dispute.id.toString().padStart(5, "0")}
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-neutral-100 rounded-lg text-neutral-400 hover:text-neutral-600 transition-colors">
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-neutral-100 rounded-lg text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
             <XCircle size={24} />
           </button>
         </div>
@@ -840,21 +1130,34 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           {/* Employee Info */}
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-100">
-              <p className="text-xs font-semibold text-neutral-500 uppercase mb-2">Employee</p>
-              <p className="font-bold text-neutral-900">{dispute.requester?.name}</p>
-              <p className="text-sm text-neutral-600">{dispute.requester?.department?.name || 'No Department'}</p>
+              <p className="text-xs font-semibold text-neutral-500 uppercase mb-2">
+                Employee
+              </p>
+              <p className="font-bold text-neutral-900">
+                {dispute.requester?.name}
+              </p>
+              <p className="text-sm text-neutral-600">
+                {dispute.requester?.department?.name || "No Department"}
+              </p>
             </div>
             <div className="p-4 bg-neutral-50 rounded-xl border border-neutral-100">
-              <p className="text-xs font-semibold text-neutral-500 uppercase mb-2">Date & Category</p>
-              <p className="font-bold text-neutral-900">{new Date(dispute.dispute_date).toLocaleDateString()}</p>
-              <p className="text-sm text-neutral-600 capitalize">{dispute.category}</p>
+              <p className="text-xs font-semibold text-neutral-500 uppercase mb-2">
+                Date & Category
+              </p>
+              <p className="font-bold text-neutral-900">
+                {new Date(dispute.dispute_date).toLocaleDateString()}
+              </p>
+              <p className="text-sm text-neutral-600 capitalize">
+                {dispute.category}
+              </p>
             </div>
           </div>
 
           {/* Description */}
           <div>
             <h4 className="text-sm font-semibold text-neutral-900 mb-2 flex items-center gap-2">
-              <MessageSquare size={16} className="text-primary-500" /> Employee Message
+              <MessageSquare size={16} className="text-primary-500" /> Employee
+              Message
             </h4>
             <div className="p-4 bg-primary-50/30 border border-primary-100 rounded-xl italic text-neutral-700">
               "{dispute.description}"
@@ -864,7 +1167,8 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           {/* Workflow Status */}
           <div>
             <h4 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-              <ShieldCheck size={16} className="text-green-500" /> Approval Status
+              <ShieldCheck size={16} className="text-green-500" /> Approval
+              Status
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <StatusBox
@@ -888,19 +1192,29 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           {dispute.history?.length > 0 && (
             <div>
               <h4 className="text-sm font-semibold text-neutral-900 mb-4 flex items-center gap-2">
-                <History size={16} className="text-neutral-500" /> Activity History
+                <History size={16} className="text-neutral-500" /> Activity
+                History
               </h4>
               <div className="space-y-4 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-neutral-100">
                 {dispute.history.map((item, idx) => (
                   <div key={idx} className="relative pl-8">
-                    <div className={`absolute left-0 top-1 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${item.action.includes('APPROVED') ? 'bg-green-500' :
-                      item.action.includes('REJECTED') ? 'bg-red-500' : 'bg-primary-500'
-                      }`}>
-                    </div>
+                    <div
+                      className={`absolute left-0 top-1 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center ${
+                        item.action.includes("APPROVED")
+                          ? "bg-green-500"
+                          : item.action.includes("REJECTED")
+                            ? "bg-red-500"
+                            : "bg-primary-500"
+                      }`}
+                    ></div>
                     <div className="text-sm">
-                      <p className="font-semibold text-neutral-900">{item.action.replace('_', ' ')}</p>
+                      <p className="font-semibold text-neutral-900">
+                        {item.action.replace("_", " ")}
+                      </p>
                       <p className="text-neutral-600">{item.remarks}</p>
-                      <p className="text-xs text-neutral-400 mt-1">{new Date(item.created_at).toLocaleString()}</p>
+                      <p className="text-xs text-neutral-400 mt-1">
+                        {new Date(item.created_at).toLocaleString()}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -909,41 +1223,48 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
           )}
 
           {/* Action Form */}
-          {isAdmin && dispute.final_status === 'pending' || dispute.final_status === 'partially_approved' && (
-            <div className="pt-6 border-t border-neutral-100">
-              <label className="block text-sm font-semibold text-neutral-900 mb-2">Internal Remarks</label>
-              <textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="Enter remarks for the employee..."
-                className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:bg-white transition-all outline-none h-24 resize-none"
-              />
-            </div>
-          )}
+          {(isAdmin && dispute.final_status === "pending") ||
+            (dispute.final_status === "partially_approved" && (
+              <div className="pt-6 border-t border-neutral-100">
+                <label className="block text-sm font-semibold text-neutral-900 mb-2">
+                  Internal Remarks
+                </label>
+                <textarea
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="Enter remarks for the employee..."
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-xl focus:ring-2 focus:ring-primary-500 focus:bg-white transition-all outline-none h-24 resize-none"
+                />
+              </div>
+            ))}
         </div>
 
         {/* Footer Actions */}
         <div className="p-6 bg-neutral-50 border-t border-neutral-100 flex justify-end gap-3">
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-          {isAdmin && (dispute.final_status === 'pending' || dispute.final_status === 'partially_approved') && (
-            <>
-              <Button
-                variant="danger"
-                onClick={() => handleAction('reject')}
-                disabled={isSubmitting}
-              >
-                Reject Dispute
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => handleAction('approve')}
-                disabled={isSubmitting}
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {isSubmitting ? 'Processing...' : 'Approve & Restore'}
-              </Button>
-            </>
-          )}
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          {isAdmin &&
+            (dispute.final_status === "pending" ||
+              dispute.final_status === "partially_approved") && (
+              <>
+                <Button
+                  variant="danger"
+                  onClick={() => handleAction("reject")}
+                  disabled={isSubmitting}
+                >
+                  Reject Dispute
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => handleAction("approve")}
+                  disabled={isSubmitting}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {isSubmitting ? "Processing..." : "Approve & Restore"}
+                </Button>
+              </>
+            )}
         </div>
       </motion.div>
     </div>
@@ -953,9 +1274,24 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
 function StatusBox({ label, status, approver, date, remarks }) {
   const getStatusInfo = (s) => {
     switch (s) {
-      case 'approved': return { color: 'bg-green-50 border-green-200', text: 'text-green-700', label: 'Approved' };
-      case 'rejected': return { color: 'bg-red-50 border-red-200', text: 'text-red-700', label: 'Rejected' };
-      default: return { color: 'bg-neutral-50 border-neutral-200', text: 'text-neutral-500', label: 'Pending' };
+      case "approved":
+        return {
+          color: "bg-green-50 border-green-200",
+          text: "text-green-700",
+          label: "Approved",
+        };
+      case "rejected":
+        return {
+          color: "bg-red-50 border-red-200",
+          text: "text-red-700",
+          label: "Rejected",
+        };
+      default:
+        return {
+          color: "bg-neutral-50 border-neutral-200",
+          text: "text-neutral-500",
+          label: "Pending",
+        };
     }
   };
 
@@ -963,15 +1299,25 @@ function StatusBox({ label, status, approver, date, remarks }) {
 
   return (
     <div className={`p-4 rounded-xl border ${info.color}`}>
-      <p className="text-xs font-bold uppercase text-neutral-500 mb-2">{label}</p>
+      <p className="text-xs font-bold uppercase text-neutral-500 mb-2">
+        {label}
+      </p>
       <div className="flex items-center gap-2 mb-2">
         <span className={`text-sm font-bold ${info.text}`}>{info.label}</span>
       </div>
-      {status !== 'pending' && (
+      {status !== "pending" && (
         <div className="space-y-1">
-          <p className="text-xs text-neutral-600">By: <span className="font-medium">{approver || 'N/A'}</span></p>
-          <p className="text-xs text-neutral-600">On: {date ? new Date(date).toLocaleDateString() : 'N/A'}</p>
-          {remarks && <p className="text-xs text-neutral-500 italic mt-2 border-t border-black/5 pt-1">"{remarks}"</p>}
+          <p className="text-xs text-neutral-600">
+            By: <span className="font-medium">{approver || "N/A"}</span>
+          </p>
+          <p className="text-xs text-neutral-600">
+            On: {date ? new Date(date).toLocaleDateString() : "N/A"}
+          </p>
+          {remarks && (
+            <p className="text-xs text-neutral-500 italic mt-2 border-t border-black/5 pt-1">
+              "{remarks}"
+            </p>
+          )}
         </div>
       )}
     </div>

@@ -74,6 +74,11 @@ const api = {
   processDailyAbsences: () => axios.post(`${API_BASE}/absences/process-daily`),
   syncAttendanceToday: () => axios.post(`${API_BASE}/absences/sync-today`),
 
+  // Manual Punch (Check-In / Check-Out from the employee dashboard)
+  getTodayAttendance: (userId) => axios.get(`${API_BASE}/attendance/today/${userId}`),
+  manualPunch: (userId, type) =>
+    axios.post(`${API_BASE}/attendance/manual-punch`, { userId, type }),
+
   // Leave Bank Management APIs
   getAllLeaveBanks: () => axios.get(`${API_BASE}/absences/leave-bank`),
   getUserLeaveBank: (userId) =>

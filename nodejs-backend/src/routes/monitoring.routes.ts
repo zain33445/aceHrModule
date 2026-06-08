@@ -93,36 +93,44 @@ router.post('/screenshot', async (req: Request, res: Response) => {
                 user_id: finalUserId,
                 date: attendanceDate,
                 check_in_time: timeStr,
+                check_in_source: 'monitoring',
                 status: status,
                 is_late: isLate,
                 is_halfday: isHalfday
               }
             });
-          } else if (existingRecord.check_in_time === null) {
-            console.log(`[ATTENDANCE ROUTE] Updating existing 'pending' record for user ${finalUserId} on ${dateKey} to set check-in: ${timeStr}`);
-            // Update today's record ONLY if check-in time is currently null
+          } else if (existingRecord.check_in_time === null || existingRecord.check_in_source === 'monitoring') {
+            console.log(`[ATTENDANCE ROUTE] Updating existing record for user ${finalUserId} on ${dateKey} to set check-in: ${timeStr} (source: monitoring)`);
+            // Update today's record ONLY if check-in time is currently null or source is monitoring
             await prisma.attendanceRecord.update({
               where: { id: existingRecord.id },
               data: {
                 check_in_time: timeStr,
+                check_in_source: 'monitoring',
                 status: status,
                 is_late: isLate,
                 is_halfday: isHalfday
               }
             });
           } else {
-            console.log(`[ATTENDANCE ROUTE] Check-in already exists (${existingRecord.check_in_time}) for user ${finalUserId} on ${dateKey}. Ignoring duplicate check-in to preserve start time!`);
+            console.log(`[ATTENDANCE ROUTE] Check-in already exists (${existingRecord.check_in_time}, source: ${existingRecord.check_in_source}) for user ${finalUserId} on ${dateKey}. Ignoring duplicate check-in to preserve higher priority start time!`);
           }
-          // If existingRecord.check_in_time is NOT null, we do not overwrite it.
+          // If existingRecord.check_in_time is NOT null and source is fp/manual, we do not overwrite it.
           // This preserves the very first check-in of the day.
         } 
         else if (type === 'check-out') {
-          console.log(`[ATTENDANCE ROUTE] Updating check-out time for user ${finalUserId} on ${dateKey} to ${timeStr}`);
-          // Update today's record with check-out time
-          await prisma.attendanceRecord.update({
-            where: { user_id_date: { user_id: finalUserId, date: attendanceDate } },
-            data: { check_out_time: timeStr }
+          const existingRecord = await prisma.attendanceRecord.findUnique({
+            where: { user_id_date: { user_id: finalUserId, date: attendanceDate } }
           });
+          
+          if (existingRecord && (!existingRecord.check_out_source || existingRecord.check_out_source === 'monitoring')) {
+            console.log(`[ATTENDANCE ROUTE] Updating check-out time for user ${finalUserId} on ${dateKey} to ${timeStr} (source: monitoring)`);
+            // Update today's record with check-out time
+            await prisma.attendanceRecord.update({
+              where: { id: existingRecord.id },
+              data: { check_out_time: timeStr, check_out_source: 'monitoring' }
+            });
+          }
         }
       } catch (attError) {
         console.error('Attendance sync failed:', attError);
