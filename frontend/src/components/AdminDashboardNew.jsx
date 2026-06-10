@@ -697,6 +697,9 @@ function AttendanceTab({
           <h3 className="text-lg font-semibold text-neutral-900">
             Attendance Records
           </h3>
+          <span className="text-sm text-neutral-500">
+            Total Records: {pagination?.totalRecords || 0}
+          </span>
         </CardHeader>
         <CardBody className="p-0">
           {loading ? (
@@ -707,6 +710,9 @@ function AttendanceTab({
                 <table className="w-full">
                   <thead className="bg-neutral-50 border-b border-neutral-200">
                     <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
+                        Sr#
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase">
                         Employee
                       </th>
@@ -735,6 +741,9 @@ function AttendanceTab({
                           key={idx}
                           className="hover:bg-neutral-50 transition-colors"
                         >
+                          <td className="px-6 py-4 text-neutral-500">
+                            {(pagination.currentPage - 1) * 20 + idx + 1}
+                          </td>
                           <td className="px-6 py-4">
                             {record.user?.name || `Employee #${record.user_id}`}
                           </td>

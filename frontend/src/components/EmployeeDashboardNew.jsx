@@ -1144,6 +1144,9 @@ function AttendanceTab({
           <h3 className="text-lg font-semibold text-neutral-900">
             Attendance Records
           </h3>
+          <span className="text-sm text-neutral-500">
+            Total Records: {pagination?.totalRecords || 0}
+          </span>
           {leaveBank && (
             <span className="text-sm text-neutral-500">
               Leaves Remaining:{" "}
@@ -1162,6 +1165,9 @@ function AttendanceTab({
                 <table className="w-full">
                   <thead className="bg-neutral-50 border-b border-neutral-200">
                     <tr>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">
+                        Sr#
+                      </th>
                       <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">
                         Date
                       </th>
@@ -1191,21 +1197,24 @@ function AttendanceTab({
 
                         return (
                           <React.Fragment key={idx}>
-                            <tr
-                              onClick={() => {
-                                if (isActionable) {
-                                  setExpandedRowIdx(isExpanded ? null : idx);
-                                }
-                              }}
-                              className={`transition-colors text-center ${
-                                isActionable
-                                  ? "cursor-pointer hover:bg-primary-50 hover:shadow-sm"
-                                  : "cursor-default hover:bg-neutral-50"
-                              } ${isExpanded ? "bg-primary-50/30" : ""}`}
-                            >
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                {new Date(log.date).toLocaleDateString()}
-                              </td>
+                    <tr
+                      onClick={() => {
+                        if (isActionable) {
+                          setExpandedRowIdx(isExpanded ? null : idx);
+                        }
+                      }}
+                      className={`transition-colors text-center ${
+                        isActionable
+                          ? "cursor-pointer hover:bg-primary-50 hover:shadow-sm"
+                          : "cursor-default hover:bg-neutral-50"
+                      } ${isExpanded ? "bg-primary-50/30" : ""}`}
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap text-neutral-500">
+                        {(pagination.currentPage - 1) * 20 + idx + 1}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {new Date(log.date).toLocaleDateString()}
+                      </td>
                               <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">
                                 {formatTime12h(log.check_in_time)}
                               </td>

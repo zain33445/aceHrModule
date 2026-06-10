@@ -101,51 +101,58 @@ function UserHistory({ user, onBack }) {
       ) : logs.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: '#94a3b8' }}>No logs found for this user.</div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th><Calendar size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Date</th>
-              <th>Check-In</th>
-              <th>Check-Out</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {logs.map((record, i) => {
-              return (
-                <tr key={i}>
-                  <td>{new Date(record.date).toLocaleDateString()}</td>
-                  <td>
-                    {record.check_in_time ? (
-                      <span className={`badge ${record.is_late ? 'badge-warning' : 'badge-success'}`}>
-                        {formatTime12h(record.check_in_time)} {record.is_late && '(Late)'}
+        <>
+          <div style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: '0.5rem' }}>
+            Total Records: {logs.length}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Sr#</th>
+                <th><Calendar size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Date</th>
+                <th>Check-In</th>
+                <th>Check-Out</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+                {logs.map((record, i) => {
+                  return (
+                    <tr key={i}>
+                      <td style={{ color: '#94a3b8' }}>{i + 1}</td>
+                      <td>{new Date(record.date).toLocaleDateString()}</td>
+                    <td>
+                      {record.check_in_time ? (
+                        <span className={`badge ${record.is_late ? 'badge-warning' : 'badge-success'}`}>
+                          {formatTime12h(record.check_in_time)} {record.is_late && '(Late)'}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>--:--</span>
+                      )}
+                    </td>
+                    <td>
+                      {record.check_out_time ? (
+                        <span className={`badge ${record.is_halfday ? 'badge-warning' : 'badge-info'}`}>
+                          {formatTime12h(record.check_out_time)} {record.is_halfday && '(Half-day)'}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#94a3b8' }}>--:--</span>
+                      )}
+                    </td>
+                    <td>
+                      <span className={`badge ${record.status === 'present' ? 'badge-success' :
+                          record.status === 'leave' ? 'badge-success' :
+                            'badge-danger'
+                        }`}>
+                        {record.status.toUpperCase()}
                       </span>
-                    ) : (
-                      <span style={{ color: '#94a3b8' }}>--:--</span>
-                    )}
-                  </td>
-                  <td>
-                    {record.check_out_time ? (
-                      <span className={`badge ${record.is_halfday ? 'badge-warning' : 'badge-info'}`}>
-                        {formatTime12h(record.check_out_time)} {record.is_halfday && '(Half-day)'}
-                      </span>
-                    ) : (
-                      <span style={{ color: '#94a3b8' }}>--:--</span>
-                    )}
-                  </td>
-                  <td>
-                    <span className={`badge ${record.status === 'present' ? 'badge-success' :
-                        record.status === 'leave' ? 'badge-success' :
-                          'badge-danger'
-                      }`}>
-                      {record.status.toUpperCase()}
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
