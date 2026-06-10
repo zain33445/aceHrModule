@@ -114,6 +114,24 @@ router.put('/:id/lead-approval', async (req, res) => {
   }
 });
 
+// HR Approval Action
+router.put('/:id/hr-approval', async (req, res) => {
+  const { id } = req.params;
+  const { hr_id, action, remarks } = req.body;
+
+  try {
+    let dispute;
+    if (action === 'approve') {
+      dispute = await DisputeService.hrApprove(Number(id), hr_id, remarks);
+    } else {
+      dispute = await DisputeService.hrReject(Number(id), hr_id, remarks);
+    }
+    res.json({ success: true, message: `Dispute ${action}d by HR`, data: dispute });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Admin Approval Action
 router.put('/:id/admin-approval', async (req, res) => {
   const { id } = req.params;

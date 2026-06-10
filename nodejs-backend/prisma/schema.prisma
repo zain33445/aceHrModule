@@ -71,6 +71,8 @@ model User {
   salaries               Salary[]
   leave_locks            UserLeaveLock?
   department             Department?           @relation(fields: [department_id], references: [id])
+  hr_approved_disputes   Dispute[]             @relation("DisputeHRApprover")
+  tab_access             UserTabAccess[]
 
   @@map("users")
 }
@@ -134,12 +136,17 @@ model Dispute {
   lead_approved_by  String?
   lead_remarks      String?
   lead_status       String           @default("pending")
+  hr_status         String           @default("pending")
+  hr_approved_by    String?
+  hr_approved_at    DateTime?
+  hr_remarks        String?
   salary_restored   Boolean          @default(false)
   updated_at        DateTime         @updatedAt
   deductions        Deduction[]
   history           DisputeHistory[]
   adminApprover     User?            @relation("DisputeAdminApprover", fields: [admin_approved_by], references: [id])
   approver          User?            @relation("DisputeApprover", fields: [approved_by], references: [id])
+  hrApprover        User?            @relation("DisputeHRApprover", fields: [hr_approved_by], references: [id])
   leadApprover      User?            @relation("DisputeLeadApprover", fields: [lead_approved_by], references: [id])
   requester         User             @relation("DisputeRequester", fields: [req_by], references: [id], onDelete: Cascade)
   salaries          Salary[]
@@ -233,6 +240,7 @@ model LeaveRequest {
   end_date                 DateTime
   reason                   String
   reviewed_by              String?
+  action_role              String?
   created_at               DateTime           @default(now())
   days_consumed            Decimal            @default(0) @db.Decimal(10, 2)
   half_day_session         String?
@@ -333,6 +341,15 @@ model UserLeaveLock {
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("user_leave_locks")
+}
+
+model UserTabAccess {
+  user_id String
+  tab_key String
+  user    User   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@id([user_id, tab_key])
+  @@map("user_tab_access")
 }
 
 model LeaveType {

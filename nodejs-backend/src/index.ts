@@ -25,6 +25,7 @@ import auditRoutes from './routes/audit.routes';
 import exportRoutes from './routes/export.routes';
 import monitoringRoutes from './routes/monitoring.routes';
 import recordingRoutes from './routes/recording.routes';
+import tabAccessRoutes from './routes/tab-access.routes';
 import { initGateway } from './gateways/recording.gateway';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
@@ -50,7 +51,7 @@ app.use(async (req, res, next) => {
         try {
           await prisma.auditLog.create({
             data: {
-              user_id: req.body?.user_id || req.body?.reviewed_by || req.body?.req_by || null,
+              user_id: req.body?.user_id || req.body?.reviewed_by || req.body?.hr_id || req.body?.lead_id || req.body?.admin_id || req.body?.req_by || null,
               action: `${req.method} ${req.path}`,
               details: JSON.stringify(req.body || {}).substring(0, 1000)
             }
@@ -86,6 +87,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/recording', recordingRoutes);
+app.use('/api/tab-access', tabAccessRoutes);
 
 
 app.get('/', (req, res) => {

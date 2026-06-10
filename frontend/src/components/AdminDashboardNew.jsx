@@ -41,8 +41,10 @@ import { AuditLogTab } from "./audit/AuditLogTab";
 import { DataExportPanel } from "./export/DataExportPanel";
 import ScreenshotsTab from "./dashboard/ScreenshotsTab";
 import RecordingTab from "./dashboard/RecordingTab";
+import { PayrollTab } from "./salary/PayrollTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
+import TabAccessManager from "./dashboard/TabAccessManager";
 import { formatDateLocal, formatTime12h } from "../utils/formatters";
 
 function AdminDashboardNew({
@@ -307,6 +309,22 @@ function AdminDashboardNew({
     }
   };
 
+  const handleHRApproval = async (disputeId, action, remarks) => {
+    try {
+      const res = await api.hrApproveDispute(disputeId, {
+        hr_id: user.user_id,
+        action,
+        remarks,
+      });
+      if (res.data?.success) {
+        fetchDisputeData(disputePagination.currentPage);
+        setShowDisputeDetail(false);
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || "Failed to update dispute");
+    }
+  };
+
   const handleUpdateEmployee = useCallback(
     async (userId, value, key) => {
       try {
@@ -419,6 +437,7 @@ function AdminDashboardNew({
       audit: "Audit Logs",
       recording: "Recording",
       settings: "Settings",
+      "feature-access": "Feature Access",
     };
     return labels[id] || id.charAt(0).toUpperCase() + id.slice(1);
   };
@@ -565,6 +584,11 @@ function AdminDashboardNew({
         label: "Settings",
         content: <SettingsTab user={user} />,
       },
+      {
+        id: "feature-access",
+        label: "Feature Access",
+        content: <TabAccessManager />,
+      },
     ],
     [
       stats,
@@ -643,6 +667,8 @@ function AdminDashboardNew({
             onClose={() => setShowDisputeDetail(false)}
             onAction={handleAdminApproval}
             isAdmin={true}
+            onHRAction={handleHRApproval}
+            isHR={true}
           />
         )}
       </AnimatePresence>
@@ -748,192 +774,6 @@ function AttendanceTab({
                 onPageChange={onPageChange}
               />
             </>
-          )}
-        </CardBody>
-      </Card>
-    </SlideUp>
-  );
-}
-
-function PayrollTab({ report, loading, onMonthChange, onFetch }) {
-  const [bulkPayDate, setBulkPayDate] = useState(() => {
-    const date = new Date();
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const [bulkPayLoading, setBulkPayLoading] = useState(false);
-  const [bulkPayMessage, setBulkPayMessage] = useState("");
-  const [prevMonth, setPrevMonth] = useState("");
-  const [preMonthLoading, setPreMonthLoading] = useState(false);
-
-  const handleMonthChange = (val) => {
-    setBulkPayDate(val);
-    if (onMonthChange) onMonthChange(val);
-  };
-
-  const handleSpecificMonthPay = (prevMonth) => {
-    const [year, m] = prevMonth.split("-").map(Number);
-
-    // start of month
-    const start = formatDateLocal(new Date(year, m - 1, 1));
-
-    // end of month (last day)
-    const end = formatDateLocal(new Date(year, m, 0));
-
-    const month = {
-      start,
-      end,
-    };
-    try {
-      onFetch(month);
-      if (onMonthChange) onMonthChange(prevMonth);
-    } catch (err) {
-      alert(err);
-    }
-  };
-
-  const handleBulkPay = async () => {
-    if (!bulkPayDate) {
-      alert("Please select a month first");
-      return;
-    }
-    if (
-      !window.confirm(
-        `Process salary payments for ${new Date(bulkPayDate).toLocaleString("default", { month: "long", year: "numeric" })}?`,
-      )
-    )
-      return;
-    setBulkPayLoading(true);
-    setBulkPayMessage("");
-    try {
-      const res = await api.processBulkSalary(bulkPayDate);
-      setBulkPayMessage(res.data?.message || "Salaries processed successfully");
-    } catch (err) {
-      setBulkPayMessage("Failed to process bulk salary");
-    } finally {
-      setBulkPayLoading(false);
-    }
-  };
-
-  console.log(prevMonth);
-  return (
-    <SlideUp>
-      <div className="flex gap-3 mb-6 w-1/2 m-auto">
-        {/* Previous month */}
-        <div className="flex-1">
-          <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg  px-4 py-3">
-            <span className="text-xs text-neutral-400 whitespace-nowrap">
-              Previous month
-            </span>
-            <div className="w-px h-6 bg-neutral-100 shrink-0" />
-            <input
-              type="month"
-              value={prevMonth}
-              onChange={(e) => {
-                setPrevMonth(e.target.value);
-                handleSpecificMonthPay(e.target.value);
-              }}
-              className="flex-1 min-w-0 text-sm text-neutral-800 bg-transparent border-none outline-none cursor-pointer"
-            />
-          </div>
-        </div>
-
-        {/* Process salaries */}
-        <div className="flex-1 flex flex-col gap-1">
-          <div className="flex items-center gap-3 bg-white border border-gray-400 rounded-lg px-4 py-3">
-            <span className="text-xs text-neutral-400 whitespace-nowrap">
-              Process salaries
-            </span>
-            <div className="w-px h-6 bg-neutral-100 shrink-0" />
-            <input
-              type="month"
-              value={bulkPayDate}
-              onChange={(e) => handleMonthChange(e.target.value)}
-              className="flex-1 min-w-0 text-sm text-neutral-800 bg-transparent border-none outline-none cursor-pointer"
-            />
-            <button
-              onClick={handleBulkPay}
-              disabled={bulkPayLoading || !bulkPayDate}
-              className="text-xs text-neutral-500 bg-neutral-100 border border-neutral-200 rounded-lg px-3 py-1 whitespace-nowrap hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              {bulkPayLoading ? "Running…" : "Run"}
-            </button>
-          </div>
-          {bulkPayMessage && (
-            <p
-              className={`text-xs pl-1 ${bulkPayMessage.includes("Failed") ? "text-red-500" : "text-green-600"}`}
-            >
-              {bulkPayMessage}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <h3 className="text-lg font-semibold text-neutral-900">
-            Payroll Summary
-          </h3>
-        </CardHeader>
-        <CardBody>
-          {loading ? (
-            <div className="text-center py-8">Loading...</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Base Salary</th>
-                    <th>Deductions</th>
-                    <th>Leaves Used</th>
-                    <th>Net Payable</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {report?.slice(0, 20).map((emp) => (
-                    <tr key={emp.id}>
-                      {/* EMP */}
-                      <td>
-                        <p className="font-medium">{emp.name}</p>
-                        <p className="text-xs text-neutral-600">ID: {emp.id}</p>
-                      </td>
-
-                      {/* SaLARY */}
-                      <td>PKR {emp.monthly_salary?.toLocaleString()}</td>
-
-                      {/* Deductions */}
-                      <td className="text-error">
-                        PKR {emp.deductions?.toLocaleString()}
-                      </td>
-
-                      {/* Leaves */}
-                      <td>{emp.paid_leaves_used} days</td>
-
-                      {/* NET Payable */}
-                      <td className="font-bold text-primary-600">
-                        PKR {emp.total_salary?.toLocaleString()}
-                      </td>
-
-                      {/* Actions */}
-                      <td>
-                        <PayslipPDFButton
-                          employeeName={emp.name}
-                          salaryData={{
-                            userId: emp.id,
-                            monthly_salary: emp.monthly_salary,
-                            deductions: emp.deductions,
-                            paid_leaves_used: emp.paid_leaves_used,
-                            total_salary: emp.total_salary,
-                            date: new Date(),
-                          }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           )}
         </CardBody>
       </Card>
@@ -1079,7 +919,7 @@ function DisputeCard({ dispute, onClick }) {
   );
 }
 
-function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
+function DisputeDetailModal({ dispute, onClose, onAction, isAdmin, onHRAction, isHR }) {
   const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1090,6 +930,16 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
     }
     setIsSubmitting(true);
     await onAction(dispute.id, action, remarks);
+    setIsSubmitting(false);
+  };
+
+  const handleHRAction = async (action) => {
+    if (!remarks && action === "reject") {
+      alert("Remarks are required for rejection");
+      return;
+    }
+    setIsSubmitting(true);
+    await onHRAction(dispute.id, action, remarks);
     setIsSubmitting(false);
   };
 
@@ -1185,6 +1035,13 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
                 date={dispute.admin_approved_at}
                 remarks={dispute.admin_remarks}
               />
+              <StatusBox
+                label="HR Review"
+                status={dispute.hr_status || "pending"}
+                approver={dispute.hrApprover?.name}
+                date={dispute.hr_approved_at}
+                remarks={dispute.hr_remarks}
+              />
             </div>
           </div>
 
@@ -1240,7 +1097,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
         </div>
 
         {/* Footer Actions */}
-        <div className="p-6 bg-neutral-50 border-t border-neutral-100 flex justify-end gap-3">
+        <div className="p-6 bg-neutral-50 border-t border-neutral-100 flex justify-end gap-3 flex-wrap">
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
@@ -1253,7 +1110,7 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
                   onClick={() => handleAction("reject")}
                   disabled={isSubmitting}
                 >
-                  Reject Dispute
+                  Reject as Admin
                 </Button>
                 <Button
                   variant="primary"
@@ -1261,7 +1118,28 @@ function DisputeDetailModal({ dispute, onClose, onAction, isAdmin }) {
                   disabled={isSubmitting}
                   className="bg-green-600 hover:bg-green-700"
                 >
-                  {isSubmitting ? "Processing..." : "Approve & Restore"}
+                  {isSubmitting ? "Processing..." : "Approve as Admin"}
+                </Button>
+              </>
+            )}
+          {isHR &&
+            (dispute.final_status === "pending" ||
+              dispute.final_status === "partially_approved") && (
+              <>
+                <Button
+                  variant="danger"
+                  onClick={() => handleHRAction("reject")}
+                  disabled={isSubmitting}
+                >
+                  Reject as HR
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => handleHRAction("approve")}
+                  disabled={isSubmitting}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {isSubmitting ? "Processing..." : "Approve as HR"}
                 </Button>
               </>
             )}

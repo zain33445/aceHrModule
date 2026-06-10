@@ -56,7 +56,8 @@ export class DisputeService {
         include: {
           requester: { select: { id: true, name: true, department: true } },
           leadApprover: { select: { id: true, name: true } },
-          adminApprover: { select: { id: true, name: true } }
+          adminApprover: { select: { id: true, name: true } },
+          hrApprover: { select: { id: true, name: true } }
         },
         orderBy: { date_of_req: 'desc' },
         skip,
@@ -142,7 +143,7 @@ export class DisputeService {
         throw new Error('Invalid workflow transition');
       }
 
-      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.APPROVED, dispute.admin_status);
+      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.APPROVED, dispute.admin_status, dispute.hr_status);
 
       const updated = await tx.dispute.update({
         where: { id: disputeId },
@@ -183,7 +184,7 @@ export class DisputeService {
       const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
       if (!dispute) throw new Error('Dispute not found');
 
-      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.REJECTED, dispute.admin_status);
+      const finalStatus = DisputeWorkflow.computeFinalStatus(DISPUTE_STATUS.REJECTED, dispute.admin_status, dispute.hr_status);
 
       const updated = await tx.dispute.update({
         where: { id: disputeId },
@@ -219,7 +220,7 @@ export class DisputeService {
       });
       if (!dispute) throw new Error('Dispute not found');
 
-      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.APPROVED);
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.APPROVED, dispute.hr_status);
 
       const updated = await tx.dispute.update({
         where: { id: disputeId },
@@ -281,13 +282,116 @@ export class DisputeService {
     });
   }
 
+  // HR Approval (Final)
+  static async hrApprove(disputeId: number, hrId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({
+        where: { id: disputeId },
+        include: { requester: true }
+      });
+      if (!dispute) throw new Error('Dispute not found');
+
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, dispute.admin_status, DISPUTE_STATUS.APPROVED);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          hr_status: DISPUTE_STATUS.APPROVED,
+          hr_approved_by: hrId,
+          hr_approved_at: new Date(),
+          hr_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus,
+          approved_by: hrId,
+          date_of_approve: new Date()
+        }
+      });
+
+      // Idempotent Salary Restoration
+      if (finalStatus === DISPUTE_STATUS.APPROVED && !dispute.salary_restored) {
+        const startOfDay = new Date(dispute.dispute_date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(dispute.dispute_date);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const deduction = await tx.deduction.findFirst({
+          where: {
+            user_id: dispute.req_by,
+            date: { gte: startOfDay, lte: endOfDay },
+            type: dispute.category
+          }
+        });
+
+        if (deduction) {
+          await tx.deduction.update({ where: { id: deduction.id }, data: { status: 'REVERSED' } });
+          await tx.dispute.update({
+            where: { id: disputeId },
+            data: { salary_restored: true }
+          });
+        }
+      }
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: hrId,
+          action: ACTION_TYPES.HR_APPROVED,
+          remarks
+        }
+      });
+
+      await tx.notification.create({
+        data: {
+          user_id: dispute.req_by,
+          type: 'dispute_approved',
+          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been approved by HR.`
+        }
+      });
+
+      return updated;
+    });
+  }
+
+  // HR Rejection
+  static async hrReject(disputeId: number, hrId: string, remarks: string = '') {
+    return prisma.$transaction(async (tx) => {
+      const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
+      if (!dispute) throw new Error('Dispute not found');
+
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, dispute.admin_status, DISPUTE_STATUS.REJECTED);
+
+      const updated = await tx.dispute.update({
+        where: { id: disputeId },
+        data: {
+          hr_status: DISPUTE_STATUS.REJECTED,
+          hr_approved_by: hrId,
+          hr_approved_at: new Date(),
+          hr_remarks: remarks,
+          final_status: finalStatus,
+          status: finalStatus
+        }
+      });
+
+      await tx.disputeHistory.create({
+        data: {
+          dispute_id: disputeId,
+          actor_id: hrId,
+          action: ACTION_TYPES.HR_REJECTED,
+          remarks
+        }
+      });
+
+      return updated;
+    });
+  }
+
   // Admin Rejection
   static async adminReject(disputeId: number, adminId: string, remarks: string = '') {
     return prisma.$transaction(async (tx) => {
       const dispute = await tx.dispute.findUnique({ where: { id: disputeId } });
       if (!dispute) throw new Error('Dispute not found');
 
-      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.REJECTED);
+      const finalStatus = DisputeWorkflow.computeFinalStatus(dispute.lead_status, DISPUTE_STATUS.REJECTED, dispute.hr_status);
 
       const updated = await tx.dispute.update({
         where: { id: disputeId },

@@ -104,6 +104,9 @@ const api = {
     
   adminApproveDispute: (disputeId, data) =>
     axios.put(`${API_BASE}/disputes/${disputeId}/admin-approval`, data),
+
+  hrApproveDispute: (disputeId, data) =>
+    axios.put(`${API_BASE}/disputes/${disputeId}/hr-approval`, data),
   
   deleteDispute: (disputeId) => axios.delete(`${API_BASE}/disputes/${disputeId}`),
 
@@ -222,6 +225,12 @@ const api = {
     ),
   recordingGetDownloadUrl: (sessionId) =>
     `${API_BASE}/recording/sessions/${sessionId}/file`,
+
+  // Tab Access (HR Feature Assignment)
+  getHrEmployeesWithTabs: () => axios.get(`${API_BASE}/tab-access/hr-employees`),
+  toggleTabAccess: (userId, tabKey, granted) =>
+    axios.post(`${API_BASE}/tab-access/toggle`, { user_id: userId, tab_key: tabKey, granted }),
+  getMyTabAccess: (userId) => axios.get(`${API_BASE}/tab-access/my-tabs`, { params: { user_id: userId } }),
 };
 
 

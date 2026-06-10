@@ -121,6 +121,29 @@ export const LeadDisputeDashboard = ({ user }) => {
     }
   };
 
+  const handleHRApproval = async (status) => {
+    if (!remarks.trim()) {
+      alert('Please provide remarks for this action.');
+      return;
+    }
+    
+    setActionLoading(true);
+    try {
+      await api.hrApproveDispute(selectedDispute.id, { 
+        hr_id: user.user_id,
+        action: status, 
+        remarks 
+      });
+      setSelectedDispute(null);
+      setRemarks('');
+      fetchDisputes();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Failed to update appeal');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -349,6 +372,13 @@ export const LeadDisputeDashboard = ({ user }) => {
                       remarks={selectedDispute.admin_remarks}
                       color="border-neutral-100"
                     />
+                    <StatusBox 
+                      title="HR Review"
+                      status={selectedDispute.hr_status || 'pending'}
+                      date={selectedDispute.hr_approved_at}
+                      remarks={selectedDispute.hr_remarks}
+                      color={selectedDispute.hr_status === 'approved' ? 'border-green-200' : selectedDispute.hr_status === 'rejected' ? 'border-red-200' : 'border-neutral-100'}
+                    />
                   </div>
                 </div>
 
@@ -374,7 +404,7 @@ export const LeadDisputeDashboard = ({ user }) => {
                             onClick={() => handleApproval('rejected')}
                             loading={actionLoading}
                           >
-                            <XCircle size={18} /> Reject
+                            <XCircle size={18} /> Reject as Lead
                           </Button>
                           <Button 
                             variant="success" 
@@ -382,11 +412,29 @@ export const LeadDisputeDashboard = ({ user }) => {
                             onClick={() => handleApproval('approved')}
                             loading={actionLoading}
                           >
-                            <CheckCircle2 size={18} /> Approve
+                            <CheckCircle2 size={18} /> Approve as Lead
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-primary-100">
+                          <Button 
+                            variant="danger" 
+                            className="w-full py-3 flex items-center justify-center gap-2 shadow-lg shadow-red-100"
+                            onClick={() => handleHRApproval('rejected')}
+                            loading={actionLoading}
+                          >
+                            <XCircle size={18} /> Reject as HR
+                          </Button>
+                          <Button 
+                            variant="primary" 
+                            className="w-full py-3 flex items-center justify-center gap-2 shadow-lg shadow-blue-100 bg-blue-600 hover:bg-blue-700"
+                            onClick={() => handleHRApproval('approved')}
+                            loading={actionLoading}
+                          >
+                            <CheckCircle2 size={18} /> Approve as HR
                           </Button>
                         </div>
                         <p className="text-[10px] text-primary-600 italic text-center">
-                          Approving this will move the dispute to the Admin stage.
+                          Lead approval moves to Admin stage. HR approval finalizes the dispute.
                         </p>
                       </div>
                     ) : (

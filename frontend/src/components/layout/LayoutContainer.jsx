@@ -11,6 +11,7 @@ export const LayoutContainer = ({
   breadcrumbs = [],
   notifications = [],
   onNotificationClick,
+  grantedTabs = [],
 }) => {
   return (
     <div className="h-screen bg-neutral-50 flex flex-col overflow-hidden">
@@ -31,6 +32,7 @@ export const LayoutContainer = ({
           activeTab={activeTab}
           onTabChange={onTabChange}
           user={user}
+          grantedTabs={grantedTabs}
         />
 
         {/* Main Content */}

@@ -39,8 +39,14 @@ import {
 import { AttendanceCalendar } from "./calendar/AttendanceCalendar";
 import { HolidayCalendar } from "./calendar/HolidayCalendar";
 import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
+import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
+import { PayrollTab } from "./salary/PayrollTab";
 import { SettingsTab } from "./dashboard/SettingsTab";
+import { DepartmentManager } from "./departments/DepartmentManager";
+import { DataExportPanel } from "./export/DataExportPanel";
+import { AuditLogTab } from "./audit/AuditLogTab";
+import { HRDisputesTab } from "./disputes/HRDisputesTab";
 import { formatTime12h, formatDateLocal } from "../utils/formatters";
 import { LeadDisputeDashboard } from "./LeadDisputeDashboard";
 
@@ -131,6 +137,7 @@ function EmployeeDashboard({ user, onLogout }) {
   const [isSyncing, setIsSyncing] = useState(false);
   const [recordingState, setRecordingState] = useState("idle");
   const [leaveTypes, setLeaveTypes] = useState([]);
+  const [grantedTabs, setGrantedTabs] = useState([]);
 
   // Subscribe to recording state changes from the Electron main process.
   // Shows an in-app transparency banner whenever the admin has started a recording session.
@@ -151,6 +158,14 @@ function EmployeeDashboard({ user, onLogout }) {
       )
       .catch(console.error);
   }, []);
+
+  // Fetch granted admin tabs for HR/lead employees
+  useEffect(() => {
+    if (!user?.user_id) return;
+    api.getMyTabAccess(user.user_id)
+      .then((res) => setGrantedTabs(res.data.tabs || []))
+      .catch(console.error);
+  }, [user?.user_id]);
 
   const handleSyncAttendance = async () => {
     setIsSyncing(true);
@@ -453,12 +468,32 @@ function EmployeeDashboard({ user, onLogout }) {
   };
 
   // Breadcrumb trails
+  const getBreadcrumbLabel = (tabId) => {
+    const adminLabels = {
+      "admin-payroll": "Payroll",
+      "admin-leaves": "Leave Requests (Admin)",
+      "admin-leave-allocation": "Leave Allocation",
+      "admin-holidays": "Holidays",
+      "admin-departments": "Departments",
+      "admin-export": "Data Export",
+      "admin-audit": "Audit Logs",
+      "admin-overview": "Analytics",
+      "admin-attendance": "Attendance",
+      "admin-screenshots": "Screenshots",
+      "admin-recording": "Recording",
+      "admin-employees": "Employees",
+      "admin-disputes": "Appeals",
+      "admin-settings": "Settings (Admin)",
+    };
+    return adminLabels[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1).replace(/^admin-/, "");
+  };
+
   const breadcrumbs = [
     { label: "Dashboard", active: activeTab === "overview" },
     ...(activeTab !== "overview" &&
     activeTab !== "salary" &&
     activeTab !== "disputes"
-      ? [{ label: activeTab.charAt(0).toUpperCase() + activeTab.slice(1) }]
+      ? [{ label: getBreadcrumbLabel(activeTab) }]
       : []),
   ];
 
@@ -565,6 +600,58 @@ function EmployeeDashboard({ user, onLogout }) {
       });
     }
 
+    // Add admin tabs the user has been granted via Feature Access
+    if (grantedTabs.length > 0) {
+      const adminTabMap = {
+        payroll: {
+          id: "admin-payroll",
+          label: "Payroll",
+          content: <PayrollTab />,
+        },
+        disputes: {
+          id: "admin-disputes",
+          label: "Appeals",
+          content: <HRDisputesTab user={user} />,
+        },
+        leaves: {
+          id: "admin-leaves",
+          label: "Leave Requests (Admin)",
+          content: <LeaveRequestHub user={user} isAdmin={true} />,
+        },
+        holidays: {
+          id: "admin-holidays",
+          label: "Holidays",
+          content: <HolidayCalendar isAdmin={true} />,
+        },
+        departments: {
+          id: "admin-departments",
+          label: "Departments",
+          content: <DepartmentManager />,
+        },
+        export: {
+          id: "admin-export",
+          label: "Data Export",
+          content: <DataExportPanel />,
+        },
+        audit: {
+          id: "admin-audit",
+          label: "Audit Logs",
+          content: <AuditLogTab />,
+        },
+        "leave-allocation": {
+          id: "admin-leave-allocation",
+          label: "Leave Allocation",
+          content: <LeaveAllocationTab employees={[]} user={user} />,
+        },
+      };
+
+      for (const tabKey of grantedTabs) {
+        if (adminTabMap[tabKey] && !baseTabs.find((t) => t.id === adminTabMap[tabKey].id)) {
+          baseTabs.push(adminTabMap[tabKey]);
+        }
+      }
+    }
+
     return baseTabs;
   }, [
     stats,
@@ -586,6 +673,7 @@ function EmployeeDashboard({ user, onLogout }) {
     fetchSalaryPaidHistory,
     fetchSalaryDeductionHistory,
     fetchDisputeData,
+    grantedTabs,
   ]);
 
   return (
@@ -631,6 +719,7 @@ function EmployeeDashboard({ user, onLogout }) {
         breadcrumbs={breadcrumbs}
         notifications={notifications}
         onNotificationClick={handleNotificationClick}
+        grantedTabs={grantedTabs}
       >
         <>
           {/* ... existing header and stats ... */}

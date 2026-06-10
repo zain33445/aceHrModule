@@ -117,7 +117,7 @@ router.post('/', async (req, res) => {
 
 // Approve/Reject leave request
 router.put('/:id/status', async (req, res) => {
-  const { status, reviewed_by } = req.body; // status: 'APPROVED' | 'REJECTED' | 'CANCELLED'
+  const { status, reviewed_by, action_role } = req.body; // status: 'APPROVED' | 'REJECTED' | 'CANCELLED'
   
   if (!['APPROVED', 'REJECTED', 'CANCELLED'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
@@ -138,7 +138,7 @@ router.put('/:id/status', async (req, res) => {
       // 2. Update Request Status
       const request = await tx.leaveRequest.update({
         where: { id: reqId },
-        data: { status, reviewed_by: reviewed_by ? String(reviewed_by) : undefined },
+        data: { status, reviewed_by: reviewed_by ? String(reviewed_by) : undefined, action_role: action_role || null },
         include: { user: { select: { id: true, name: true } } }
       });
 

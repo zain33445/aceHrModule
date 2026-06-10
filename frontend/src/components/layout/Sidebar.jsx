@@ -18,9 +18,10 @@ import {
   Download,
   Camera,
   Video,
+  ShieldCheck,
 } from 'lucide-react';
 
-export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
+export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs = [] }) => {
   const [isCollapsed, setIsCollapsed] = useState(() => {
     try {
       const saved = localStorage.getItem('isCollapsed');
@@ -95,6 +96,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
           { id: 'holidays', label: 'Holidays', icon: CalendarHeart },
           { id: 'export', label: 'Data Export', icon: Download },
           { id: 'audit', label: 'Audit Logs', icon: Activity },
+          { id: 'feature-access', label: 'Feature Access', icon: ShieldCheck },
           { id: 'settings', label: 'Settings', icon: Settings },
         ]
       : [
@@ -105,6 +107,33 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user }) => {
           { id: 'disputes', label: 'My Appeals', icon: FileText },
           { id: 'settings', label: 'Settings', icon: Settings },
         ];
+
+  // Add granted admin tabs for non-admin users (HR feature access)
+  if (normalizedRole !== 'admin' && grantedTabs.length > 0) {
+    const adminTabNavMap = {
+      payroll: { id: 'admin-payroll', label: 'Payroll', icon: Banknote },
+      leaves: { id: 'admin-leaves', label: 'Leave Requests (Admin)', icon: PlaneTakeoff },
+      'leave-allocation': { id: 'admin-leave-allocation', label: 'Leave Allocation', icon: CalendarHeart },
+      holidays: { id: 'admin-holidays', label: 'Holidays', icon: CalendarHeart },
+      departments: { id: 'admin-departments', label: 'Departments', icon: Building2 },
+      export: { id: 'admin-export', label: 'Data Export', icon: Download },
+      audit: { id: 'admin-audit', label: 'Audit Logs', icon: Activity },
+      overview: { id: 'admin-overview', label: 'Analytics', icon: LayoutDashboard },
+      attendance: { id: 'admin-attendance', label: 'Attendance', icon: Clock },
+      screenshots: { id: 'admin-screenshots', label: 'Screenshots', icon: Camera },
+      recording: { id: 'admin-recording', label: 'Recording', icon: Video },
+      employees: { id: 'admin-employees', label: 'Employees', icon: Users },
+      disputes: { id: 'admin-disputes', label: 'Appeals', icon: FileText },
+      settings: { id: 'admin-settings', label: 'Settings (Admin)', icon: Settings },
+    };
+
+    for (const tabKey of grantedTabs) {
+      const mapped = adminTabNavMap[tabKey];
+      if (mapped && !navItems.find((n) => n.id === mapped.id)) {
+        navItems.push(mapped);
+      }
+    }
+  }
 
   // Add Lead Dashboard if user is a lead
   if (normalizedRole !== 'admin' && isLead) {
