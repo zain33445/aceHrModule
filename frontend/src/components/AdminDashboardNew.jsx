@@ -45,7 +45,7 @@ import { PayrollTab } from "./salary/PayrollTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
 import TabAccessManager from "./dashboard/TabAccessManager";
-import { formatDateLocal, formatTime12h } from "../utils/formatters";
+import { formatDateLocal, formatTime12h, calculateWorkingHours } from "../utils/formatters";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
 
 function AdminDashboardNew({
@@ -763,7 +763,7 @@ function AttendanceTab({
                             {formatTime12h(record.check_out_time)}
                           </td>
                           <td className="px-6 py-4">
-                            {record.total_hours?.toFixed(2) || "-"} hrs
+                            {calculateWorkingHours(record.check_in_time, record.check_out_time) || "-"}
                           </td>
                           <td className="px-6 py-4">
                             <Badge

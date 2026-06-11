@@ -47,7 +47,7 @@ import { DepartmentManager } from "./departments/DepartmentManager";
 import { DataExportPanel } from "./export/DataExportPanel";
 import { AuditLogTab } from "./audit/AuditLogTab";
 import { HRDisputesTab } from "./disputes/HRDisputesTab";
-import { formatTime12h, formatDateLocal } from "../utils/formatters";
+import { formatTime12h, formatDateLocal, calculateWorkingHours } from "../utils/formatters";
 import { OvertimeEmployeeTab } from "./overtime/OvertimeEmployeeTab";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
 import { LeadDisputeDashboard } from "./LeadDisputeDashboard";
@@ -1189,6 +1189,9 @@ function AttendanceTab({
                       <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">
                         Check Out
                       </th>
+                      <th className="px-6 py-3 text-left text-xs font-semibold text-neutral-500 uppercase tracking-wider">
+                        Hours
+                      </th>
                       <th className="px-6 py-3 text-center text-xs font-semibold text-neutral-500 uppercase tracking-wider">
                         Status
                       </th>
@@ -1232,6 +1235,9 @@ function AttendanceTab({
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap font-mono text-sm">
                                 {formatTime12h(log.check_out_time)}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap font-mono text-sm text-neutral-600">
+                                {calculateWorkingHours(log.check_in_time, log.check_out_time) || "-"}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-center">
                                 <span

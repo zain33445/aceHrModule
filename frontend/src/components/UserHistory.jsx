@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Clock, Calendar } from 'lucide-react';
 import api from '../services/api';
-import { formatTime12h, formatDateLocal } from '../utils/formatters';
+import { formatTime12h, formatDateLocal, calculateWorkingHours } from '../utils/formatters';
 
 function UserHistory({ user, onBack }) {
   const [logs, setLogs] = useState([]);
@@ -112,6 +112,7 @@ function UserHistory({ user, onBack }) {
                 <th><Calendar size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} /> Date</th>
                 <th>Check-In</th>
                 <th>Check-Out</th>
+                <th>Hours</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -138,6 +139,9 @@ function UserHistory({ user, onBack }) {
                       ) : (
                         <span style={{ color: '#94a3b8' }}>--:--</span>
                       )}
+                    </td>
+                    <td style={{ color: '#94a3b8', fontFamily: 'monospace' }}>
+                      {calculateWorkingHours(record.check_in_time, record.check_out_time) || '-'}
                     </td>
                     <td>
                       <span className={`badge ${record.status === 'present' ? 'badge-success' :
