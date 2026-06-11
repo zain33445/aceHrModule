@@ -103,7 +103,7 @@ router.put('/:id/lead-approval', async (req, res) => {
   
   try {
     let dispute;
-    if (action === 'approve') {
+    if (action === 'approve' || action === 'approved') {
       dispute = await DisputeService.leadApprove(Number(id), lead_id, remarks);
     } else {
       dispute = await DisputeService.leadReject(Number(id), lead_id, remarks);
@@ -121,7 +121,7 @@ router.put('/:id/hr-approval', async (req, res) => {
 
   try {
     let dispute;
-    if (action === 'approve') {
+    if (action === 'approve' || action === 'approved') {
       dispute = await DisputeService.hrApprove(Number(id), hr_id, remarks);
     } else {
       dispute = await DisputeService.hrReject(Number(id), hr_id, remarks);
@@ -139,7 +139,7 @@ router.put('/:id/admin-approval', async (req, res) => {
   
   try {
     let dispute;
-    if (action === 'approve') {
+    if (action === 'approve' || action === 'approved') {
       dispute = await DisputeService.adminApprove(Number(id), admin_id, remarks);
     } else {
       dispute = await DisputeService.adminReject(Number(id), admin_id, remarks);
