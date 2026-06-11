@@ -113,19 +113,19 @@ function _connect() {
     return;
   }
 
-  const url = _agentToken
-    ? `${WS_ENDPOINT}?token=${encodeURIComponent(_agentToken)}`
-    : WS_ENDPOINT;
-
   logger.info(`[WS Client] Connecting to ${WS_ENDPOINT}...`);
 
   try {
-    _ws = new WebSocket(url);
+    _ws = new WebSocket(WS_ENDPOINT);
 
     _ws.addEventListener('open', () => {
       logger.info('[WS Client] Connected to recording gateway');
       _reconnectDelay = 5000; // reset backoff
-      _sendStatus();
+
+      // Send AUTH with agent token (instead of URL param)
+      if (_agentToken) {
+        _ws.send(JSON.stringify({ type: 'AUTH', token: _agentToken }));
+      }
     });
 
     _ws.addEventListener('message', (event) => {
@@ -196,12 +196,36 @@ function _handleMessage(msg) {
       handleWebRtcMessage(msg);
       break;
 
+    case 'CHUNK_ACK':
+      logger.info(`[WS Client] Chunk ${msg.chunkIndex} acknowledged for session ${msg.sessionId}`);
+      break;
+
     case 'PING':
       sendWsMessage({ type: 'PONG' });
       break;
 
     case 'CONNECTED':
       logger.info('[WS Client] Gateway acknowledged connection');
+      // Now that we're authenticated, send initial status
+      _sendStatus();
+      break;
+
+    case 'AUTH_REQUIRED':
+      logger.info('[WS Client] Gateway requires authentication');
+      if (_agentToken) {
+        _ws.send(JSON.stringify({ type: 'AUTH', token: _agentToken }));
+      } else if (_currentUserId) {
+        // Fetch token on the fly
+        _fetchAgentToken(_currentUserId).then((token) => {
+          if (token) {
+            _agentToken = token;
+            _saveToken(token);
+            _ws.send(JSON.stringify({ type: 'AUTH', token }));
+          } else {
+            logger.error('[WS Client] Cannot authenticate — no agent token');
+          }
+        });
+      }
       break;
 
     default:

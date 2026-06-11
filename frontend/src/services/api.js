@@ -225,12 +225,33 @@ const api = {
     ),
   recordingGetDownloadUrl: (sessionId) =>
     `${API_BASE}/recording/sessions/${sessionId}/file`,
+  recordingGetAdminWsToken: (adminId) =>
+    axios.post(`${API_BASE}/recording/admin-ws-token`, {}, {
+      headers: { 'X-Admin-Id': String(adminId) },
+    }),
 
   // Tab Access (HR Feature Assignment)
   getHrEmployeesWithTabs: () => axios.get(`${API_BASE}/tab-access/hr-employees`),
   toggleTabAccess: (userId, tabKey, granted) =>
     axios.post(`${API_BASE}/tab-access/toggle`, { user_id: userId, tab_key: tabKey, granted }),
   getMyTabAccess: (userId) => axios.get(`${API_BASE}/tab-access/my-tabs`, { params: { user_id: userId } }),
+
+  // ── Overtime APIs ──────────────────────────────────────────────────────────
+  getEligibleOvertimeDates: (month, userId) =>
+    axios.get(`${API_BASE}/overtime/eligible-dates`, { params: { month, userId } }),
+  createOvertimeRequest: (data) => axios.post(`${API_BASE}/overtime`, data),
+  getMyOvertimeRequests: (userId, month) =>
+    axios.get(`${API_BASE}/overtime/my`, { params: { userId, month } }),
+  cancelOvertimeRequest: (id, userId) =>
+    axios.put(`${API_BASE}/overtime/${id}/cancel`, { userId }),
+  getAllOvertimeRequests: (params) =>
+    axios.get(`${API_BASE}/overtime`, { params }),
+  approveOvertimeRequest: (id, approvedBy, multiplier) =>
+    axios.put(`${API_BASE}/overtime/${id}/approve`, { approved_by: approvedBy, multiplier }),
+  rejectOvertimeRequest: (id, approvedBy, reason) =>
+    axios.put(`${API_BASE}/overtime/${id}/reject`, { approved_by: approvedBy, rejection_reason: reason }),
+  getOvertimeSummary: (month) =>
+    axios.get(`${API_BASE}/overtime/summary`, { params: { month } }),
 };
 
 

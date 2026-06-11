@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { OvertimeService } from '../services/overtime.service';
 
 const router = Router();
 
@@ -130,7 +131,24 @@ router.get('/report/salary-report', async (req, res) => {
         const unpaidAbsenceDates = records.filter(r => r.status === 'absent').map(r => r.date.toISOString().split('T')[0]);
 
         const deductions  = deductionMap.get(user.id) || 0;
-        const totalSalary = Math.max(0, user.monthly_salary - deductions);
+
+        // Fetch overtime aggregation for the period
+        let overtimePay = 0;
+        let overtimeHours = 0;
+        if (start_date && end_date) {
+          try {
+            const otAgg = await OvertimeService.getUserMonthlyAggregation(
+              user.id,
+              new Date(start_date as string)
+            );
+            overtimePay = otAgg.overtime_pay;
+            overtimeHours = otAgg.overtime_hours;
+          } catch (err) {
+            // Silently continue if overtime service fails
+          }
+        }
+
+        const totalSalary = Math.max(0, user.monthly_salary - deductions + overtimePay);
 
         return {
           id: user.id,
@@ -143,6 +161,8 @@ router.get('/report/salary-report', async (req, res) => {
           unpaid_absence_dates: unpaidAbsenceDates,
           paid_leaves_used: paidLeavesUsed,
           deductions: parseFloat(deductions.toFixed(2)),
+          overtime_pay: overtimePay,
+          overtime_hours: overtimeHours,
           total_salary: parseFloat(totalSalary.toFixed(2)),
           remaining_leaves: remainingLeaves,
           period: {

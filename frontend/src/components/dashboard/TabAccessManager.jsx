@@ -17,6 +17,7 @@ const ALL_TABS = [
   { key: "recording", label: "Recording" },
   { key: "holidays", label: "Holidays" },
   { key: "export", label: "Export" },
+  { key: "overtime", label: "Overtime" },
   { key: "audit", label: "Audit Logs" },
   { key: "settings", label: "Settings" },
 ];

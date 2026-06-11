@@ -16,8 +16,11 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server, IncomingMessage } from 'http';
 import { Socket } from 'net';
+import jwt from 'jsonwebtoken';
 import { verifyAgentToken } from '../middleware/requireAgentToken';
 import prisma from '../prisma';
+
+const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
 
 // ─────────────────────────────────────────
 // Types
@@ -32,7 +35,8 @@ export type WsMessageType =
   | 'CONNECTED'
   | 'WEBRTC_OFFER'
   | 'WEBRTC_ANSWER'
-  | 'WEBRTC_ICE_CANDIDATE';
+  | 'WEBRTC_ICE_CANDIDATE'
+  | 'CHUNK_ACK';
 
 export interface WsCommand {
   type: WsMessageType;
@@ -45,6 +49,7 @@ export interface WsCommand {
   offer?: any;
   answer?: any;
   candidate?: any;
+  chunkIndex?: number;
 }
 
 export interface ScheduleEntry {
@@ -73,28 +78,36 @@ export class RecordingGateway {
       const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
       
       if (url.pathname === '/recording-ws') {
-        const token = url.searchParams.get('token');
-        if (!token) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
-        const agentInfo = verifyAgentToken(token);
-        if (!agentInfo) {
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
+        // Auth via AUTH message after upgrade (token no longer in URL)
         this.wss.handleUpgrade(req, socket, head, (ws) => {
-          this.onConnection(ws, agentInfo.userId);
+          this.onPendingConnection(ws);
         });
       } else if (url.pathname === '/admin-recording-ws') {
         console.log(`[WS Gateway] Admin upgrade request received: ${req.url}`);
+        
+        // Try JWT token first (more secure)
+        const token = url.searchParams.get('token');
+        if (token) {
+          try {
+            const decoded = jwt.verify(token, AGENT_SECRET) as any;
+            if (decoded.role === 'admin-ws' || decoded.role === 'admin' || decoded.role === 'superadmin') {
+              const adminId = decoded.sub;
+              console.log(`[WS Gateway] Admin upgrade accepted via token for ${adminId}`);
+              this.wss.handleUpgrade(req, socket, head, (ws) => {
+                this.onAdminConnection(ws, adminId);
+              });
+              return;
+            }
+          } catch {}
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        // Fallback: adminId + DB role check (legacy)
         const adminId = url.searchParams.get('adminId');
         if (!adminId) {
-          console.warn(`[WS Gateway] Admin upgrade rejected: Missing adminId`);
+          console.warn(`[WS Gateway] Admin upgrade rejected: Missing adminId or token`);
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
           socket.destroy();
           return;
@@ -115,7 +128,7 @@ export class RecordingGateway {
             return;
           }
           
-          console.log(`[WS Gateway] Admin upgrade accepted for ${adminId}`);
+          console.log(`[WS Gateway] Admin upgrade accepted for ${adminId} (legacy)`);
           this.wss.handleUpgrade(req, socket, head, (ws) => {
             this.onAdminConnection(ws, adminId);
           });
@@ -131,6 +144,62 @@ export class RecordingGateway {
     });
 
     console.log('[WS Gateway] Recording WebSocket gateways initialized (/recording-ws and /admin-recording-ws)');
+  }
+
+  // ─────────────────────────────────────────
+  // Pending / Auth Lifecycle
+  // ─────────────────────────────────────────
+
+  private pendingAgents: Map<WebSocket, NodeJS.Timeout> = new Map();
+
+  private onPendingConnection(ws: WebSocket): void {
+    // Send auth challenge
+    this.send(ws, { type: 'AUTH_REQUIRED' });
+
+    // Timeout — disconnect if no AUTH within 10s
+    const timeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        console.warn('[WS Gateway] Pending connection timed out — closing');
+        ws.close(4001, 'Auth timeout');
+      }
+      this.pendingAgents.delete(ws);
+    }, 10_000);
+    this.pendingAgents.set(ws, timeout);
+
+    const onMessage = (data: Buffer) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'AUTH') {
+          if (!msg.token) {
+            ws.close(4001, 'Missing token');
+            return;
+          }
+          const agentInfo = verifyAgentToken(msg.token);
+          if (!agentInfo) {
+            ws.close(4001, 'Invalid token');
+            return;
+          }
+          // Clean up pending state
+          const t = this.pendingAgents.get(ws);
+          if (t) clearTimeout(t);
+          this.pendingAgents.delete(ws);
+          ws.removeListener('message', onMessage);
+          // Promote to authenticated agent
+          this.onConnection(ws, agentInfo.userId);
+        } else {
+          ws.close(4001, 'First message must be AUTH');
+        }
+      } catch {
+        ws.close(4001, 'Invalid auth message');
+      }
+    };
+
+    ws.on('message', onMessage);
+    ws.on('close', () => {
+      const t = this.pendingAgents.get(ws);
+      if (t) clearTimeout(t);
+      this.pendingAgents.delete(ws);
+    });
   }
 
   // ─────────────────────────────────────────
@@ -291,6 +360,7 @@ export class RecordingGateway {
 
       case 'WEBRTC_ANSWER':
       case 'WEBRTC_ICE_CANDIDATE':
+      case 'WEBRTC_ERROR':
         // Route signaling message from Agent back to Admin
         if (msg.adminId) {
           const adminWs = this.admins.get(msg.adminId);

@@ -40,7 +40,7 @@ router.get('/hr-employees', async (req, res) => {
     const allTabKeys = [
       'overview', 'attendance', 'payroll', 'leaves', 'leave-allocation',
       'disputes', 'departments', 'screenshots', 'employees', 'recording',
-      'holidays', 'export', 'audit', 'settings'
+      'holidays', 'overtime', 'export', 'audit', 'settings'
     ];
 
     const employeesWithTabs = employees.map(emp => {

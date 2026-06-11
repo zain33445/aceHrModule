@@ -46,6 +46,7 @@ import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
 import TabAccessManager from "./dashboard/TabAccessManager";
 import { formatDateLocal, formatTime12h } from "../utils/formatters";
+import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
 
 function AdminDashboardNew({
   employees = [],
@@ -568,6 +569,11 @@ function AdminDashboardNew({
         id: "holidays",
         label: "Holidays",
         content: <HolidayCalendar isAdmin={true} />,
+      },
+      {
+        id: "overtime",
+        label: "Overtime",
+        content: <OvertimeAdminTab user={user} />,
       },
       {
         id: "export",

@@ -129,42 +129,49 @@ export const PayrollTab = ({ report: propReport, loading: propLoading, onMonthCh
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Base Salary</th>
-                    <th>Deductions</th>
-                    <th>Leaves Used</th>
-                    <th>Net Payable</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(report || []).slice(0, 20).map((emp) => (
-                    <tr key={emp.id}>
-                      <td>
-                        <p className="font-medium">{emp.name}</p>
-                        <p className="text-xs text-neutral-600">ID: {emp.id}</p>
-                      </td>
-                      <td>PKR {emp.monthly_salary?.toLocaleString()}</td>
-                      <td className="text-error">PKR {emp.deductions?.toLocaleString()}</td>
-                      <td>{emp.paid_leaves_used} days</td>
-                      <td className="font-bold text-primary-600">PKR {emp.total_salary?.toLocaleString()}</td>
-                      <td>
-                        <PayslipPDFButton
-                          employeeName={emp.name}
-                          salaryData={{
-                            userId: emp.id,
-                            monthly_salary: emp.monthly_salary,
-                            deductions: emp.deductions,
-                            paid_leaves_used: emp.paid_leaves_used,
-                            total_salary: emp.total_salary,
-                            date: new Date(),
-                          }}
-                        />
-                      </td>
+                  <thead>
+                    <tr>
+                      <th>Employee</th>
+                      <th>Base Salary</th>
+                      <th>OT Hours</th>
+                      <th>OT Pay</th>
+                      <th>Deductions</th>
+                      <th>Leaves Used</th>
+                      <th>Net Payable</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
+                  </thead>
+                  <tbody>
+                    {(report || []).slice(0, 20).map((emp) => (
+                      <tr key={emp.id}>
+                        <td>
+                          <p className="font-medium">{emp.name}</p>
+                          <p className="text-xs text-neutral-600">ID: {emp.id}</p>
+                        </td>
+                        <td>PKR {emp.monthly_salary?.toLocaleString()}</td>
+                        <td>{emp.overtime_hours ? `${emp.overtime_hours}h` : "-"}</td>
+                        <td className="text-success">
+                          {emp.overtime_pay ? `PKR ${emp.overtime_pay?.toLocaleString()}` : "-"}
+                        </td>
+                        <td className="text-error">PKR {emp.deductions?.toLocaleString()}</td>
+                        <td>{emp.paid_leaves_used} days</td>
+                        <td className="font-bold text-primary-600">PKR {emp.total_salary?.toLocaleString()}</td>
+                        <td>
+                          <PayslipPDFButton
+                            employeeName={emp.name}
+                            salaryData={{
+                              userId: emp.id,
+                              monthly_salary: emp.monthly_salary,
+                              deductions: emp.deductions,
+                              overtime_pay: emp.overtime_pay,
+                              paid_leaves_used: emp.paid_leaves_used,
+                              total_salary: emp.total_salary,
+                              date: new Date(),
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { OvertimeService } from '../services/overtime.service';
 
 const router = Router();
 
@@ -56,9 +57,19 @@ router.post('/bulk-pay', async (req, res) => {
       });
 
       const deductions = deductionAgg._sum.amount || 0;
-      const finalSalary = Math.max(0, user.monthly_salary - deductions);
 
-      // 2. Check if already paid this month to avoid duplicates
+      // 3. Get approved overtime pay for this month
+      const otAgg = await OvertimeService.getUserMonthlyAggregation(user.id, paymentDate);
+      const overtimePay = otAgg.overtime_pay;
+
+      // 4. Mark approved overtime as paid
+      if (overtimePay > 0) {
+        await OvertimeService.markAsPaid(user.id, paymentDate);
+      }
+
+      const finalSalary = Math.max(0, user.monthly_salary - deductions + overtimePay);
+
+      // 5. Check if already paid this month to avoid duplicates
       const existing = await prisma.salary.findFirst({
         where: {
           user_id: user.id,
@@ -71,8 +82,9 @@ router.post('/bulk-pay', async (req, res) => {
           data: {
             user_id: user.id,
             date: paymentDate,
-            // base_salary: user.monthly_salary,
+            base_salary: user.monthly_salary,
             deduction: deductions,
+            overtime_pay: overtimePay,
             paid_salary: finalSalary
           }
         });

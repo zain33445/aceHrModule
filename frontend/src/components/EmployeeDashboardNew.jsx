@@ -48,6 +48,8 @@ import { DataExportPanel } from "./export/DataExportPanel";
 import { AuditLogTab } from "./audit/AuditLogTab";
 import { HRDisputesTab } from "./disputes/HRDisputesTab";
 import { formatTime12h, formatDateLocal } from "../utils/formatters";
+import { OvertimeEmployeeTab } from "./overtime/OvertimeEmployeeTab";
+import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
 import { LeadDisputeDashboard } from "./LeadDisputeDashboard";
 
 function EmployeeDashboard({ user, onLogout }) {
@@ -586,6 +588,11 @@ function EmployeeDashboard({ user, onLogout }) {
         ),
       },
       {
+        id: "overtime",
+        label: "Overtime",
+        content: <OvertimeEmployeeTab user={user} />,
+      },
+      {
         id: "settings",
         label: "Settings",
         content: <SettingsTab user={user} />,
@@ -642,6 +649,11 @@ function EmployeeDashboard({ user, onLogout }) {
           id: "admin-leave-allocation",
           label: "Leave Allocation",
           content: <LeaveAllocationTab employees={[]} user={user} />,
+        },
+        overtime: {
+          id: "admin-overtime",
+          label: "Overtime",
+          content: <OvertimeAdminTab user={user} />,
         },
       };
 

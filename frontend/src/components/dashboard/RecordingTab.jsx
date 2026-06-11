@@ -583,7 +583,7 @@ function DetailItem({ label, value, mono }) {
   );
 }
 
-// ─── MSE Live Player ──────────────────────────────────────────────────────────
+// ─── Live Player (WebRTC + HTTP fallback) ─────────────────────────────────────
 
 function LivePlayer({ sessionId, adminId, targetUserId }) {
   const videoRef = useRef(null);
@@ -591,6 +591,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
+  const refs = useRef({}).current;
 
   useEffect(() => {
     if (!targetUserId) {
@@ -599,76 +600,175 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
     }
 
     let destroyed = false;
-    const wsBaseUrl = import.meta.env.VITE_API_BASE?.trim().replace(/^http/, 'ws').replace(/\/api\/?$/, '') || 'ws://localhost:5000';
-    const wsUrl = `${wsBaseUrl}/admin-recording-ws?adminId=${adminId}`;
-    
-    let ws = new WebSocket(wsUrl);
-    let pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
 
-    pc.ontrack = (event) => {
-      if (videoRef.current) {
-        videoRef.current.srcObject = event.streams[0];
-      }
-    };
+    const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:5000/api').replace(/\/+$/, '');
+    const wsBaseUrl = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    const streamUrl = `${apiBase}/recording/sessions/${sessionId}/stream`;
 
-    pc.onicecandidate = (event) => {
-      if (event.candidate && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'WEBRTC_ICE_CANDIDATE',
-          candidate: event.candidate,
-          targetUserId
-        }));
-      }
-    };
+    let ws, pc, webrtcTimer;
 
-    ws.onopen = async () => {
-      if (destroyed) { ws.close(); return; }
-      try {
-        const offer = await pc.createOffer({ offerToReceiveVideo: true });
-        await pc.setLocalDescription(offer);
-        ws.send(JSON.stringify({
-          type: 'WEBRTC_OFFER',
-          offer,
-          targetUserId
-        }));
-      } catch (err) {
-        setError(`Failed to create offer: ${err.message}`);
-      }
-    };
+    async function startWebRTC(wsUrl) {
+      ws = new WebSocket(wsUrl);
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-    ws.onmessage = async (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'WEBRTC_ANSWER') {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-        } else if (msg.type === 'WEBRTC_ICE_CANDIDATE') {
-          if (msg.candidate && msg.candidate.candidate) {
-            await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-          }
-        } else if (msg.type === 'ERROR') {
-          setError(msg.message);
+      // FIX #1: Add recvonly transceiver so SDP includes video
+      pc.addTransceiver('video', { direction: 'recvonly' });
+
+      pc.ontrack = (event) => {
+        webrtcConnected = true;
+        if (videoRef.current && !destroyed) {
+          videoRef.current.srcObject = event.streams[0];
         }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'WEBRTC_ICE_CANDIDATE',
+            candidate: event.candidate,
+            targetUserId
+          }));
+        }
+      };
+
+      // FIX #4: Monitor ICE connection state
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        if ((state === 'failed' || state === 'disconnected') && !webrtcConnected) {
+          fallbackToHttp();
+        }
+      };
+
+      ws.onopen = async () => {
+        if (destroyed) { cleanup(); return; }
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          ws.send(JSON.stringify({ type: 'WEBRTC_OFFER', offer, targetUserId }));
+        } catch (err) {
+          setError(`WebRTC offer failed: ${err.message}`);
+          fallbackToHttp();
+        }
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'WEBRTC_ANSWER') {
+            await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
+          } else if (msg.type === 'WEBRTC_ICE_CANDIDATE') {
+            if (msg.candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            }
+          } else if (msg.type === 'WEBRTC_ERROR') {
+            // FIX #3: Handle agent WebRTC errors properly
+            setError(`Agent: ${msg.message}`);
+            fallbackToHttp();
+          }
+        } catch (err) {
+          console.error('[LivePlayer] WS message error:', err);
+        }
+      };
+
+      ws.onerror = () => {
+        if (!webrtcConnected) fallbackToHttp();
+      };
+
+      // FIX #3: Timeout — if WebRTC hasn't connected in 10s, fall back
+      webrtcTimer = setTimeout(() => {
+        if (!webrtcConnected && !destroyed) fallbackToHttp();
+      }, 10000);
+    }
+
+    let webrtcConnected = false;
+    let httpStarted = false;
+
+    function fallbackToHttp() {
+      if (httpStarted || destroyed) return;
+      httpStarted = true;
+      cleanupWebRTC();
+      startHttpStream();
+    }
+
+    async function startHttpStream() {
+      if (destroyed) return;
+      try {
+        const response = await fetch(streamUrl, {
+          headers: { 'X-Admin-Id': adminId }
+        });
+        if (!response.ok) {
+          setError(`HTTP stream failed (${response.status})`);
+          return;
+        }
+        const reader = response.body.getReader();
+
+        const ms = new MediaSource();
+        refs.mediaSource = ms;
+        if (videoRef.current) {
+          videoRef.current.src = URL.createObjectURL(ms);
+        }
+
+        ms.onsourceopen = async () => {
+          if (destroyed) { try { ms.endOfStream(); } catch {} return; }
+          let sourceBuffer;
+          try {
+            sourceBuffer = ms.addSourceBuffer('video/webm; codecs=vp8');
+          } catch {
+            try {
+              sourceBuffer = ms.addSourceBuffer('video/webm');
+            } catch {
+              setError('Browser cannot play WebM stream');
+              return;
+            }
+          }
+          while (!destroyed) {
+            const { done, value } = await reader.read();
+            if (done) {
+              if (ms.readyState === 'open') try { ms.endOfStream(); } catch {}
+              break;
+            }
+            if (sourceBuffer.updating) {
+              await new Promise(r => { sourceBuffer.onupdateend = r; });
+            }
+            try { sourceBuffer.appendBuffer(value); } catch {}
+          }
+        };
       } catch (err) {
-        console.error('[LivePlayer] WS message error:', err);
+        if (!destroyed) setError(`HTTP stream error: ${err.message}`);
       }
-    };
+    }
 
-    ws.onerror = () => {
-      setError('WebSocket connection error');
-    };
+    function cleanupWebRTC() {
+      if (webrtcTimer) clearTimeout(webrtcTimer);
+      if (ws) try { ws.close(); } catch {}
+      if (pc) try { pc.close(); } catch {}
+    }
 
-    return () => {
+    // Start with WebRTC — fetch WS token first for authenticated connection
+    api.recordingGetAdminWsToken(adminId)
+      .then(res => {
+        const wsUrl = res.data?.token
+          ? `${wsBaseUrl}/admin-recording-ws?token=${encodeURIComponent(res.data.token)}`
+          : `${wsBaseUrl}/admin-recording-ws?adminId=${adminId}`;
+        if (!destroyed) startWebRTC(wsUrl);
+      })
+      .catch(() => {
+        // Fall back to adminId-based auth if token endpoint fails
+        if (!destroyed) startWebRTC(`${wsBaseUrl}/admin-recording-ws?adminId=${adminId}`);
+      });
+
+    function cleanup() {
       destroyed = true;
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+      cleanupWebRTC();
+      if (refs.mediaSource && refs.mediaSource.readyState === 'open') {
+        try { refs.mediaSource.endOfStream(); } catch {}
       }
-      pc.close();
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
+        try { mediaRecorderRef.current.stop(); } catch {}
       }
-    };
+    }
+
+    return cleanup;
   }, [sessionId, adminId, targetUserId]);
 
   const toggleRecording = () => {

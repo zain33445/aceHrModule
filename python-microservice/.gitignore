@@ -1,0 +1,4 @@
+__pycache__/
+venv/
+sync_queue.db
+*.pyc

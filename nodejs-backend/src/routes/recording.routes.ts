@@ -18,12 +18,15 @@
 
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
+import jwt from 'jsonwebtoken';
 import { requireAdmin } from '../middleware/requireAdmin';
 import { requireAgentToken } from '../middleware/requireAgentToken';
 import { getGateway } from '../gateways/recording.gateway';
 import * as RecordingService from '../services/recording.service';
 import { recordingEmitter } from '../services/recording.service';
 import prisma from '../prisma';
+
+const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
 
 const router = Router();
 
@@ -251,80 +254,6 @@ router.get('/sessions/:sessionId/stream', requireAdmin, async (req: Request, res
 });
 
 // ─────────────────────────────────────────
-// Live Stream Feed (Admin)
-// ─────────────────────────────────────────
-
-/**
- * GET /api/recording/sessions/:sessionId/stream
- * Streams the WebM chunks to the admin dashboard for live viewing.
- */
-router.get('/sessions/:sessionId/stream', requireAdmin, async (req: Request, res: Response) => {
-  const sessionId = String(req.params.sessionId);
-
-  try {
-    const session = await prisma.recordingSession.findUnique({
-      where: { id: sessionId },
-      include: { chunks: { orderBy: { chunk_index: 'asc' } } },
-    });
-
-    if (!session) {
-      res.status(404).send('Session not found');
-      return;
-    }
-
-    res.writeHead(200, {
-      'Content-Type': 'video/webm',
-      'Transfer-Encoding': 'chunked',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    });
-
-    // Send existing chunks first
-    for (const chunk of session.chunks) {
-      if (fs.existsSync(chunk.file_path)) {
-        const data = fs.readFileSync(chunk.file_path);
-        res.write(data);
-      }
-    }
-
-    // If session is already finished, end the stream
-    if (session.status === 'stopped' || session.status === 'assembled') {
-      res.end();
-      return;
-    }
-
-    // Subscribe to new chunks
-    const onChunk = (buffer: Buffer) => {
-      res.write(buffer);
-    };
-
-    const onStop = () => {
-      res.end();
-      cleanup();
-    };
-
-    const cleanup = () => {
-      recordingEmitter.removeListener(`chunk:${sessionId}`, onChunk);
-      recordingEmitter.removeListener(`stopped:${sessionId}`, onStop);
-    };
-
-    recordingEmitter.on(`chunk:${sessionId}`, onChunk);
-    recordingEmitter.on(`stopped:${sessionId}`, onStop);
-
-    // Handle client disconnect
-    req.on('close', cleanup);
-  } catch (err: any) {
-    console.error('[Recording] Live stream error:', err.message);
-    if (!res.headersSent) {
-      res.status(500).send('Streaming error');
-    } else {
-      res.end();
-    }
-  }
-});
-
-// ─────────────────────────────────────────
 // Chunk Upload (Agent)
 // ─────────────────────────────────────────
 
@@ -360,9 +289,11 @@ router.post(
     try {
       await RecordingService.saveChunk(sessionId as string, chunkIdx, buffer);
 
-      // Notify the gateway that a chunk was received
+      // Notify the gateway that a chunk was received (FIX #8: proper message type)
       getGateway()?.broadcast(agentUser.userId, {
-        type: 'PING', // Used as ACK — agent interprets this as chunk acknowledgement
+        type: 'CHUNK_ACK',
+        sessionId: sessionId as string,
+        chunkIndex: chunkIdx,
       });
 
       res.status(201).json({ ok: true, chunkIndex: chunkIdx, sessionId });
@@ -410,6 +341,21 @@ router.get('/agents', requireAdmin, (req: Request, res: Response) => {
   const gateway = getGateway();
   const agents = gateway?.getConnectedAgents() ?? [];
   res.json({ connectedAgents: agents, count: agents.length });
+});
+
+/**
+ * POST /api/recording/admin-ws-token
+ * Issues a short-lived JWT for admin WebSocket authentication.
+ * Headers: X-Admin-Id
+ */
+router.post('/admin-ws-token', requireAdmin, (req: Request, res: Response) => {
+  const admin = (req as any).adminUser;
+  const token = jwt.sign(
+    { sub: admin.id, role: 'admin-ws' },
+    AGENT_SECRET,
+    { expiresIn: '5m' }
+  );
+  res.json({ token });
 });
 
 export default router;

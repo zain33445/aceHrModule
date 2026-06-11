@@ -26,6 +26,7 @@ import exportRoutes from './routes/export.routes';
 import monitoringRoutes from './routes/monitoring.routes';
 import recordingRoutes from './routes/recording.routes';
 import tabAccessRoutes from './routes/tab-access.routes';
+import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
@@ -88,6 +89,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/recording', recordingRoutes);
 app.use('/api/tab-access', tabAccessRoutes);
+app.use('/api/overtime', overtimeRoutes);
 
 
 app.get('/', (req, res) => {

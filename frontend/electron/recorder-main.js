@@ -8,7 +8,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { RECORDING_CHUNK_ENDPOINT, CHUNK_RETRY_CONFIG, DEFAULT_QUALITY } from './config.js';
+import { RECORDING_CHUNK_ENDPOINT, CHUNK_RETRY_CONFIG, DEFAULT_QUALITY, RECORDING_CHUNK_INTERVAL_MS } from './config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -73,6 +73,7 @@ export async function startRecording(sessionId, quality = DEFAULT_QUALITY) {
       sessionId,
       sourceId: sources[0].id,
       quality,
+      chunkIntervalMs: RECORDING_CHUNK_INTERVAL_MS,
     });
     logger.info(`[Recorder] Start sent to renderer — session ${sessionId}`);
     return true;

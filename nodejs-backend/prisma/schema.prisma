@@ -73,6 +73,8 @@ model User {
   department             Department?           @relation(fields: [department_id], references: [id])
   hr_approved_disputes   Dispute[]             @relation("DisputeHRApprover")
   tab_access             UserTabAccess[]
+  overtime_requests      OvertimeRequest[]     @relation("EmployeeOvertimeRequests")
+  overtime_approvals     OvertimeRequest[]     @relation("OvertimeApprover")
 
   @@map("users")
 }
@@ -96,11 +98,38 @@ model Salary {
   dispute_id       Int?
   base_salary      Float    @default(0.0)
   deduction        Float    @default(0.0)
+  overtime_pay     Float    @default(0.0)
   deduction_reason String?  @default("absence")
   dispute          Dispute? @relation(fields: [dispute_id], references: [id])
   user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("salaries")
+}
+
+model OvertimeRequest {
+  id               Int        @id @default(autoincrement())
+  user_id          String
+  date             DateTime
+  hours_worked     Float
+  reason           String?
+  status           String     @default("pending")
+  multiplier       Float      @default(1.5)
+  hourly_rate      Float?
+  overtime_pay     Float?
+  is_weekend       Boolean    @default(false)
+  is_holiday       Boolean    @default(false)
+  holiday_name     String?
+  approved_by      String?
+  approved_at      DateTime?
+  rejection_reason String?
+  created_at       DateTime   @default(now())
+  updated_at       DateTime   @updatedAt
+
+  user             User       @relation("EmployeeOvertimeRequests", fields: [user_id], references: [id], onDelete: Cascade)
+  approver         User?     @relation("OvertimeApprover", fields: [approved_by], references: [id])
+
+  @@unique([user_id, date])
+  @@map("overtime_requests")
 }
 
 model Commission {

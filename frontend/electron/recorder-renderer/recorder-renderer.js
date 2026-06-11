@@ -39,7 +39,7 @@ function setStatus(msg) {
 // Start Recording
 // ─────────────────────────────────────────
 
-ipcRenderer.on('recording:start', async (_event, { sessionId, sourceId, quality }) => {
+ipcRenderer.on('recording:start', async (_event, { sessionId, sourceId, quality, chunkIntervalMs }) => {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     if (currentSessionId === sessionId) {
       // Re-attach to the same session — just confirm state, no restart needed
@@ -54,8 +54,10 @@ ipcRenderer.on('recording:start', async (_event, { sessionId, sourceId, quality 
     await new Promise(resolve => setTimeout(resolve, 500));
   }
 
+  // FIX #9: Always reset chunk index on session change
   currentSessionId = sessionId;
   chunkIndex = 0;
+  recordedChunks = [];
   setStatus(`Starting session ${sessionId}...`);
 
   try {
@@ -127,9 +129,8 @@ ipcRenderer.on('recording:start', async (_event, { sessionId, sourceId, quality 
       });
     };
 
-    // Use 30-second timeslices to drastically reduce encoding flushes and IPC overhead
-    const CHUNK_INTERVAL_MS = 30_000;
-    mediaRecorder.start(CHUNK_INTERVAL_MS);
+    // Use configurable timeslices (passed from main process)
+    mediaRecorder.start(chunkIntervalMs || 30_000);
 
     setStatus(`Recording active — session ${sessionId}`);
     ipcRenderer.send('recording:state', { state: 'recording', sessionId });
@@ -188,7 +189,12 @@ function getSupportedMimeType() {
 ipcRenderer.on('recording:webrtc-in', async (_event, msg) => {
   if (msg.type === 'WEBRTC_OFFER') {
     if (!currentStream) {
-      console.error('[Recorder Renderer] Cannot accept WebRTC offer: No active screen stream.');
+      // FIX #2: Send error back to admin instead of silent reject
+      ipcRenderer.send('recording:webrtc-out', {
+        type: 'WEBRTC_ERROR',
+        message: 'No active screen stream — agent is not recording',
+        adminId: msg.adminId,
+      });
       return;
     }
 

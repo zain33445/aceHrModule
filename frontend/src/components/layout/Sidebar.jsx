@@ -19,6 +19,7 @@ import {
   Camera,
   Video,
   ShieldCheck,
+  Timer,
 } from 'lucide-react';
 
 export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs = [] }) => {
@@ -94,6 +95,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
           { id: 'employees', label: 'Employees', icon: Users },
           { id: 'departments', label: 'Departments', icon: Building2 },
           { id: 'holidays', label: 'Holidays', icon: CalendarHeart },
+          { id: 'overtime', label: 'Overtime', icon: Timer },
           { id: 'export', label: 'Data Export', icon: Download },
           { id: 'audit', label: 'Audit Logs', icon: Activity },
           { id: 'feature-access', label: 'Feature Access', icon: ShieldCheck },
@@ -105,6 +107,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
           { id: 'salary', label: 'Salary History', icon: Banknote },
           { id: 'leaves', label: 'Leave Requests', icon: PlaneTakeoff },
           { id: 'disputes', label: 'My Appeals', icon: FileText },
+          { id: 'overtime', label: 'Overtime', icon: Timer },
           { id: 'settings', label: 'Settings', icon: Settings },
         ];
 
@@ -124,6 +127,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
       recording: { id: 'admin-recording', label: 'Recording', icon: Video },
       employees: { id: 'admin-employees', label: 'Employees', icon: Users },
       disputes: { id: 'admin-disputes', label: 'Appeals', icon: FileText },
+      overtime: { id: 'admin-overtime', label: 'Overtime', icon: Timer },
       settings: { id: 'admin-settings', label: 'Settings (Admin)', icon: Settings },
     };
 

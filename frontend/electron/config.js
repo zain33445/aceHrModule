@@ -76,7 +76,7 @@ export const QUALITY_PROFILES = {
 export const DEFAULT_QUALITY = '720p';
 
 // How often MediaRecorder fires ondataavailable (milliseconds)
-export const RECORDING_CHUNK_INTERVAL_MS = 10_000; // 10 seconds
+export const RECORDING_CHUNK_INTERVAL_MS = 30_000; // 30 seconds (reduces IPC overhead)
 
 // Retry config for chunk uploads
 export const CHUNK_RETRY_CONFIG = {
