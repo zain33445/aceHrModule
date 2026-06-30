@@ -3,8 +3,8 @@ import { DISPUTE_STATUS, ACTION_TYPES } from '../constants/dispute.constants';
 import { DisputeWorkflow } from './dispute.workflow';
 
 export class DisputeService {
-  // Helper to get active working days in a month (excluding weekends)
-  private static getWorkingDaysInMonth(year: number, month: number): number {
+  // Helper to get active working days in a month (excluding weekends and holidays)
+  public static async getWorkingDaysInMonth(year: number, month: number): Promise<number> {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     let workingDays = 0;
     for (let i = 1; i <= daysInMonth; i++) {
@@ -13,17 +13,38 @@ export class DisputeService {
         workingDays++;
       }
     }
-    return workingDays > 0 ? workingDays : 30;
+
+    const startOfMonth = new Date(`${year}-${String(month + 1).padStart(2, '0')}-01T00:00:00.000Z`);
+    const endOfMonth = new Date(`${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}T23:59:59.999Z`);
+
+    const holidays = await prisma.holiday.findMany({
+      where: {
+        date: { gte: startOfMonth, lte: endOfMonth }
+      },
+      select: { date: true }
+    });
+
+    let holidayCount = 0;
+    for (const h of holidays) {
+      const dayOfWeek = h.date.getUTCDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+        holidayCount++;
+      }
+    }
+
+    const effectiveWorkingDays = workingDays - holidayCount;
+    return effectiveWorkingDays > 0 ? effectiveWorkingDays : 30;
   }
 
   // Calculate deduction amount based on category
-  public static calculateDeductionAmount(category: string, employeeSalary: number, date: Date): number {
-    const workingDays = this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
+  public static async calculateDeductionAmount(category: string, employeeSalary: number, date: Date): Promise<number> {
+    const workingDays = await this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
 
     switch (category) {
       case 'absent':
         return employeeSalary / workingDays;
       case 'late':
+        return (employeeSalary / workingDays) * 0.3;
       case 'half-day':
         return (employeeSalary / workingDays) * 0.5;
       case 'leave':
@@ -31,6 +52,49 @@ export class DisputeService {
       default:
         return 0;
     }
+  }
+
+  // Recalculate deduction totals on-the-fly using current working days (including holidays)
+  public static async getEffectiveDeductionsTotal(userId: string, startDate: Date, endDate: Date): Promise<number> {
+    const deductions = await prisma.deduction.findMany({
+      where: {
+        user_id: userId,
+        date: { gte: startDate, lte: endDate },
+        status: 'ACTIVE'
+      },
+      include: {
+        user: { select: { monthly_salary: true } }
+      }
+    });
+
+    const monthCache = new Map<string, number>();
+    let total = 0;
+
+    for (const d of deductions) {
+      if (d.type === 'leave') continue;
+
+      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+      if (!monthCache.has(monthKey)) {
+        const workingDays = await this.getWorkingDaysInMonth(
+          d.date.getFullYear(),
+          d.date.getMonth()
+        );
+        monthCache.set(monthKey, workingDays);
+      }
+
+      const workingDays = monthCache.get(monthKey)!;
+      let multiplier: number;
+      switch (d.type) {
+        case 'absent':  multiplier = 1; break;
+        case 'late':    multiplier = 0.3; break;
+        case 'half-day': multiplier = 0.5; break;
+        default:        multiplier = 0;
+      }
+
+      total += (d.user.monthly_salary / workingDays) * multiplier;
+    }
+
+    return total;
   }
 
   // Get all disputes for a user

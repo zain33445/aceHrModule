@@ -1,4 +1,5 @@
 import prisma from '../prisma';
+import { DisputeService } from './dispute.service';
 
 export class OvertimeService {
 
@@ -134,40 +135,6 @@ export class OvertimeService {
     return { message: 'Request cancelled' };
   }
 
-  private static getWorkingDaysInMonth(year: number, month: number): number {
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    let workingDays = 0;
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dayOfWeek = new Date(year, month, day).getDay();
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-        workingDays++;
-      }
-    }
-    return workingDays > 0 ? workingDays : 30;
-  }
-
-  private static async getMonthlyHolidayCount(year: number, month: number): Promise<number> {
-    const startOfMonth = new Date(`${year}-${String(month + 1).padStart(2, '0')}-01T00:00:00.000Z`);
-    const endOfMonth = new Date(`${year}-${String(month + 1).padStart(2, '0')}-31T23:59:59.999Z`);
-
-    const holidayList = await prisma.holiday.findMany({
-      where: {
-        date: { gte: startOfMonth, lte: endOfMonth }
-      },
-      select: { date: true }
-    });
-
-    // Only count holidays that fall on working days (Mon-Fri)
-    let count = 0;
-    for (const h of holidayList) {
-      const dayOfWeek = h.date.getUTCDay();
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-        count++;
-      }
-    }
-    return count;
-  }
-
   static async approveRequest(requestId: number, approverId: string, multiplier?: number) {
     const request = await prisma.overtimeRequest.findUnique({
       where: { id: requestId },
@@ -181,9 +148,7 @@ export class OvertimeService {
     const year = canonicalDate.getUTCFullYear();
     const month = canonicalDate.getUTCMonth();
 
-    const workingDays = this.getWorkingDaysInMonth(year, month);
-    const holidayCount = await this.getMonthlyHolidayCount(year, month);
-    const effectiveWorkingDays = Math.max(1, workingDays - holidayCount);
+    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month);
 
     const monthlySalary = request.user.monthly_salary;
     const hourlyRate = monthlySalary / effectiveWorkingDays / 9;

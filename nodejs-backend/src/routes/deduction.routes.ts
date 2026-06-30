@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { DisputeService } from '../services/dispute.service';
 
 const router = Router();
 
@@ -32,13 +33,45 @@ router.get('/user/:userId', async (req, res) => {
           date: 'desc'
         },
         skip,
-        take
+        take,
+        include: {
+          user: { select: { monthly_salary: true } }
+        }
       }),
       prisma.deduction.count({ where })
     ]);
 
+    // Pre-compute working days per month to avoid duplicate DB queries
+    const monthKeys = new Set(deductions.map(d =>
+      d.type !== 'leave' ? `${d.date.getFullYear()}-${d.date.getMonth()}` : ''
+    ));
+    const monthCache = new Map<string, number>();
+    await Promise.all([...monthKeys].filter(Boolean).map(async (key) => {
+      const [y, m] = key.split('-').map(Number);
+      monthCache.set(key, await DisputeService.getWorkingDaysInMonth(y, m));
+    }));
+
+    // Recalculate amounts on-the-fly using current working days
+    const records = deductions.map((d) => {
+      const { user, ...rest } = d;
+      let amount = d.amount;
+      if (d.type !== 'leave') {
+        const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+        const workingDays = monthCache.get(monthKey)!;
+        let multiplier: number;
+        switch (d.type) {
+          case 'absent':   multiplier = 1; break;
+          case 'late':     multiplier = 0.3; break;
+          case 'half-day': multiplier = 0.5; break;
+          default:         multiplier = 0;
+        }
+        amount = parseFloat(((user.monthly_salary / workingDays) * multiplier).toFixed(2));
+      }
+      return { ...rest, amount };
+    });
+
     res.json({
-      records: deductions,
+      records,
       total,
       page: Number(page),
       limit: Number(limit)

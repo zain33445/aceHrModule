@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../prisma';
 import { OvertimeService } from '../services/overtime.service';
+import { DisputeService } from '../services/dispute.service';
 
 const router = Router();
 
@@ -48,15 +49,9 @@ router.post('/bulk-pay', async (req, res) => {
       const startOfMonth = new Date(paymentDate.getFullYear(), paymentDate.getMonth(), 1);
       const endOfMonth = new Date(paymentDate.getFullYear(), paymentDate.getMonth() + 1, 0, 23, 59, 59);
 
-      const deductionAgg = await prisma.deduction.aggregate({
-        where: {
-          user_id: user.id,
-          date: { gte: startOfMonth, lte: endOfMonth }
-        },
-        _sum: { amount: true }
-      });
-
-      const deductions = deductionAgg._sum.amount || 0;
+      const deductions = await DisputeService.getEffectiveDeductionsTotal(
+        user.id, startOfMonth, endOfMonth
+      );
 
       // 3. Get approved overtime pay for this month
       const otAgg = await OvertimeService.getUserMonthlyAggregation(user.id, paymentDate);

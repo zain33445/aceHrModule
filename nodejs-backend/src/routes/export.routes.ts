@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../prisma';
 import ExcelJS from 'exceljs';
+import { DisputeService } from '../services/dispute.service';
 
 const router = Router();
 
@@ -127,16 +128,10 @@ router.get('/salary', async (req, res) => {
       const late = records.filter(r => r.status === 'late' || r.is_late).length;
       const halfday = records.filter(r => r.status === 'halfday' || r.is_halfday).length;
 
-      // Sum deductions for the month
-      const deductionSum = await prisma.deduction.aggregate({
-        where: {
-          user_id: emp.id,
-          date: { gte: monthStart, lte: monthEnd }
-        },
-        _sum: { amount: true }
-      });
-
-      const totalDeductions = deductionSum._sum.amount || 0;
+      // Sum deductions for the month (recalculated on-the-fly)
+      const totalDeductions = await DisputeService.getEffectiveDeductionsTotal(
+        emp.id, monthStart, monthEnd
+      );
       const netSalary = Math.max(0, emp.monthly_salary - totalDeductions);
 
       return {

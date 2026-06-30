@@ -380,7 +380,7 @@ export class AbsenceService {
 
       // Create deduction records if applicable
       if (isLate) {
-        const amount = DisputeService.calculateDeductionAmount('late', monthlySalary, date);
+        const amount = await DisputeService.calculateDeductionAmount('late', monthlySalary, date);
         if (amount > 0) {
           await prisma.deduction.create({
             data: {
@@ -394,7 +394,7 @@ export class AbsenceService {
       }
 
       if (isHalfday) {
-        const amount = DisputeService.calculateDeductionAmount('half-day', monthlySalary, date);
+        const amount = await DisputeService.calculateDeductionAmount('half-day', monthlySalary, date);
         if (amount > 0) {
           await prisma.deduction.create({
             data: {
@@ -579,7 +579,7 @@ export class AbsenceService {
     }
 
     if (status === 'absent') {
-      const amount = DisputeService.calculateDeductionAmount('absent', monthlySalary, date);
+      const amount = await DisputeService.calculateDeductionAmount('absent', monthlySalary, date);
       if (amount > 0) {
         await prisma.deduction.create({
           data: {

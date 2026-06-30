@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../prisma';
 import { OvertimeService } from '../services/overtime.service';
+import { DisputeService } from '../services/dispute.service';
 
 const router = Router();
 
@@ -95,21 +96,49 @@ router.get('/report/salary-report', async (req, res) => {
       },
     });
 
-    const deductionWhere: any = {};
+    const deductionWhere: any = {
+      status: 'ACTIVE',
+      type: { in: ['absent', 'late', 'half-day'] }
+    };
     if (start_date && end_date) {
       deductionWhere.date = {
         gte: new Date(start_date as string),
         lte: new Date(end_date as string),
       };
     }
-    const groupedDeductions = await prisma.deduction.groupBy({
-      by: ['user_id'],
+    const allDeductions = await prisma.deduction.findMany({
       where: deductionWhere,
-      _sum: { amount: true },
+      select: {
+        user_id: true,
+        type: true,
+        date: true
+      }
     });
-    const deductionMap = new Map(
-      groupedDeductions.map(d => [d.user_id, d._sum.amount || 0])
-    );
+
+    // Build per-user deduction rate multiplier using current working days
+    const deductionRateMap = new Map<string, number>();
+    const monthCache = new Map<string, number>();
+    for (const d of allDeductions) {
+      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+      if (!monthCache.has(monthKey)) {
+        const workingDays = await DisputeService.getWorkingDaysInMonth(
+          d.date.getFullYear(), d.date.getMonth()
+        );
+        monthCache.set(monthKey, workingDays);
+      }
+      const workingDays = monthCache.get(monthKey)!;
+      let multiplier: number;
+      switch (d.type) {
+        case 'absent':   multiplier = 1; break;
+        case 'late':     multiplier = 0.3; break;
+        case 'half-day': multiplier = 0.5; break;
+        default:         multiplier = 0;
+      }
+      deductionRateMap.set(
+        d.user_id,
+        (deductionRateMap.get(d.user_id) || 0) + multiplier / workingDays
+      );
+    }
 
     const report = await Promise.all(
       users.map(async user => {
@@ -130,7 +159,8 @@ router.get('/report/salary-report', async (req, res) => {
         const paidLeaveDates    = records.filter(r => r.status === 'leave').map(r => r.date.toISOString().split('T')[0]);
         const unpaidAbsenceDates = records.filter(r => r.status === 'absent').map(r => r.date.toISOString().split('T')[0]);
 
-        const deductions  = deductionMap.get(user.id) || 0;
+        const deductionRate  = deductionRateMap.get(user.id) || 0;
+        const deductions = deductionRate * user.monthly_salary;
 
         // Fetch overtime aggregation for the period
         let overtimePay = 0;
