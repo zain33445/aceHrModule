@@ -225,4 +225,38 @@ server.listen(PORT, () => {
     await recoverStuckEvents();
   }, 5 * 60 * 1000);
 
+  // ── Daily cron: Auto-transition probation employees to permanent ─────────
+  setInterval(async () => {
+    try {
+      const now = new Date();
+      const probationEmployees = await prisma.user.findMany({
+        where: {
+          type: 'probation',
+          joining_date: { not: null },
+          probation_duration: { not: null },
+        },
+      });
+
+      let promoted = 0;
+      for (const emp of probationEmployees) {
+        const probationEnd = new Date(emp.joining_date!);
+        probationEnd.setMonth(probationEnd.getMonth() + emp.probation_duration!);
+
+        if (now >= probationEnd) {
+          await prisma.user.update({
+            where: { id: emp.id },
+            data: { type: 'permanent' },
+          });
+          promoted++;
+        }
+      }
+
+      if (promoted > 0) {
+        console.log(`[ProbationCron] Promoted ${promoted} employee(s) from probation to permanent`);
+      }
+    } catch (err) {
+      console.error('[ProbationCron] Daily check failed:', err);
+    }
+  }, 24 * 60 * 60 * 1000); // Run every 24 hours
+
 });

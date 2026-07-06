@@ -42,6 +42,11 @@ model User {
   monthly_salary         Float                 @default(0.0)
   leave_bank             Int                   @default(5)
   department_id          Int?
+  status                 EmployeeStatus        @default(active)
+  type                   EmployeeType          @default(probation)
+  joining_date           DateTime?
+  closing_date           DateTime?
+  probation_duration     Int?
   created_at             DateTime              @default(now())
   agent_token            AgentToken?
   attendance_logs        AttendanceLog[]
@@ -463,4 +468,14 @@ enum LeaveRequestStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+enum EmployeeStatus {
+  active
+  inactive
+}
+
+enum EmployeeType {
+  probation
+  permanent
 }

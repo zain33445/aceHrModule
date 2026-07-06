@@ -29,6 +29,11 @@ const api = {
       user_id: userId,
       username: username,
     }),
+  updateEmployeeStatus: (userId, data) =>
+    axios.post(`${API_BASE}/employees/update-status`, {
+      user_id: userId,
+      ...data,
+    }),
   createEmployee: (data) => axios.post(`${API_BASE}/employees`, data),
   deleteEmployee: (userId) => axios.delete(`${API_BASE}/employees/${userId}`),
   login: (username, password) => axios.post(`${API_BASE}/auth/login`, { username, password }),

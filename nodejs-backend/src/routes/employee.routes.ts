@@ -27,6 +27,11 @@ router.post('/', async (req, res) => {
     username,
     department_id,
     monthly_salary,
+    status,
+    type,
+    joining_date,
+    closing_date,
+    probation_duration,
   } = req.body;
 
   try {
@@ -50,7 +55,12 @@ router.post('/', async (req, res) => {
         role: role || 'employee',
         password_hash: password || '1234',
         monthly_salary: parseFloat(monthly_salary) || 0.0,
-        department_id: department_id ? parseInt(department_id) : null
+        department_id: department_id ? parseInt(department_id) : null,
+        status: status || 'active',
+        type: type || 'probation',
+        joining_date: joining_date ? new Date(joining_date) : null,
+        closing_date: closing_date ? new Date(closing_date) : null,
+        probation_duration: probation_duration ? parseInt(probation_duration) : null,
       }
     });
 
@@ -144,6 +154,27 @@ router.post('/update-username', async (req, res) => {
       return res.status(400).json({ error: "Username already exists" });
     }
     res.status(500).json({ error: "Failed to update employee username" });
+  }
+});
+
+// Update employee status/type/dates
+router.post('/update-status', async (req, res) => {
+  const { user_id, status, type, joining_date, closing_date, probation_duration } = req.body;
+  try {
+    const data: any = {};
+    if (status !== undefined) data.status = status;
+    if (type !== undefined) data.type = type;
+    if (joining_date !== undefined) data.joining_date = joining_date ? new Date(joining_date) : null;
+    if (closing_date !== undefined) data.closing_date = closing_date ? new Date(closing_date) : null;
+    if (probation_duration !== undefined) data.probation_duration = probation_duration ? parseInt(probation_duration) : null;
+
+    await prisma.user.update({
+      where: { id: String(user_id) },
+      data
+    });
+    res.json({ message: "Employee status updated" });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to update employee status", details: error.message });
   }
 });
 
