@@ -45,6 +45,7 @@ model User {
   status                 EmployeeStatus        @default(active)
   type                   EmployeeType          @default(probation)
   joining_date           DateTime?
+  dob                    DateTime?
   closing_date           DateTime?
   probation_duration     Int?
   created_at             DateTime              @default(now())

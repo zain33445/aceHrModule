@@ -45,8 +45,13 @@ import { PayrollTab } from "./salary/PayrollTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
 import TabAccessManager from "./dashboard/TabAccessManager";
-import { formatDateLocal, formatTime12h, calculateWorkingHours } from "../utils/formatters";
+import {
+  formatDateLocal,
+  formatTime12h,
+  calculateWorkingHours,
+} from "../utils/formatters";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
+import { PDFViewer } from "./common/PDFViewer";
 
 function AdminDashboardNew({
   employees = [],
@@ -545,18 +550,16 @@ function AdminDashboardNew({
         id: "employees",
         label: "Staff",
         content: (
-          <div className="mt-6">
-            <StaffManager
-              employees={employees}
-              onUpdate={handleUpdateEmployee}
-              onShowHistory={handleShowHistory}
-              onUpdatePassword={handleUpdatePassword}
-              onRefresh={() => {
-                fetchOverviewData();
-                if (onRefresh) onRefresh();
-              }}
-            />
-          </div>
+          <StaffManager
+            employees={employees}
+            onUpdate={handleUpdateEmployee}
+            onShowHistory={handleShowHistory}
+            onUpdatePassword={handleUpdatePassword}
+            onRefresh={() => {
+              fetchOverviewData();
+              if (onRefresh) onRefresh();
+            }}
+          />
         ),
       },
       {
@@ -594,6 +597,18 @@ function AdminDashboardNew({
         id: "feature-access",
         label: "Feature Access",
         content: <TabAccessManager />,
+      },
+      {
+        id: "policies",
+        label: "Policies",
+        content: <PDFViewer src="/policy.pdf" title="Company Policies" />,
+      },
+      {
+        id: "sop",
+        label: "SOP",
+        content: (
+          <PDFViewer src="/sop.pdf" title="Standard Operating Procedures" />
+        ),
       },
     ],
     [
@@ -763,7 +778,10 @@ function AttendanceTab({
                             {formatTime12h(record.check_out_time)}
                           </td>
                           <td className="px-6 py-4">
-                            {calculateWorkingHours(record.check_in_time, record.check_out_time) || "-"}
+                            {calculateWorkingHours(
+                              record.check_in_time,
+                              record.check_out_time,
+                            ) || "-"}
                           </td>
                           <td className="px-6 py-4">
                             <Badge
@@ -934,7 +952,14 @@ function DisputeCard({ dispute, onClick }) {
   );
 }
 
-function DisputeDetailModal({ dispute, onClose, onAction, isAdmin, onHRAction, isHR }) {
+function DisputeDetailModal({
+  dispute,
+  onClose,
+  onAction,
+  isAdmin,
+  onHRAction,
+  isHR,
+}) {
   const [remarks, setRemarks] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 

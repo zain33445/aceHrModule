@@ -35,11 +35,13 @@ router.post('/attendance', async (req, res) => {
       const endOfDay = new Date(timestamp);
       endOfDay.setHours(23, 59, 59, 999);
 
+      const punch = log.punch !== undefined && log.punch !== null ? Number(log.punch) : Number(log.status);
+
       // Check for duplicate log
       const duplicate = await prisma.attendanceLog.findFirst({
         where: {
           user_id: userId,
-          status: Number(log.status),
+          status: punch,
           timestamp: { gte: startOfDay, lte: endOfDay }
         }
       });
@@ -54,14 +56,14 @@ router.post('/attendance', async (req, res) => {
           user_id_timestamp_status: {
             user_id: userId,
             timestamp,
-            status: Number(log.status)
+            status: punch
           }
         },
         update: {},
         create: {
           user_id: userId,
           timestamp,
-          status: Number(log.status)
+          status: punch
         }
       });
 

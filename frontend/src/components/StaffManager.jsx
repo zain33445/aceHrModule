@@ -30,6 +30,7 @@ function StaffManager({
     status: "active",
     type: "probation",
     joining_date: "",
+    dob: "",
     closing_date: "",
     probation_duration: "",
   });
@@ -76,6 +77,7 @@ function StaffManager({
       if (edits.type !== undefined) statusFields.type = edits.type;
       if (edits.joining_date !== undefined)
         statusFields.joining_date = edits.joining_date || null;
+      if (edits.dob !== undefined) statusFields.dob = edits.dob || null;
       if (edits.closing_date !== undefined)
         statusFields.closing_date = edits.closing_date || null;
       if (edits.probation_duration !== undefined)
@@ -115,8 +117,21 @@ function StaffManager({
   const handleAddSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    if (!newEmp.name) {
-      setError("Name is required");
+    if (
+      !newEmp.name ||
+      !newEmp.username ||
+      !newEmp.password ||
+      !newEmp.department_id ||
+      !newEmp.joining_date ||
+      !newEmp.dob
+    ) {
+      setError(
+        "Name, Username, Password, Department, Joining Date and DOB are required",
+      );
+      return;
+    }
+    if (newEmp.type === "probation" && !newEmp.probation_duration) {
+      setError("Probation Duration is required for probation employees");
       return;
     }
     try {
@@ -135,6 +150,7 @@ function StaffManager({
         joining_date: "",
         closing_date: "",
         probation_duration: "",
+        dob: "",
       });
 
       if (res.data?.device_sync === "pending") {
@@ -255,6 +271,7 @@ function StaffManager({
 
       {/* Add Employee Form Toggle */}
       <div
+        onClick={() => setShowAddForm(true)}
         className="glass-panel"
         style={{
           display: "flex",
@@ -263,7 +280,7 @@ function StaffManager({
         }}
       >
         <div>
-          <h3 style={{ margin: 0 }}>Staff Management</h3>
+          <h3 style={{ margin: 0 }}>Add Employee</h3>
           <p
             style={{
               color: "#94a3b8",
@@ -275,61 +292,67 @@ function StaffManager({
           </p>
         </div>
         <button
-          className={`btn ${showAddForm ? "btn-secondary" : "btn-primary"}`}
-          onClick={() => setShowAddForm(!showAddForm)}
+          className="btn btn-primary"
+          onClick={() => setShowAddForm(true)}
           style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
         >
-          <UserPlus size={18} /> {showAddForm ? "Cancel" : "Add New Staff"}
+          <UserPlus size={18} /> Add
         </button>
       </div>
 
-      {showAddForm && (
-        <div
-          className="glass-panel"
-          style={{ border: "1px solid rgba(56, 189, 248, 0.3)" }}
-        >
-          <h4 style={{ marginBottom: "1.5rem" }}>Create New Employee Record</h4>
-          <form
-            onSubmit={handleAddSubmit}
+      <Modal
+        isOpen={showAddForm}
+        onClose={() => {
+          setShowAddForm(false);
+          setError("");
+        }}
+        title="New Staff Member"
+        size="lg"
+        footer={
+          <>
+            <button
+              className="btn btn-secondary"
+              onClick={() => {
+                setShowAddForm(false);
+                setError("");
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              form="add-employee-form"
+              type="submit"
+              style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+            >
+              <UserPlus size={16} /> Create Record
+            </button>
+          </>
+        }
+      >
+        <form id="add-employee-form" onSubmit={handleAddSubmit}>
+          {/* Row 1: Name, Username, Password */}
+          <div
             style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "1.5rem",
-              width: "25%",
-              margin: "auto",
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr",
+              gap: "1rem",
+              marginBottom: "1rem",
             }}
           >
             <div>
               <label
                 style={{
                   display: "block",
-                  fontSize: "0.8rem",
+                  fontSize: "0.65rem",
                   color: "#94a3b8",
-                  marginBottom: "0.5rem",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
                 }}
               >
-                Salary
-              </label>
-              <input
-                type="number"
-                className="input-field"
-                placeholder="e.g. 50000"
-                value={newEmp.monthly_salary}
-                onChange={(e) =>
-                  setNewEmp({ ...newEmp, monthly_salary: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: "0.8rem",
-                  color: "#94a3b8",
-                  marginBottom: "0.1rem",
-                }}
-              >
-                Full Name
+                Full Name <span style={{ color: "#f43f5e" }}>*</span>
               </label>
               <input
                 type="text"
@@ -337,18 +360,27 @@ function StaffManager({
                 placeholder="John Doe"
                 value={newEmp.name}
                 onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
               />
             </div>
             <div>
               <label
                 style={{
                   display: "block",
-                  fontSize: "0.8rem",
+                  fontSize: "0.65rem",
                   color: "#94a3b8",
-                  marginBottom: "0.1rem",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
                 }}
               >
-                Username
+                Username <span style={{ color: "#f43f5e" }}>*</span>
               </label>
               <input
                 type="text"
@@ -358,18 +390,27 @@ function StaffManager({
                 onChange={(e) =>
                   setNewEmp({ ...newEmp, username: e.target.value })
                 }
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
               />
             </div>
             <div>
               <label
                 style={{
                   display: "block",
-                  fontSize: "0.8rem",
+                  fontSize: "0.65rem",
                   color: "#94a3b8",
-                  marginBottom: "0.1rem",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
                 }}
               >
-                Login Password
+                Login Password <span style={{ color: "#f43f5e" }}>*</span>
               </label>
               <input
                 type="text"
@@ -379,129 +420,257 @@ function StaffManager({
                 onChange={(e) =>
                   setNewEmp({ ...newEmp, password: e.target.value })
                 }
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
               />
             </div>
-            <div style={{ display: "flex", gap: "1.5rem" }}>
-              <Select
-                label="Role"
-                value={newEmp.role}
-                onChange={(val) => setNewEmp({ ...newEmp, role: val })}
-                options={[
-                  { value: "employee", label: "Employee" },
-                  { value: "admin", label: "Admin" },
-                ]}
-              />
-              <Select
-                label="Department"
-                value={newEmp.department_id}
-                onChange={(val) => setNewEmp({ ...newEmp, department_id: val })}
-                placeholder="Select Department"
-                options={departments.map((dep) => ({
-                  value: dep.id,
-                  label: dep.name,
-                }))}
-              />
-            </div>
-            <div style={{ display: "flex", gap: "1.5rem" }}>
-              <Select
-                label="Status"
-                value={newEmp.status}
-                onChange={(val) => setNewEmp({ ...newEmp, status: val })}
-                options={[
-                  { value: "active", label: "Active" },
-                  { value: "inactive", label: "Inactive" },
-                ]}
-              />
-              <Select
-                label="Type"
-                value={newEmp.type}
-                onChange={(val) => setNewEmp({ ...newEmp, type: val })}
-                options={[
-                  { value: "probation", label: "Probation" },
-                  { value: "permanent", label: "Permanent" },
-                ]}
-              />
-            </div>
-            <div style={{ display: "flex", gap: "1.5rem" }}>
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.8rem",
-                    color: "#94a3b8",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  Joining Date
-                </label>
-                <input
-                  type="date"
-                  className="input-field"
-                  value={newEmp.joining_date}
-                  onChange={(e) =>
-                    setNewEmp({ ...newEmp, joining_date: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.8rem",
-                    color: "#94a3b8",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  Closing Date
-                </label>
-                <input
-                  type="date"
-                  className="input-field"
-                  value={newEmp.closing_date}
-                  onChange={(e) =>
-                    setNewEmp({ ...newEmp, closing_date: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            {newEmp.type === "probation" && (
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.8rem",
-                    color: "#94a3b8",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  Probation Duration (months)
-                </label>
+          </div>
+
+          {/* Row 2: Role, Department, Status, Type */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr 1fr",
+              gap: "1rem",
+              marginBottom: "1rem",
+            }}
+          >
+            <Select
+              label={
+                <>
+                  Role <span style={{ color: "#f43f5e" }}>*</span>
+                </>
+              }
+              value={newEmp.role}
+              onChange={(val) => setNewEmp({ ...newEmp, role: val })}
+              options={[
+                { value: "employee", label: "Employee" },
+                { value: "admin", label: "Admin" },
+              ]}
+            />
+            <Select
+              label={
+                <>
+                  Department <span style={{ color: "#f43f5e" }}>*</span>
+                </>
+              }
+              value={newEmp.department_id}
+              onChange={(val) => setNewEmp({ ...newEmp, department_id: val })}
+              placeholder="Select"
+              options={departments.map((dep) => ({
+                value: dep.id,
+                label: dep.name,
+              }))}
+            />
+            <Select
+              label={
+                <>
+                  Status <span style={{ color: "#f43f5e" }}>*</span>
+                </>
+              }
+              value={newEmp.status}
+              onChange={(val) => setNewEmp({ ...newEmp, status: val })}
+              options={[
+                { value: "active", label: "Active" },
+                { value: "inactive", label: "Inactive" },
+              ]}
+            />
+            <Select
+              label={
+                <>
+                  Type <span style={{ color: "#f43f5e" }}>*</span>
+                </>
+              }
+              value={newEmp.type}
+              onChange={(val) => setNewEmp({ ...newEmp, type: val })}
+              options={[
+                { value: "probation", label: "Probation" },
+                { value: "permanent", label: "Permanent" },
+              ]}
+            />
+          </div>
+
+          {/* Row 3: Salary, Joining Date, DOB, Closing Date */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr 1fr",
+              gap: "1rem",
+              marginBottom: "1rem",
+            }}
+          >
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.65rem",
+                  color: "#94a3b8",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Monthly Salary
+              </label>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.25rem",
+                }}
+              >
+                <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+                  Rs.
+                </span>
                 <input
                   type="number"
                   className="input-field"
-                  placeholder="e.g. 3"
-                  min="1"
-                  value={newEmp.probation_duration}
+                  placeholder="50000"
+                  value={newEmp.monthly_salary || ""}
                   onChange={(e) =>
-                    setNewEmp({ ...newEmp, probation_duration: e.target.value })
+                    setNewEmp({ ...newEmp, monthly_salary: e.target.value })
                   }
+                  style={{
+                    width: "100%",
+                    padding: "0.4rem 0.5rem",
+                    fontSize: "0.85rem",
+                  }}
                 />
               </div>
-            )}
-            <button
-              type="submit"
-              className="btn btn-primary"
-              style={{ width: "100%" }}
-            >
-              Create Record
-            </button>
-          </form>
+            </div>
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.65rem",
+                  color: "#94a3b8",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Joining Date <span style={{ color: "#f43f5e" }}>*</span>
+              </label>
+              <input
+                type="date"
+                className="input-field"
+                value={newEmp.joining_date}
+                onChange={(e) =>
+                  setNewEmp({ ...newEmp, joining_date: e.target.value })
+                }
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.65rem",
+                  color: "#94a3b8",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Date of Birth <span style={{ color: "#f43f5e" }}>*</span>
+              </label>
+              <input
+                type="date"
+                className="input-field"
+                value={newEmp.dob}
+                onChange={(e) => setNewEmp({ ...newEmp, dob: e.target.value })}
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
+              />
+            </div>
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.65rem",
+                  color: "#94a3b8",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Closing Date
+              </label>
+              <input
+                type="date"
+                className="input-field"
+                value={newEmp.closing_date}
+                onChange={(e) =>
+                  setNewEmp({ ...newEmp, closing_date: e.target.value })
+                }
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Row 4: Probation Duration (conditional) */}
+          {newEmp.type === "probation" && (
+            <div style={{ marginBottom: "1rem", maxWidth: "250px" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.65rem",
+                  color: "#94a3b8",
+                  marginBottom: "0.3rem",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Probation Duration (months){" "}
+                <span style={{ color: "#f43f5e" }}>*</span>
+              </label>
+              <input
+                type="number"
+                className="input-field"
+                placeholder="e.g. 3"
+                min="1"
+                value={newEmp.probation_duration}
+                onChange={(e) =>
+                  setNewEmp({ ...newEmp, probation_duration: e.target.value })
+                }
+                required
+                style={{
+                  width: "100%",
+                  padding: "0.4rem 0.5rem",
+                  fontSize: "0.85rem",
+                }}
+              />
+            </div>
+          )}
+
           {error && (
             <p
               style={{
                 color: "#f43f5e",
                 fontSize: "0.8rem",
-                marginTop: "1rem",
+                marginTop: "0.5rem",
                 display: "flex",
                 alignItems: "center",
                 gap: "0.4rem",
@@ -510,8 +679,8 @@ function StaffManager({
               <AlertCircle size={14} /> {error}
             </p>
           )}
-        </div>
-      )}
+        </form>
+      </Modal>
 
       {/* Employee Cards Grid — compact default */}
       <div
@@ -811,12 +980,57 @@ function StaffManager({
                 {dialogType}
               </span>
               <div style={{ marginLeft: "auto" }}>
-                <label style={{ display: "block", fontSize: "0.65rem", color: "#94a3b8", marginBottom: "0.3rem", fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.05em" }}>Joined</label>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.65rem",
+                    color: "#94a3b8",
+                    marginBottom: "0.3rem",
+                    fontWeight: 500,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  Joined
+                </label>
                 <input
-                  type="date" className="input-field"
-                  value={(getDialogEdits('joining_date') !== undefined ? getDialogEdits('joining_date') : selectedEmp.joining_date?.split('T')[0]) || ''}
-                  onChange={(e) => setDialogEdit('joining_date', e.target.value)}
-                  style={{ padding: '0.35rem 0.5rem', fontSize: '0.8rem' }}
+                  type="date"
+                  className="input-field"
+                  value={
+                    (getDialogEdits("joining_date") !== undefined
+                      ? getDialogEdits("joining_date")
+                      : selectedEmp.joining_date?.split("T")[0]) || ""
+                  }
+                  onChange={(e) =>
+                    setDialogEdit("joining_date", e.target.value)
+                  }
+                  style={{ padding: "0.35rem 0.5rem", fontSize: "0.8rem" }}
+                />
+              </div>
+              <div>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.65rem",
+                    color: "#94a3b8",
+                    marginBottom: "0.3rem",
+                    fontWeight: 500,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  DOB
+                </label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={
+                    (getDialogEdits("dob") !== undefined
+                      ? getDialogEdits("dob")
+                      : selectedEmp.dob?.split("T")[0]) || ""
+                  }
+                  onChange={(e) => setDialogEdit("dob", e.target.value)}
+                  style={{ padding: "0.35rem 0.5rem", fontSize: "0.8rem" }}
                 />
               </div>
             </div>

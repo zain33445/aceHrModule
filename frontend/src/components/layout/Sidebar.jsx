@@ -21,6 +21,7 @@ import {
   Video,
   ShieldCheck,
   Timer,
+  BookOpen,
 } from 'lucide-react';
 
 // Grouped nav structure
@@ -71,6 +72,13 @@ const adminNavGroups = [
       { id: 'settings', label: 'Settings', icon: Settings },
     ],
   },
+  {
+    label: 'Company',
+    items: [
+      { id: 'policies', label: 'Policies', icon: BookOpen },
+      { id: 'sop', label: 'SOP', icon: FileText },
+    ],
+  },
 ];
 
 const employeeNavGroups = [
@@ -99,6 +107,13 @@ const employeeNavGroups = [
     items: [
       { id: 'disputes', label: 'My Appeals', icon: FileText },
       { id: 'settings', label: 'Settings', icon: Settings },
+    ],
+  },
+  {
+    label: 'Company',
+    items: [
+      { id: 'policies', label: 'Policies', icon: BookOpen },
+      { id: 'sop', label: 'SOP', icon: FileText },
     ],
   },
 ];

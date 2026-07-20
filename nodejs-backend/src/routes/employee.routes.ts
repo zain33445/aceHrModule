@@ -30,6 +30,7 @@ router.post('/', async (req, res) => {
     status,
     type,
     joining_date,
+    dob,
     closing_date,
     probation_duration,
   } = req.body;
@@ -59,6 +60,7 @@ router.post('/', async (req, res) => {
         status: status || 'active',
         type: type || 'probation',
         joining_date: joining_date ? new Date(joining_date) : null,
+        dob: dob ? new Date(dob) : null,
         closing_date: closing_date ? new Date(closing_date) : null,
         probation_duration: probation_duration ? parseInt(probation_duration) : null,
       }
@@ -159,12 +161,13 @@ router.post('/update-username', async (req, res) => {
 
 // Update employee status/type/dates
 router.post('/update-status', async (req, res) => {
-  const { user_id, status, type, joining_date, closing_date, probation_duration } = req.body;
+  const { user_id, status, type, joining_date, dob, closing_date, probation_duration } = req.body;
   try {
     const data: any = {};
     if (status !== undefined) data.status = status;
     if (type !== undefined) data.type = type;
     if (joining_date !== undefined) data.joining_date = joining_date ? new Date(joining_date) : null;
+    if (dob !== undefined) data.dob = dob ? new Date(dob) : null;
     if (closing_date !== undefined) data.closing_date = closing_date ? new Date(closing_date) : null;
     if (probation_duration !== undefined) data.probation_duration = probation_duration ? parseInt(probation_duration) : null;
 

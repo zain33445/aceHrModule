@@ -51,6 +51,7 @@ import { formatTime12h, formatDateLocal, calculateWorkingHours } from "../utils/
 import { OvertimeEmployeeTab } from "./overtime/OvertimeEmployeeTab";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
 import { LeadDisputeDashboard } from "./LeadDisputeDashboard";
+import { PDFViewer } from "./common/PDFViewer";
 
 function EmployeeDashboard({ user, onLogout }) {
   const [activeTab, setActiveTab] = useState(() => {
@@ -596,6 +597,16 @@ function EmployeeDashboard({ user, onLogout }) {
         id: "settings",
         label: "Settings",
         content: <SettingsTab user={user} />,
+      },
+      {
+        id: "policies",
+        label: "Policies",
+        content: <PDFViewer src="/policy.pdf" title="Company Policies" />,
+      },
+      {
+        id: "sop",
+        label: "SOP",
+        content: <PDFViewer src="/sop.pdf" title="Standard Operating Procedures" />,
       },
     ];
 

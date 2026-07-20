@@ -122,9 +122,8 @@ function _connect() {
       logger.info('[WS Client] Connected to recording gateway');
       _reconnectDelay = 5000; // reset backoff
 
-      // Send AUTH with agent token (instead of URL param)
       if (_agentToken) {
-        _ws.send(JSON.stringify({ type: 'AUTH', token: _agentToken }));
+        sendWsMessage({ type: 'AUTH', token: _agentToken });
       }
     });
 
@@ -213,14 +212,13 @@ function _handleMessage(msg) {
     case 'AUTH_REQUIRED':
       logger.info('[WS Client] Gateway requires authentication');
       if (_agentToken) {
-        _ws.send(JSON.stringify({ type: 'AUTH', token: _agentToken }));
+        sendWsMessage({ type: 'AUTH', token: _agentToken });
       } else if (_currentUserId) {
-        // Fetch token on the fly
         _fetchAgentToken(_currentUserId).then((token) => {
           if (token) {
             _agentToken = token;
             _saveToken(token);
-            _ws.send(JSON.stringify({ type: 'AUTH', token }));
+            sendWsMessage({ type: 'AUTH', token });
           } else {
             logger.error('[WS Client] Cannot authenticate — no agent token');
           }

@@ -29,11 +29,8 @@ export function LeaveAllocationTab({ employees = [], user }) {
 
   useEffect(() => {
     fetchLeaveTypes();
-    // Fetch employees with department info
-    if (employees && employees.length > 0) {
-      fetchEmployeesWithDepartments();
-    }
-  }, [employees]);
+    fetchEmployeesWithDepartments();
+  }, []);
 
   const fetchEmployeesWithDepartments = async () => {
     try {
