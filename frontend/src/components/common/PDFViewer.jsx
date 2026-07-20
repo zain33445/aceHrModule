@@ -4,7 +4,11 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.mjs`;
+const isElectron =
+  typeof navigator !== "undefined" && navigator.userAgent.includes("Electron");
+pdfjs.GlobalWorkerOptions.workerSrc = isElectron
+  ? `https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.mjs`
+  : `/pdf.worker.min.mjs`;
 
 export function PDFViewer({ src, title = "Document" }) {
   const [numPages, setNumPages] = useState(null);

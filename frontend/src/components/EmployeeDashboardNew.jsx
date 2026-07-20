@@ -601,12 +601,12 @@ function EmployeeDashboard({ user, onLogout }) {
       {
         id: "policies",
         label: "Policies",
-        content: <PDFViewer src="/policy.pdf" title="Company Policies" />,
+        content: <PDFViewer src="./policy.pdf" title="Company Policies" />,
       },
       {
         id: "sop",
         label: "SOP",
-        content: <PDFViewer src="/sop.pdf" title="Standard Operating Procedures" />,
+        content: <PDFViewer src="./sop.pdf" title="Standard Operating Procedures" />,
       },
     ];
 
