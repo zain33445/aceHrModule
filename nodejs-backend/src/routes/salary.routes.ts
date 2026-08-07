@@ -97,22 +97,44 @@ router.post('/bulk-pay', async (req, res) => {
 // Get salaries for a specific user
 router.get('/user/:userId', async (req, res) => {
   const { userId } = req.params;
+  const { startDate, endDate, page = '1', limit = '20' } = req.query;
+
+  const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 20));
+  const skip = (pageNum - 1) * limitNum;
+
   try {
-    const salaries = await prisma.salary.findMany({
-      where: { user_id: userId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
-      },
-      orderBy: {
-        date: 'desc'
+    const where: any = { user_id: userId };
+
+    if (startDate || endDate) {
+      where.date = {};
+      if (startDate) where.date.gte = new Date(startDate as string);
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        where.date.lte = end;
       }
-    });
-    res.json(salaries);
+    }
+
+    const [salaries, total] = await Promise.all([
+      prisma.salary.findMany({
+        where,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true
+            }
+          }
+        },
+        orderBy: { date: 'desc' },
+        skip,
+        take: limitNum,
+      }),
+      prisma.salary.count({ where }),
+    ]);
+
+    res.json({ records: salaries, total, page: pageNum, limit: limitNum });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch user salaries" });
   }

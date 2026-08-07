@@ -39,7 +39,7 @@ router.get('/hr-employees', async (req, res) => {
 
     const allTabKeys = [
       'overview', 'attendance', 'payroll', 'leaves', 'leave-allocation',
-      'disputes', 'departments', 'screenshots', 'employees', 'recording',
+      'leave-balances', 'disputes', 'departments', 'screenshots', 'employees', 'recording',
       'holidays', 'overtime', 'export', 'audit', 'settings'
     ];
 

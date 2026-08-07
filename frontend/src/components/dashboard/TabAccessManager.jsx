@@ -10,6 +10,7 @@ const ALL_TABS = [
   { key: "payroll", label: "Payroll" },
   { key: "leaves", label: "Leave Requests" },
   { key: "leave-allocation", label: "Leave Allocation" },
+  { key: "leave-balances", label: "Leave Balances" },
   { key: "disputes", label: "Appeals" },
   { key: "departments", label: "Departments" },
   { key: "screenshots", label: "Screenshots" },

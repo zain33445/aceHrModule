@@ -37,6 +37,7 @@ import { DepartmentManager } from "./departments/DepartmentManager";
 import { HolidayCalendar } from "./calendar/HolidayCalendar";
 import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
 import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
+import LeaveBalanceTab from "./leaves/LeaveBalanceTab";
 import { AuditLogTab } from "./audit/AuditLogTab";
 import { DataExportPanel } from "./export/DataExportPanel";
 import ScreenshotsTab from "./dashboard/ScreenshotsTab";
@@ -437,6 +438,8 @@ function AdminDashboardNew({
       attendance: "Attendance",
       leaves: "Leave Requests",
       holidays: "Holidays",
+      "leave-allocation": "Leave Allocation",
+      "leave-balances": "Leave Balances",
       payroll: "Payroll",
       disputes: "Appeals",
       export: "Data Export",
@@ -519,6 +522,11 @@ function AdminDashboardNew({
         id: "leave-allocation",
         label: "Leave Allocation",
         content: <LeaveAllocationTab employees={employees} user={user} />,
+      },
+      {
+        id: "leave-balances",
+        label: "Leave Balances",
+        content: <LeaveBalanceTab />,
       },
       {
         id: "disputes",

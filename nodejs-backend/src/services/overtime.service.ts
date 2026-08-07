@@ -125,6 +125,7 @@ export class OvertimeService {
 
     if (!request) throw new Error('Request not found');
     if (request.status !== 'pending') throw new Error('Only pending requests can be approved');
+    if (request.lead_status !== 'approved') throw new Error('Lead approval is required before admin action');
 
     const canonicalDate = this.getCanonicalUtcDate(request.date);
     const year = canonicalDate.getUTCFullYear();
@@ -163,6 +164,7 @@ export class OvertimeService {
 
     if (!request) throw new Error('Request not found');
     if (request.status !== 'pending') throw new Error('Only pending requests can be rejected');
+    if (request.lead_status !== 'approved') throw new Error('Lead approval is required before admin action');
 
     const updated = await prisma.overtimeRequest.update({
       where: { id: requestId },
@@ -219,18 +221,22 @@ export class OvertimeService {
   static async getAllRequests(params: {
     month?: string;
     status?: string;
+    leadStatus?: string;
     userId?: string;
     page?: number;
     limit?: number;
   }) {
     const where: any = {};
-    const { month, status, userId, page = 1, limit = 20 } = params;
+    const { month, status, leadStatus, userId, page = 1, limit = 20 } = params;
 
     if (userId && userId !== 'all') {
       where.user_id = userId;
     }
     if (status && status !== 'all') {
-      where.status = status;
+      where.status = status.includes(',') ? { in: status.split(',') } : status;
+    }
+    if (leadStatus && leadStatus !== 'all') {
+      where.lead_status = leadStatus;
     }
     if (month) {
       const [yearStr, monthStr] = month.split('-');
@@ -252,7 +258,8 @@ export class OvertimeService {
         take: limit,
         include: {
           user: { select: { id: true, name: true, monthly_salary: true } },
-          approver: { select: { id: true, name: true } }
+          approver: { select: { id: true, name: true } },
+          leadApprover: { select: { id: true, name: true } }
         }
       }),
       prisma.overtimeRequest.count({ where })
@@ -319,5 +326,126 @@ export class OvertimeService {
       overtime_pay: result._sum.overtime_pay || 0,
       overtime_hours: result._sum.hours_worked || 0
     };
+  }
+
+  static async getTeamRequests(leadId: string, month?: string, status?: string, page = 1, limit = 20) {
+    const departments = await prisma.department.findMany({
+      where: { lead_id: leadId },
+      select: { id: true }
+    });
+    const deptIds = departments.map(d => d.id);
+
+    const where: any = {
+      user: { department_id: { in: deptIds } }
+    };
+
+    if (status && status !== 'all') {
+      where.lead_status = status;
+    }
+
+    if (month) {
+      const [yearStr, monthStr] = month.split('-');
+      const year = parseInt(yearStr);
+      const m = parseInt(monthStr) - 1;
+      where.date = {
+        gte: new Date(`${year}-${String(m + 1).padStart(2, '0')}-01T00:00:00.000Z`),
+        lte: new Date(`${year}-${String(m + 1).padStart(2, '0')}-31T23:59:59.999Z`)
+      };
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [records, total] = await Promise.all([
+      prisma.overtimeRequest.findMany({
+        where,
+        orderBy: { date: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          user: { select: { id: true, name: true, monthly_salary: true, department_id: true } },
+          approver: { select: { id: true, name: true } },
+          leadApprover: { select: { id: true, name: true } }
+        }
+      }),
+      prisma.overtimeRequest.count({ where })
+    ]);
+
+    return { records, total, page, limit };
+  }
+
+  static async leadApprove(requestId: number, leadId: string, multiplier?: number, remarks?: string) {
+    const request = await prisma.overtimeRequest.findUnique({
+      where: { id: requestId },
+      include: { user: { select: { id: true, name: true, monthly_salary: true, department_id: true } } }
+    });
+
+    if (!request) throw new Error('Request not found');
+    if (request.lead_status !== 'pending') throw new Error('Request already processed by lead');
+
+    // Verify the lead owns the department of the employee
+    const dept = await prisma.department.findFirst({
+      where: { lead_id: leadId, id: request.user.department_id! }
+    });
+    if (!dept) throw new Error('You are not the lead of this employee\'s department');
+
+    const canonicalDate = this.getCanonicalUtcDate(request.date);
+    const year = canonicalDate.getUTCFullYear();
+    const month = canonicalDate.getUTCMonth();
+    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month);
+    const monthlySalary = request.user.monthly_salary;
+    const hourlyRate = monthlySalary / effectiveWorkingDays / 9;
+    const finalMultiplier = multiplier ?? 1;
+    const overtimePay = request.hours_worked * hourlyRate * finalMultiplier;
+
+    const updated = await prisma.overtimeRequest.update({
+      where: { id: requestId },
+      data: {
+        lead_status: 'approved',
+        lead_approved_by: leadId,
+        lead_approved_at: new Date(),
+        lead_remarks: remarks || null,
+        hourly_rate: parseFloat(hourlyRate.toFixed(2)),
+        overtime_pay: parseFloat(overtimePay.toFixed(2)),
+        multiplier: finalMultiplier
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        leadApprover: { select: { id: true, name: true } }
+      }
+    });
+
+    return updated;
+  }
+
+  static async leadReject(requestId: number, leadId: string, remarks?: string) {
+    const request = await prisma.overtimeRequest.findUnique({
+      where: { id: requestId },
+      include: { user: { select: { id: true, name: true, department_id: true } } }
+    });
+
+    if (!request) throw new Error('Request not found');
+    if (request.lead_status !== 'pending') throw new Error('Request already processed by lead');
+
+    const dept = await prisma.department.findFirst({
+      where: { lead_id: leadId, id: request.user.department_id! }
+    });
+    if (!dept) throw new Error('You are not the lead of this employee\'s department');
+
+    const updated = await prisma.overtimeRequest.update({
+      where: { id: requestId },
+      data: {
+        lead_status: 'rejected',
+        lead_approved_by: leadId,
+        lead_approved_at: new Date(),
+        lead_remarks: remarks || null,
+        status: 'rejected'
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        leadApprover: { select: { id: true, name: true } }
+      }
+    });
+
+    return updated;
   }
 }

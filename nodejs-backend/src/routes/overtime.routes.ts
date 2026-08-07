@@ -87,10 +87,11 @@ router.put('/:id/reject', async (req, res) => {
 // GET /api/overtime — Admin: all requests (filterable)
 router.get('/', async (req, res) => {
   try {
-    const { month, status, userId, page, limit } = req.query;
+    const { month, status, leadStatus, userId, page, limit } = req.query;
     const result = await OvertimeService.getAllRequests({
       month: month as string | undefined,
       status: status as string | undefined,
+      leadStatus: leadStatus as string | undefined,
       userId: userId as string | undefined,
       page: page ? parseInt(page as string) : 1,
       limit: limit ? parseInt(limit as string) : 20
@@ -110,6 +111,50 @@ router.get('/summary', async (req, res) => {
     res.json(summary);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch overtime summary' });
+  }
+});
+
+// GET /api/overtime/team?leadId=xxx&month=2026-06&status=pending
+router.get('/team', async (req, res) => {
+  try {
+    const { leadId, month, status, page, limit } = req.query;
+    if (!leadId) return res.status(400).json({ error: 'leadId is required' });
+    const result = await OvertimeService.getTeamRequests(
+      leadId as string,
+      month as string | undefined,
+      status as string | undefined,
+      page ? parseInt(page as string) : 1,
+      limit ? parseInt(limit as string) : 20
+    );
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch team overtime requests' });
+  }
+});
+
+// PUT /api/overtime/:id/lead-approve
+router.put('/:id/lead-approve', async (req, res) => {
+  try {
+    const { lead_id, multiplier, remarks } = req.body;
+    if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
+    const result = await OvertimeService.leadApprove(parseInt(req.params.id), lead_id, multiplier, remarks);
+    res.json({ message: 'Overtime request approved by lead', request: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to approve request';
+    res.status(400).json({ error: message });
+  }
+});
+
+// PUT /api/overtime/:id/lead-reject
+router.put('/:id/lead-reject', async (req, res) => {
+  try {
+    const { lead_id, remarks } = req.body;
+    if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
+    const result = await OvertimeService.leadReject(parseInt(req.params.id), lead_id, remarks);
+    res.json({ message: 'Overtime request rejected by lead', request: result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to reject request';
+    res.status(400).json({ error: message });
   }
 });
 

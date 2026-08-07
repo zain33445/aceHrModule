@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Timer,
   BookOpen,
+  CalendarCheck,
 } from 'lucide-react';
 
 // Grouped nav structure
@@ -53,6 +54,7 @@ const adminNavGroups = [
       { id: 'payroll', label: 'Payroll', icon: Banknote },
       { id: 'leaves', label: 'Leave Requests', icon: PlaneTakeoff },
       { id: 'leave-allocation', label: 'Leave Allocation', icon: CalendarHeart },
+      { id: 'leave-balances', label: 'Leave Balances', icon: CalendarCheck },
     ],
   },
   {
@@ -129,6 +131,7 @@ const adminGrantGroupMap = {
   payroll: { group: 'Compensation', item: { id: 'admin-payroll', label: 'Payroll', icon: Banknote } },
   leaves: { group: 'Compensation', item: { id: 'admin-leaves', label: 'Leave Requests (Admin)', icon: PlaneTakeoff } },
   'leave-allocation': { group: 'Compensation', item: { id: 'admin-leave-allocation', label: 'Leave Allocation', icon: CalendarHeart } },
+  'leave-balances': { group: 'Compensation', item: { id: 'admin-leave-balances', label: 'Leave Balances', icon: CalendarCheck } },
   screenshots: { group: 'Monitoring', item: { id: 'admin-screenshots', label: 'Screenshots', icon: Camera } },
   recording: { group: 'Monitoring', item: { id: 'admin-recording', label: 'Recording', icon: Video } },
   disputes: { group: 'Management', item: { id: 'admin-disputes', label: 'Appeals', icon: FileText } },
@@ -250,10 +253,16 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
     const myAffairsGroup = groups.find(g => g.label === 'My Affairs');
     if (myAffairsGroup) {
       myAffairsGroup.items.splice(0, 0, { id: 'team_disputes', label: 'Team Appeals', icon: Users });
+      myAffairsGroup.items.splice(1, 0, { id: 'team_overtime', label: 'Team Overtime', icon: Clock });
+      myAffairsGroup.items.splice(2, 0, { id: 'team_leaves', label: 'Team Leaves', icon: PlaneTakeoff });
     } else {
       groups.push({
         label: 'My Affairs',
-        items: [{ id: 'team_disputes', label: 'Team Appeals', icon: Users }],
+        items: [
+          { id: 'team_disputes', label: 'Team Appeals', icon: Users },
+          { id: 'team_overtime', label: 'Team Overtime', icon: Clock },
+          { id: 'team_leaves', label: 'Team Leaves', icon: PlaneTakeoff },
+        ],
       });
     }
   }

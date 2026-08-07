@@ -10,11 +10,13 @@ import api from "../../services/api";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
-  { value: "pending", label: "Pending" },
-  { value: "approved", label: "Approved" },
-  { value: "paid", label: "Paid" },
-  { value: "rejected", label: "Rejected" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "lead_approved", label: "Lead Approved" },
+  { value: "lead_rejected", label: "Lead Rejected" },
+  { value: "admin_approved", label: "Admin Approved" },
+  { value: "admin_rejected", label: "Admin Rejected" },
+  { value: "admin_pending", label: "Admin Pending" },
+  { value: "all_pending", label: "All Pending" },
+  { value: "all_approved", label: "All Approved" },
 ];
 
 const statusBadge = {
@@ -36,18 +38,42 @@ export const OvertimeAdminTab = ({ user }) => {
   const [summary, setSummary] = useState(null);
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
-  const [approveMultiplier, setApproveMultiplier] = useState(1.5);
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      const params = { month: currentMonth };
+      switch (statusFilter) {
+        case "all":
+          break;
+        case "lead_approved":
+          params.leadStatus = "approved";
+          break;
+        case "lead_rejected":
+          params.leadStatus = "rejected";
+          break;
+        case "admin_approved":
+          params.status = "approved";
+          break;
+        case "admin_rejected":
+          params.status = "rejected";
+          break;
+        case "admin_pending":
+          params.status = "pending";
+          break;
+        case "all_pending":
+          params.leadStatus = "pending";
+          break;
+        case "all_approved":
+          params.status = "approved,paid";
+          break;
+        default:
+          break;
+      }
       const [reqRes, sumRes] = await Promise.all([
-        api.getAllOvertimeRequests({
-          month: currentMonth,
-          status: statusFilter !== "all" ? statusFilter : undefined,
-        }),
+        api.getAllOvertimeRequests(params),
         api.getOvertimeSummary(currentMonth),
       ]);
       setRequests(reqRes.data?.records || []);
@@ -67,7 +93,7 @@ export const OvertimeAdminTab = ({ user }) => {
     if (!window.confirm("Approve this overtime request?")) return;
     setActionLoading(true);
     try {
-      await api.approveOvertimeRequest(id, user?.user_id, approveMultiplier);
+      await api.approveOvertimeRequest(id, user?.user_id, 1);
       setShowDetail(false);
       setSelectedRequest(null);
       fetchData();
@@ -96,14 +122,13 @@ export const OvertimeAdminTab = ({ user }) => {
 
   const openDetail = (req) => {
     setSelectedRequest(req);
-    setApproveMultiplier(req.multiplier || 1.5);
     setRejectReason("");
     setShowDetail(true);
   };
 
   const formatDate = (d) => {
     const date = new Date(d);
-    return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    return date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" });
   };
 
   const dayName = (d) => {
@@ -163,7 +188,7 @@ export const OvertimeAdminTab = ({ user }) => {
           </div>
           <div className="bg-white border border-neutral-200 rounded-xl p-4">
             <p className="text-xs text-neutral-500">Total OT Pay</p>
-            <p className="text-2xl font-bold text-green-600">PKR {summary.approvedPay?.toLocaleString()}</p>
+            <p className="text-2xl font-bold text-green-600">PKR {Math.round(summary.approvedPay || 0).toLocaleString()}</p>
           </div>
         </div>
       )}
@@ -186,44 +211,49 @@ export const OvertimeAdminTab = ({ user }) => {
               <table className="w-full">
                 <thead>
                   <tr>
-                    <th>Employee</th>
-                    <th>Date</th>
-                    <th>Day</th>
-                    <th>Type</th>
-                    <th>Hours</th>
-                    <th>Rate</th>
-                    <th>Pay</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th className="text-center">Date</th>
+                    <th className="text-left">Employee</th>
+                    <th className="text-right">Rate</th>
+                    <th className="text-center">Hours</th>
+                    <th className="text-right">Pay</th>
+                    <th className="text-center w-12">Lead</th>
+                    <th className="text-center">Status</th>
+                    <th className="text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {requests.map((req) => (
                     <tr key={req.id}>
+                      <td className="text-center">{formatDate(req.date)}</td>
                       <td>
                         <p className="font-medium">{req.user?.name}</p>
                         <p className="text-xs text-neutral-500">ID: {req.user_id}</p>
                       </td>
-                      <td>{formatDate(req.date)}</td>
-                      <td className="text-xs text-neutral-500">{dayName(req.date)}</td>
-                      <td>
-                        {req.is_holiday ? (
-                          <Badge variant="warning">{req.holiday_name || "Holiday"}</Badge>
-                        ) : (
-                          <Badge variant="primary">Weekend</Badge>
-                        )}
+                      <td className="text-right">{req.hourly_rate ? `PKR ${req.hourly_rate}` : "-"}</td>
+                      <td className="text-center">{req.hours_worked}</td>
+                      <td className="text-right font-medium">
+                        {req.overtime_pay ? `PKR ${Math.round(req.overtime_pay).toLocaleString()}` : "-"}
                       </td>
-                      <td>{req.hours_worked}h</td>
-                      <td>{req.hourly_rate ? `PKR ${req.hourly_rate}` : "-"}</td>
-                      <td className="font-medium">
-                        {req.overtime_pay ? `PKR ${req.overtime_pay.toLocaleString()}` : "-"}
+                      <td className="text-center w-12">
+                        <input
+                          type="checkbox"
+                          checked={req.lead_status === "approved"}
+                          readOnly
+                          className={`h-4 w-4 rounded border-neutral-300 ${
+                            req.lead_status === "approved"
+                              ? "accent-green-600"
+                              : req.lead_status === "rejected"
+                                ? "accent-red-600"
+                                : "accent-neutral-400"
+                          }`}
+                        />
                       </td>
-                      <td>
+                      <td className="text-center">
                         <Badge variant={statusBadge[req.status]?.variant || "warning"}>
                           {statusBadge[req.status]?.label || req.status}
                         </Badge>
                       </td>
-                      <td>
+                      <td className="text-center">
                         <button
                           onClick={() => openDetail(req)}
                           className="text-xs text-primary-600 hover:text-primary-800 underline"
@@ -285,7 +315,7 @@ export const OvertimeAdminTab = ({ user }) => {
                 </div>
                 <div>
                   <p className="text-xs text-neutral-500">Estimated OT Pay</p>
-                  <p className="font-medium">{selectedRequest.overtime_pay ? `PKR ${selectedRequest.overtime_pay.toLocaleString()}` : "Pending calculation"}</p>
+                  <p className="font-medium">{selectedRequest.overtime_pay ? `PKR ${Math.round(selectedRequest.overtime_pay).toLocaleString()}` : "Pending calculation"}</p>
                 </div>
               </div>
 
@@ -314,20 +344,6 @@ export const OvertimeAdminTab = ({ user }) => {
               {/* Approval actions */}
               {selectedRequest.status === "pending" && (
                 <div className="border-t border-neutral-200 pt-4 space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium text-neutral-700 mb-1">
-                      Multiplier (default 1.5x)
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="3"
-                      step="0.25"
-                      value={approveMultiplier}
-                      onChange={(e) => setApproveMultiplier(parseFloat(e.target.value) || 1.5)}
-                      className="w-24 px-3 py-2 border border-neutral-300 rounded-lg text-sm"
-                    />
-                  </div>
                   <div>
                     <label className="block text-sm font-medium text-neutral-700 mb-1">
                       Rejection Reason (if rejecting)

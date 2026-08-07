@@ -27,6 +27,109 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /api/leave-requests/team?leadId=xxx&status=pending
+router.get('/team', async (req, res) => {
+  const { leadId, status, page = '1', limit = '20' } = req.query;
+  if (!leadId) return res.status(400).json({ error: 'leadId is required' });
+
+  try {
+    const departments = await prisma.department.findMany({
+      where: { lead_id: String(leadId) },
+      select: { id: true }
+    });
+    const deptIds = departments.map(d => d.id);
+
+    const where: any = {
+      user: { department_id: { in: deptIds } }
+    };
+    if (status && status !== 'all') {
+      where.lead_status = status;
+    }
+
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [records, total] = await Promise.all([
+      prisma.leaveRequest.findMany({
+        where,
+        include: {
+          user: { select: { id: true, name: true, department_id: true } },
+          reviewer: { select: { id: true, name: true } },
+          leadApprover: { select: { id: true, name: true } },
+          leave_type: true
+        },
+        orderBy: { created_at: 'desc' },
+        skip,
+        take: limitNum
+      }),
+      prisma.leaveRequest.count({ where })
+    ]);
+
+    res.json({ records, total, page: pageNum, limit: limitNum });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch team leave requests' });
+  }
+});
+
+// PUT /api/leave-requests/:id/lead-approval
+router.put('/:id/lead-approval', async (req, res) => {
+  const { lead_id, action, remarks } = req.body;
+  if (!lead_id || !action) {
+    return res.status(400).json({ error: 'lead_id and action are required' });
+  }
+  if (!['approved', 'rejected'].includes(action)) {
+    return res.status(400).json({ error: 'action must be approved or rejected' });
+  }
+
+  try {
+    const reqId = parseInt(req.params.id);
+    const leaveReq = await prisma.leaveRequest.findUnique({
+      where: { id: reqId },
+      include: { user: { select: { id: true, name: true, department_id: true } } }
+    });
+    if (!leaveReq) return res.status(404).json({ error: 'Not found' });
+    if (leaveReq.lead_status !== 'pending') {
+      return res.status(400).json({ error: 'Request already processed by lead' });
+    }
+
+    // Verify lead owns the department
+    const dept = await prisma.department.findFirst({
+      where: { lead_id: String(lead_id), id: leaveReq.user.department_id! }
+    });
+    if (!dept) {
+      return res.status(403).json({ error: 'You are not the lead of this employee\'s department' });
+    }
+
+    const updated = await prisma.leaveRequest.update({
+      where: { id: reqId },
+      data: {
+        lead_status: action,
+        lead_approved_by: String(lead_id),
+        lead_approved_at: new Date(),
+        lead_remarks: remarks || null
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+        leadApprover: { select: { id: true, name: true } }
+      }
+    });
+
+    // Notify employee
+    await prisma.notification.create({
+      data: {
+        user_id: leaveReq.user_id,
+        type: `leave_lead_${action}`,
+        message: `Your leave request has been ${action} by your team lead.`
+      }
+    });
+
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to process lead approval' });
+  }
+});
+
 // Create leave request (Submits a RESERVED hold)
 router.post('/', async (req, res) => {
   const { user_id, leave_type_id, start_date, end_date, reason, is_half_day, half_day_session, idempotency_key, days_consumed } = req.body;
@@ -115,7 +218,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Approve/Reject leave request
+// Approve/Reject leave request (Admin — requires lead approval first)
 router.put('/:id/status', async (req, res) => {
   const { status, reviewed_by, action_role } = req.body; // status: 'APPROVED' | 'REJECTED' | 'CANCELLED'
   
@@ -129,6 +232,7 @@ router.put('/:id/status', async (req, res) => {
       const leaveReq = await tx.leaveRequest.findUnique({ where: { id: reqId } });
       if (!leaveReq) throw new Error('Not found');
       if (leaveReq.status !== 'PENDING') throw new Error('Request already processed');
+      if (leaveReq.lead_status !== 'approved') throw new Error('Lead approval is required before admin action');
 
       // 1. Lock User
       await tx.$executeRaw`SELECT 1 FROM user_leave_locks WHERE user_id = ${leaveReq.user_id} FOR UPDATE`;

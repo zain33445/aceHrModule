@@ -171,6 +171,13 @@ const api = {
   // Leave Types
   getLeaveTypes: () => axios.get(`${API_BASE}/leave-types`),
 
+  // Leave Balance Summary (admin report: remaining/used/accrual per type + totals)
+  getLeaveSummary: (departmentId) => {
+    const params = {};
+    if (departmentId && departmentId !== "all") params.department_id = departmentId;
+    return axios.get(`${API_BASE}/leave-summary`, { params });
+  },
+
   // Leave Requests
   getLeaveRequests: (userId, status) => {
     const params = {};
@@ -268,6 +275,27 @@ const api = {
     axios.put(`${API_BASE}/overtime/${id}/reject`, { approved_by: approvedBy, rejection_reason: reason }),
   getOvertimeSummary: (month) =>
     axios.get(`${API_BASE}/overtime/summary`, { params: { month } }),
+  getTeamOvertimeRequests: (leadId, month, status) => {
+    const params = { leadId };
+    if (month) params.month = month;
+    if (status && status !== 'all') params.status = status;
+    return axios.get(`${API_BASE}/overtime/team`, { params });
+  },
+  leadApproveOvertime: (id, leadId, multiplier, remarks) =>
+    axios.put(`${API_BASE}/overtime/${id}/lead-approve`, { lead_id: leadId, multiplier, remarks }),
+  leadRejectOvertime: (id, leadId, remarks) =>
+    axios.put(`${API_BASE}/overtime/${id}/lead-reject`, { lead_id: leadId, remarks }),
+
+  // ── Team Leave APIs ───────────────────────────────────────────────────────
+  getTeamLeaveRequests: (leadId, status) => {
+    const params = { leadId };
+    if (status && status !== 'all') params.status = status;
+    return axios.get(`${API_BASE}/leave-requests/team`, { params });
+  },
+  leadApproveLeave: (id, leadId, remarks) =>
+    axios.put(`${API_BASE}/leave-requests/${id}/lead-approval`, { lead_id: leadId, action: 'approved', remarks }),
+  leadRejectLeave: (id, leadId, remarks) =>
+    axios.put(`${API_BASE}/leave-requests/${id}/lead-approval`, { lead_id: leadId, action: 'rejected', remarks }),
 };
 
 

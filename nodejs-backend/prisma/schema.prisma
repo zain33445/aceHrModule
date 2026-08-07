@@ -81,6 +81,8 @@ model User {
   tab_access             UserTabAccess[]
   overtime_requests      OvertimeRequest[]     @relation("EmployeeOvertimeRequests")
   overtime_approvals     OvertimeRequest[]     @relation("OvertimeApprover")
+  overtime_lead_approvals OvertimeRequest[]    @relation("OvertimeLeadApprover")
+  leave_lead_approvals   LeaveRequest[]        @relation("LeaveLeadApprover")
 
   @@map("users")
 }
@@ -128,11 +130,16 @@ model OvertimeRequest {
   approved_by      String?
   approved_at      DateTime?
   rejection_reason String?
+  lead_status      String     @default("pending")
+  lead_approved_by String?
+  lead_approved_at DateTime?
+  lead_remarks     String?
   created_at       DateTime   @default(now())
   updated_at       DateTime   @updatedAt
 
   user             User       @relation("EmployeeOvertimeRequests", fields: [user_id], references: [id], onDelete: Cascade)
   approver         User?     @relation("OvertimeApprover", fields: [approved_by], references: [id])
+  leadApprover     User?     @relation("OvertimeLeadApprover", fields: [lead_approved_by], references: [id])
 
   @@unique([user_id, date])
   @@map("overtime_requests")
@@ -287,9 +294,14 @@ model LeaveRequest {
   leave_type_id            Int?
   original_source_metadata Json?
   status                   LeaveRequestStatus @default(PENDING)
+  lead_status              String             @default("pending")
+  lead_approved_by         String?
+  lead_approved_at         DateTime?
+  lead_remarks             String?
   ledger_entries           LeaveLedger[]
   leave_type               LeaveType?         @relation(fields: [leave_type_id], references: [id])
   reviewer                 User?              @relation("LeaveReviewer", fields: [reviewed_by], references: [id])
+  leadApprover             User?              @relation("LeaveLeadApprover", fields: [lead_approved_by], references: [id])
   user                     User               @relation("LeaveRequester", fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("leave_requests")

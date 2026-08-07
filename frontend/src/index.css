@@ -213,32 +213,34 @@ body {
 }
 
 /* Tables */
-table {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 8px;
-}
+@layer base {
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+  }
 
-th {
-  text-align: center;
-  padding: 12px 16px;
-  color: #6B7280;
-  font-size: 0.75rem;
-  font-weight: 600;
-  background-color: #F9FAFB;
-  border-bottom: 1px solid #E5E7EB;
-}
+  th {
+    text-align: left;
+    padding: 12px 16px;
+    color: #6B7280;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background-color: #F9FAFB;
+    border-bottom: 1px solid #E5E7EB;
+  }
 
-td {
-  padding: 12px 16px;
-  color: #374151;
-  font-size: 0.875rem;
-  background-color: white;
-  border-bottom: 1px solid #E5E7EB;
-}
+  td {
+    padding: 12px 16px;
+    color: #374151;
+    font-size: 0.875rem;
+    background-color: white;
+    border-bottom: 1px solid #E5E7EB;
+  }
 
-tbody tr:hover {
-  background-color: #F9FAFB;
+  tbody tr:hover {
+    background-color: #F9FAFB;
+  }
 }
 
 .badge {

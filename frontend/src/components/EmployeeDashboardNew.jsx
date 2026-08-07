@@ -40,6 +40,7 @@ import { AttendanceCalendar } from "./calendar/AttendanceCalendar";
 import { HolidayCalendar } from "./calendar/HolidayCalendar";
 import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
 import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
+import LeaveBalanceTab from "./leaves/LeaveBalanceTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { PayrollTab } from "./salary/PayrollTab";
 import { SettingsTab } from "./dashboard/SettingsTab";
@@ -50,6 +51,8 @@ import { HRDisputesTab } from "./disputes/HRDisputesTab";
 import { formatTime12h, formatDateLocal, calculateWorkingHours } from "../utils/formatters";
 import { OvertimeEmployeeTab } from "./overtime/OvertimeEmployeeTab";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
+import { LeadOvertimeTab } from "./overtime/LeadOvertimeTab";
+import { LeadLeaveTab } from "./leaves/LeadLeaveTab";
 import { LeadDisputeDashboard } from "./LeadDisputeDashboard";
 import { PDFViewer } from "./common/PDFViewer";
 
@@ -110,6 +113,10 @@ function EmployeeDashboard({ user, onLogout }) {
     ),
     status: "all",
   });
+  const now = new Date();
+  const [salaryMonth, setSalaryMonth] = useState(
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+  );
   const [salaryPaidFilters, setSalaryPaidFilters] = useState({
     startDate: formatDateLocal(
       new Date(new Date().getFullYear(), new Date().getMonth(), 1),
@@ -141,6 +148,13 @@ function EmployeeDashboard({ user, onLogout }) {
   const [recordingState, setRecordingState] = useState("idle");
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [grantedTabs, setGrantedTabs] = useState([]);
+
+  const getSalaryDateRange = useCallback(() => {
+    const [y, m] = salaryMonth.split("-").map(Number);
+    const start = formatDateLocal(new Date(y, m - 1, 1));
+    const end = formatDateLocal(new Date(y, m, 0));
+    return { start, end };
+  }, [salaryMonth]);
 
   // Subscribe to recording state changes from the Electron main process.
   // Shows an in-app transparency banner whenever the admin has started a recording session.
@@ -184,7 +198,7 @@ function EmployeeDashboard({ user, onLogout }) {
   };
   useEffect(() => {
     fetchUserData();
-  }, [filterType]);
+  }, [filterType, salaryMonth]);
 
   useEffect(() => {
     if (activeTab === "attendance") {
@@ -195,7 +209,7 @@ function EmployeeDashboard({ user, onLogout }) {
       fetchSalaryPaidHistory();
       fetchSalaryDeductionHistory();
     }
-  }, [activeTab]);
+  }, [activeTab, salaryMonth]);
 
   const fetchHolidays = async () => {
     try {
@@ -267,13 +281,7 @@ function EmployeeDashboard({ user, onLogout }) {
   const fetchUserData = async () => {
     setLoading(true);
     try {
-      const now = new Date();
-      const start = formatDateLocal(
-        new Date(now.getFullYear(), now.getMonth(), 1),
-      );
-      const end = formatDateLocal(
-        new Date(now.getFullYear(), now.getMonth() + 1, 0),
-      );
+      const { start, end } = getSalaryDateRange();
 
       const [repRes, attRecordsRes] = await Promise.all([
         api.getSalaryReport(start, end),
@@ -370,9 +378,9 @@ function EmployeeDashboard({ user, onLogout }) {
   const fetchSalaryPaidHistory = useCallback(
     async (startDate, endDate, page = 1) => {
       setSalaryLoading(true);
-      const sDate =
-        startDate !== undefined ? startDate : salaryPaidFilters.startDate;
-      const eDate = endDate !== undefined ? endDate : salaryPaidFilters.endDate;
+      const range = getSalaryDateRange();
+      const sDate = startDate !== undefined ? startDate : range.start;
+      const eDate = endDate !== undefined ? endDate : range.end;
 
       try {
         const res = await api.getUserSalaryHistory(
@@ -400,16 +408,15 @@ function EmployeeDashboard({ user, onLogout }) {
       }
       setSalaryLoading(false);
     },
-    [salaryPaidFilters, user.user_id],
+    [salaryPaidFilters, user.user_id, salaryMonth],
   );
 
   const fetchSalaryDeductionHistory = useCallback(
     async (startDate, endDate, type, page = 1) => {
       setSalaryLoading(true);
-      const sDate =
-        startDate !== undefined ? startDate : salaryDeductionFilters.startDate;
-      const eDate =
-        endDate !== undefined ? endDate : salaryDeductionFilters.endDate;
+      const range = getSalaryDateRange();
+      const sDate = startDate !== undefined ? startDate : range.start;
+      const eDate = endDate !== undefined ? endDate : range.end;
       const t = type !== undefined ? type : salaryDeductionFilters.type;
 
       try {
@@ -439,7 +446,7 @@ function EmployeeDashboard({ user, onLogout }) {
       }
       setSalaryLoading(false);
     },
-    [salaryDeductionFilters, user.user_id],
+    [salaryDeductionFilters, user.user_id, salaryMonth],
   );
 
   const handleDisputeSubmit = async (e) => {
@@ -476,6 +483,7 @@ function EmployeeDashboard({ user, onLogout }) {
       "admin-payroll": "Payroll",
       "admin-leaves": "Leave Requests (Admin)",
       "admin-leave-allocation": "Leave Allocation",
+      "admin-leave-balances": "Leave Balances",
       "admin-holidays": "Holidays",
       "admin-departments": "Departments",
       "admin-export": "Data Export",
@@ -562,6 +570,8 @@ function EmployeeDashboard({ user, onLogout }) {
             onDeductionPageChange={(page) =>
               fetchSalaryDeductionHistory(undefined, undefined, undefined, page)
             }
+            salaryMonth={salaryMonth}
+            onMonthChange={setSalaryMonth}
           />
         ),
       },
@@ -616,6 +626,16 @@ function EmployeeDashboard({ user, onLogout }) {
         label: "Team Appeals",
         content: <LeadDisputeDashboard user={user} />,
       });
+      baseTabs.splice(5, 0, {
+        id: "team_overtime",
+        label: "Team Overtime",
+        content: <LeadOvertimeTab user={user} />,
+      });
+      baseTabs.splice(6, 0, {
+        id: "team_leaves",
+        label: "Team Leaves",
+        content: <LeadLeaveTab user={user} />,
+      });
     }
 
     // Add admin tabs the user has been granted via Feature Access
@@ -660,6 +680,11 @@ function EmployeeDashboard({ user, onLogout }) {
           id: "admin-leave-allocation",
           label: "Leave Allocation",
           content: <LeaveAllocationTab employees={[]} user={user} />,
+        },
+        "leave-balances": {
+          id: "admin-leave-balances",
+          label: "Leave Balances",
+          content: <LeaveBalanceTab />,
         },
         overtime: {
           id: "admin-overtime",
@@ -1574,17 +1599,40 @@ function SalaryTab({
   onPaidPageChange,
   onDeductionFilterChange,
   onDeductionPageChange,
+  salaryMonth,
+  onMonthChange,
 }) {
   const paidHistory = salaryHistory?.paid || [];
   const deductionHistory = salaryHistory?.deductions || [];
 
+  const [y, m] = salaryMonth.split("-").map(Number);
+  const monthLabel = new Date(y, m - 1).toLocaleString("default", {
+    month: "long",
+    year: "numeric",
+  });
+
   return (
     <SlideUp>
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-semibold text-neutral-900">
+          Salary Details
+        </h3>
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-neutral-500" />
+          <input
+            type="month"
+            value={salaryMonth}
+            onChange={(e) => onMonthChange(e.target.value)}
+            className="px-3 py-2 bg-white border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all text-sm"
+          />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <Card>
           <CardHeader>
             <h3 className="text-lg font-semibold text-neutral-900">
-              Salary Breakdown (Current Month)
+              Salary Breakdown ({monthLabel})
             </h3>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -1655,10 +1703,6 @@ function SalaryTab({
             </h3>
           </CardHeader>
           <CardBody>
-            <AttendanceFilters
-              onFilterChange={onPaidFilterChange}
-              showCategory={false}
-            />
             {loading ? (
               <div className="text-center py-4">Loading history...</div>
             ) : paidHistory?.length > 0 ? (
@@ -1727,10 +1771,6 @@ function SalaryTab({
             </h3>
           </CardHeader>
           <CardBody>
-            <AttendanceFilters
-              onFilterChange={onDeductionFilterChange}
-              excludeCategories={["present"]}
-            />
             {loading ? (
               <div className="text-center py-4">Loading history...</div>
             ) : deductionHistory?.length > 0 ? (
