@@ -418,7 +418,6 @@ model EmployeeLeavePolicy {
   updater        User?     @relation("PolicyUpdater", fields: [updated_by], references: [id])
   user           User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@unique([user_id, leave_type_id, effective_from])
   @@map("employee_leave_policies")
 }
 

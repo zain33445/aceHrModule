@@ -25,8 +25,13 @@ export const recordingEmitter = new EventEmitter();
 // Storage Configuration (Adapter Pattern)
 // ─────────────────────────────────────────
 
-// Base directory for recording files — outside web root
-const RECORDINGS_DIR = path.join(process.cwd(), 'uploads', 'recordings');
+// Base directory for recording files — outside web root.
+// Override via RECORDINGS_DIR env var; defaults to G:\recordings on Windows (production).
+const RECORDINGS_DIR = process.env.RECORDINGS_DIR
+  ? path.resolve(process.env.RECORDINGS_DIR)
+  : process.platform === 'win32'
+    ? 'G:\\recordings'
+    : path.join(process.cwd(), 'uploads', 'recordings');
 
 /** Derive a human-readable folder name from session metadata */
 function sessionFolderName(userId: string, sessionId: string): string {
@@ -105,6 +110,15 @@ export async function startSession(
   startSessionLocks[userId] = new Promise<void>((r) => { resolveLock = r; });
 
   try {
+    // Admins/superadmins must never be recorded
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (targetUser && (targetUser.role === 'admin' || targetUser.role === 'superadmin')) {
+      throw new Error('Admins cannot be recorded');
+    }
+
     // Enforce one active session per user: stop any existing ones
     const activeSessions = await prisma.recordingSession.findMany({
       where: { user_id: userId, status: { in: ['pending', 'recording'] } },

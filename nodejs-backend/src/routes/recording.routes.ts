@@ -82,6 +82,9 @@ router.post('/session/start', requireAdmin, async (req: Request, res: Response) 
     });
   } catch (err: any) {
     console.error('[Recording] Start session failed:', err.message);
+    if (err.message === 'Admins cannot be recorded') {
+      return res.status(400).json({ error: 'Admins cannot be recorded' });
+    }
     res.status(500).json({ error: 'Failed to start recording session' });
   }
 });

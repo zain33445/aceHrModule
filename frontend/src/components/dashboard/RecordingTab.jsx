@@ -153,6 +153,10 @@ export default function RecordingTab({ adminId, employees = [] }) {
   };
 
   // ── Employee enrichment ───────────────────────────────────────────────────
+  const recordableEmployees = (employees || []).filter(
+    (e) => e.role !== 'admin' && e.role !== 'superadmin'
+  );
+
   function getEmployee(userId) {
     return employees.find((e) => String(e.id) === String(userId));
   }
@@ -213,16 +217,16 @@ export default function RecordingTab({ adminId, employees = [] }) {
           <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
             <Loader2 size={28} style={{ color: '#94a3b8', animation: 'spin 1s linear infinite' }} />
           </div>
-        ) : employees.length === 0 ? (
+        ) : recordableEmployees.length === 0 ? (
           <Card>
             <CardBody style={{ textAlign: 'center', padding: 40, color: '#94a3b8' }}>
               <WifiOff size={40} style={{ margin: '0 auto 12px' }} />
-              <p>No employees found. Add employees first.</p>
+              <p>No recordable employees found. Add employees first.</p>
             </CardBody>
           </Card>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(310px, 1fr))', gap: 14 }}>
-            {employees.map((emp) => {
+            {recordableEmployees.map((emp) => {
               const isConnected = agents.includes(String(emp.id));
               const liveStatus = statuses[String(emp.id)];
               const activeSession = liveStatus?.activeSession;

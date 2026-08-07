@@ -231,6 +231,15 @@ export class RecordingGateway {
     // First check if there's already an active session — if so, re-attach instead of creating new
     setTimeout(() => {
       import('../services/recording.service').then(async (RecordingService) => {
+        const targetUser = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { role: true },
+        });
+        if (targetUser && (targetUser.role === 'admin' || targetUser.role === 'superadmin')) {
+          console.log(`[WS Gateway] Skipping auto-start for admin ${userId}`);
+          return;
+        }
+
         const activeSession = await prisma.recordingSession.findFirst({
           where: { user_id: userId, status: { in: ['pending', 'recording'] } },
         });
