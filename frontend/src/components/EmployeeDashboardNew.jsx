@@ -65,7 +65,7 @@ function EmployeeDashboard({ user, onLogout }) {
   const [stats, setStats] = useState(null);
   const [logs, setLogs] = useState([]);
   const [absences, setAbsences] = useState([]);
-  const [leaveBank, setLeaveBank] = useState(null);
+  const [leaveBank, setLeaveBank] = useState([]);
   const [disputes, setDisputes] = useState([]);
   const [salaryHistory, setSalaryHistory] = useState([]);
   const [showDisputeModal, setShowDisputeModal] = useState(false);
@@ -1170,11 +1170,11 @@ function AttendanceTab({
           <span className="text-sm text-neutral-500">
             Total Records: {pagination?.totalRecords || 0}
           </span>
-          {leaveBank && (
+          {leaveBank && leaveBank.length > 0 && (
             <span className="text-sm text-neutral-500">
               Leaves Remaining:{" "}
               <span className="font-semibold text-primary-600">
-                {leaveBank.leaves_remaining}
+                {leaveBank.reduce((sum, lb) => sum + (lb.leaves_remaining || 0), 0)}
               </span>{" "}
             </span>
           )}

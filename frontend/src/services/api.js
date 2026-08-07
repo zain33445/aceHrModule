@@ -86,16 +86,27 @@ const api = {
 
   // Leave Bank Management APIs
   getAllLeaveBanks: () => axios.get(`${API_BASE}/absences/leave-bank`),
-  getUserLeaveBank: (userId) =>
-    axios.get(`${API_BASE}/absences/leave-bank/user/${userId}`),
-  updateLeaveBank: (userId, leavesRemaining) =>
+  getUserLeaveBank: (userId, leaveTypeId) => {
+    const params = {};
+    if (leaveTypeId) params.leaveTypeId = leaveTypeId;
+    return axios.get(`${API_BASE}/absences/leave-bank/user/${userId}`, { params });
+  },
+  updateLeaveBank: (userId, leavesRemaining, leaveTypeId) =>
     axios.put(`${API_BASE}/absences/leave-bank/user/${userId}`, {
       leaves_remaining: parseFloat(leavesRemaining),
+      leave_type_id: leaveTypeId || 1,
     }),
-  resetLeaveBank: (userId) =>
-    axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/reset`),
-  deductLeaveBank: (userId, amount, reason, date) =>
-    axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/deduct`, { amount, reason, date }),
+  resetLeaveBank: (userId, leaveTypeId) =>
+    axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/reset`, {
+      leave_type_id: leaveTypeId || 1,
+    }),
+  deductLeaveBank: (userId, amount, reason, date, leaveTypeId) =>
+    axios.post(`${API_BASE}/absences/leave-bank/user/${userId}/deduct`, {
+      amount,
+      reason,
+      date,
+      leave_type_id: leaveTypeId || 1,
+    }),
 
   // Dispute Management APIs
   createDispute: (data) => axios.post(`${API_BASE}/disputes`, data),

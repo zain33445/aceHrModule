@@ -19,18 +19,8 @@ export class OvertimeService {
     const daysInMonth = new Date(year, m + 1, 0).getDate();
     const eligible: string[] = [];
 
-    // Get all holidays in this month
     const startOfMonth = new Date(`${year}-${String(m + 1).padStart(2, '0')}-01T00:00:00.000Z`);
     const endOfMonth = new Date(`${year}-${String(m + 1).padStart(2, '0')}-${daysInMonth}T23:59:59.999Z`);
-
-    const holidays = await prisma.holiday.findMany({
-      where: {
-        date: { gte: startOfMonth, lte: endOfMonth }
-      },
-      select: { date: true, name: true }
-    });
-
-    const holidayDateSet = new Set(holidays.map(h => this.getUtcDateKey(h.date)));
 
     // Get existing OT requests for this user in this month
     const existingRequests = await prisma.overtimeRequest.findMany({
@@ -44,15 +34,11 @@ export class OvertimeService {
     const existingDates = new Set(existingRequests.map(r => this.getUtcDateKey(r.date)));
 
     for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(year, m, day);
-      const dayOfWeek = date.getDay();
       const dateKey = this.getUtcDateKey(new Date(`${year}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T12:00:00.000Z`));
 
-      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-      const isHoliday = holidayDateSet.has(dateKey);
       const alreadyRequested = existingDates.has(dateKey);
 
-      if ((isWeekend || isHoliday) && !alreadyRequested) {
+      if (!alreadyRequested) {
         eligible.push(dateKey);
       }
     }
@@ -64,26 +50,22 @@ export class OvertimeService {
     const canonicalDate = this.getCanonicalUtcDate(new Date(date));
     const dateKey = this.getUtcDateKey(canonicalDate);
 
-    // Validate: date must be within current month in Karachi timezone
+    // Validate: date must be within current or previous month in Karachi timezone
     const nowKarachi = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" }));
     const currentMonth = `${nowKarachi.getFullYear()}-${String(nowKarachi.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonthDate = new Date(nowKarachi.getFullYear(), nowKarachi.getMonth() - 1, 1);
+    const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
     const requestedMonth = dateKey.substring(0, 7);
-    if (requestedMonth !== currentMonth) {
-      throw new Error('Overtime can only be requested for the current month');
+    if (requestedMonth !== currentMonth && requestedMonth !== prevMonth) {
+      throw new Error('Overtime can only be requested for the current or previous month');
     }
-
-    // Validate: must be a non-working day (weekend or holiday)
-    const dayOfWeek = canonicalDate.getUTCDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
     const holiday = await prisma.holiday.findFirst({
       where: { date: canonicalDate }
     });
     const isHoliday = !!holiday;
-
-    if (!isWeekend && !isHoliday) {
-      throw new Error('Overtime can only be requested for non-working days (weekends or holidays)');
-    }
+    const dayOfWeek = canonicalDate.getUTCDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
     // Check duplicate
     const existing = await prisma.overtimeRequest.findUnique({
@@ -152,7 +134,7 @@ export class OvertimeService {
 
     const monthlySalary = request.user.monthly_salary;
     const hourlyRate = monthlySalary / effectiveWorkingDays / 9;
-    const finalMultiplier = multiplier ?? 1.5;
+    const finalMultiplier = multiplier ?? 1;
     const overtimePay = request.hours_worked * hourlyRate * finalMultiplier;
 
     const updated = await prisma.overtimeRequest.update({

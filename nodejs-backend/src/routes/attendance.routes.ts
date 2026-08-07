@@ -79,7 +79,7 @@ router.get('/report/salary-report', async (req, res) => {
               }
             : undefined,
         },
-        leaveBank: true,
+        leaveBanks: true,
         ledger_entries: {
           where: {
             transaction_type: 'CONSUMPTION',
@@ -149,7 +149,7 @@ router.get('/report/salary-report', async (req, res) => {
         );
         const daysWorked = workedRecords.length;
 
-        const remainingLeaves = user.leaveBank?.leaves_remaining || 0;
+        const remainingLeaves = (user.leaveBanks || []).reduce((sum, lb) => sum + (lb.leaves_remaining || 0), 0);
         const paidLeavesUsed = user.ledger_entries.reduce((sum, e) => {
           return sum + Math.abs(e.amount.toNumber());
         }, 0);

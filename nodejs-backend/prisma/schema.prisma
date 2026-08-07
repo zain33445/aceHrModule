@@ -63,7 +63,7 @@ model User {
   disputes_req           Dispute[]             @relation("DisputeRequester")
   leave_policies_updated EmployeeLeavePolicy[] @relation("PolicyUpdater")
   leave_policies         EmployeeLeavePolicy[]
-  leaveBank              LeaveBank?
+  leaveBanks             LeaveBank[]
   ledger_entries_created LeaveLedger[]         @relation("LedgerCreator")
   ledger_entries         LeaveLedger[]
   leave_reviews          LeaveRequest[]        @relation("LeaveReviewer")
@@ -119,7 +119,7 @@ model OvertimeRequest {
   hours_worked     Float
   reason           String?
   status           String     @default("pending")
-  multiplier       Float      @default(1.5)
+  multiplier       Float      @default(1)
   hourly_rate      Float?
   overtime_pay     Float?
   is_weekend       Boolean    @default(false)
@@ -222,12 +222,15 @@ model AttendanceRecord {
 }
 
 model LeaveBank {
-  id               Int     @id @default(autoincrement())
-  user_id          String  @unique
-  leaves_remaining Float   @default(0)
+  id               Int       @id @default(autoincrement())
+  user_id          String
+  leave_type_id    Int
+  leaves_remaining Float     @default(0)
   last_reset_month String?
-  user             User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user             User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  leave_type       LeaveType @relation(fields: [leave_type_id], references: [id], onDelete: Cascade)
 
+  @@unique([user_id, leave_type_id])
   @@map("leave_bank")
 }
 
@@ -392,6 +395,7 @@ model LeaveType {
   name           String                @unique
   is_paid        Boolean               @default(true)
   created_at     DateTime              @default(now())
+  bank_entries   LeaveBank[]
   policies       EmployeeLeavePolicy[]
   ledger_entries LeaveLedger[]
   requests       LeaveRequest[]

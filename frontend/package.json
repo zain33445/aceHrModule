@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.7.1",
   "type": "module",
+  "description": "aceHRM desktop monitoring agent",
+  "author": "ACE HRM <theaceservices.site>",
+  "homepage": "https://theaceservices.site",
   "main": "main.js",
   "scripts": {
     "dev": "vite",
@@ -14,6 +17,7 @@
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.4.0",
+    "@rollup/rollup-linux-x64-gnu": "^4.62.4",
     "axios": "^1.13.6",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
@@ -75,6 +79,15 @@
       "target": "nsis",
       "icon": "public/aceLogo.png",
       "signAndEditExecutable": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "public/aceLogo.png",
+      "category": "Office",
+      "synopsis": "aceHRM Desktop Monitoring Agent"
     },
     "nsis": {
       "oneClick": false,

@@ -155,10 +155,11 @@ try {
     return res.json({ message: 'No active leave policies found to apply.' });
   }
 
-  // 2. Group accrual per user
-  const accrualByUser = activePolicies.reduce((acc, policy) => {
+  // 2. Group accrual per (user_id, leave_type_id)
+  const accrualByKey = activePolicies.reduce((acc, policy) => {
     const amount = Number(policy.accrual_rate);
-    acc[policy.user_id] = (acc[policy.user_id] || 0) + amount;
+    const key = `${policy.user_id}-${policy.leave_type_id}`;
+    acc[key] = (acc[key] || 0) + amount;
     return acc;
   }, {} as Record<string, number>);
 
@@ -166,8 +167,11 @@ try {
   const updatedBanks = await prisma.$transaction(async (tx) => {
     const results = [];
 
-    for (const [user_id, totalAccrual] of Object.entries(accrualByUser)) {
-      const idempotencyKey = `${user_id}-${currentMonth}-ACCRUAL`;
+    for (const [key, totalAccrual] of Object.entries(accrualByKey)) {
+      const sepIdx = key.lastIndexOf('-');
+      const user_id = key.substring(0, sepIdx);
+      const leave_type_id = parseInt(key.substring(sepIdx + 1));
+      const idempotencyKey = `${user_id}-${leave_type_id}-${currentMonth}-ACCRUAL`;
 
       // -----------------------------
       // 0. Idempotency check (IMPORTANT)
@@ -194,13 +198,14 @@ try {
       // 2. Get or create leave bank
       // -----------------------------
       let leaveBank = await tx.leaveBank.findUnique({
-        where: { user_id }
+        where: { user_id_leave_type_id: { user_id, leave_type_id } }
       });
 
       if (!leaveBank) {
         leaveBank = await tx.leaveBank.create({
           data: {
             user_id,
+            leave_type_id,
             leaves_remaining: 0,
             last_reset_month: currentMonth
           }
@@ -213,7 +218,7 @@ try {
       await tx.leaveLedger.create({
         data: {
           user_id,
-          leave_type_id: 1, // ⚠️ replace with your default leave type id
+          leave_type_id,
           transaction_type: 'ACCRUAL',
           amount: totalAccrual,
           idempotency_key: idempotencyKey,
@@ -227,7 +232,7 @@ try {
       // -----------------------------
       if (leaveBank.last_reset_month !== currentMonth) {
         const updated = await tx.leaveBank.update({
-          where: { user_id },
+          where: { user_id_leave_type_id: { user_id, leave_type_id } },
           data: {
             leaves_remaining: user.leave_bank + totalAccrual,
             last_reset_month: currentMonth
@@ -237,7 +242,7 @@ try {
         results.push(updated);
       } else {
         const updated = await tx.leaveBank.update({
-          where: { user_id },
+          where: { user_id_leave_type_id: { user_id, leave_type_id } },
           data: {
             leaves_remaining: {
               increment: totalAccrual

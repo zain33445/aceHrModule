@@ -67,8 +67,15 @@ export class HolidayService {
 
           // ── 2. If it was "leave", refund 1 leave to the leave bank ──────
           if (existing?.status === 'leave') {
+            // Determine which leave type was deducted (first active policy, or default)
+            const policy = await prisma.employeeLeavePolicy.findFirst({
+              where: { user_id: employee.id, effective_to: null },
+              orderBy: { leave_type_id: 'asc' }
+            });
+            const leaveTypeId = policy?.leave_type_id ?? 1;
+
             const leaveBank = await prisma.leaveBank.findUnique({
-              where: { user_id: employee.id }
+              where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } }
             });
 
             const user = await prisma.user.findUnique({
@@ -83,7 +90,7 @@ export class HolidayService {
                 user.leave_bank
               );
               await prisma.leaveBank.update({
-                where: { user_id: employee.id },
+                where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } },
                 data: { leaves_remaining: refunded }
               });
               leavesRefunded++;

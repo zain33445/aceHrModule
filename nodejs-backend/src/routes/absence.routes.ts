@@ -100,12 +100,16 @@ router.get('/leave-bank', async (req, res) => {
   }
 });
 
-// Get leave bank record for a specific user
+// Get leave bank record(s) for a specific user
 router.get('/leave-bank/user/:userId', async (req, res) => {
   const { userId } = req.params;
+  const { leaveTypeId } = req.query;
 
   try {
-    const leaveBank = await AbsenceService.getUserLeaveBank(userId);
+    const leaveBank = await AbsenceService.getUserLeaveBank(
+      userId,
+      leaveTypeId ? parseInt(leaveTypeId as string) : undefined
+    );
     res.json(leaveBank);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch user leave bank" });
@@ -115,10 +119,14 @@ router.get('/leave-bank/user/:userId', async (req, res) => {
 // Update leave bank for a user (admin function)
 router.put('/leave-bank/user/:userId', async (req, res) => {
   const { userId } = req.params;
-  const { leaves_remaining } = req.body;
+  const { leaves_remaining, leave_type_id } = req.body;
 
   try {
-    const leaveBank = await AbsenceService.updateLeaveBank(userId, parseFloat(leaves_remaining));
+    const leaveBank = await AbsenceService.updateLeaveBank(
+      userId,
+      parseFloat(leaves_remaining),
+      leave_type_id ? parseInt(leave_type_id) : 1
+    );
     res.json({ message: "Leave bank updated", leaveBank });
   } catch (error) {
     res.status(500).json({ error: "Failed to update leave bank" });
@@ -128,7 +136,7 @@ router.put('/leave-bank/user/:userId', async (req, res) => {
 // Deduct fractional leaves from a user's leave bank (employee self-service)
 router.post('/leave-bank/user/:userId/deduct', async (req, res) => {
   const { userId } = req.params;
-  const { amount, reason, date } = req.body;
+  const { amount, reason, date, leave_type_id } = req.body;
 
   if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
     return res.status(400).json({ error: "Invalid deduction amount" });
@@ -139,7 +147,8 @@ router.post('/leave-bank/user/:userId/deduct', async (req, res) => {
       userId,
       parseFloat(amount),
       reason || 'manual',
-      date ? new Date(date) : undefined
+      date ? new Date(date) : undefined,
+      leave_type_id ? parseInt(leave_type_id) : 1
     );
     res.json({ message: "Leave deducted successfully", leaveBank });
   } catch (error: any) {
@@ -153,9 +162,13 @@ router.post('/leave-bank/user/:userId/deduct', async (req, res) => {
 // Reset leave bank to user's total allowed leaves
 router.post('/leave-bank/user/:userId/reset', async (req, res) => {
   const { userId } = req.params;
+  const { leave_type_id } = req.body;
 
   try {
-    const leaveBank = await AbsenceService.resetLeaveBank(userId);
+    const leaveBank = await AbsenceService.resetLeaveBank(
+      userId,
+      leave_type_id ? parseInt(leave_type_id) : 1
+    );
     res.json({ message: "Leave bank reset to total allowed leaves", leaveBank });
   } catch (error) {
     res.status(500).json({ error: "Failed to reset leave bank" });

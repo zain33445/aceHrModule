@@ -467,6 +467,17 @@ export class AbsenceService {
   }
 
   /**
+   * Find the default leave type for a user: first active policy, or fall back to leave type id=1.
+   */
+  private static async getDefaultLeaveTypeId(userId: string): Promise<number> {
+    const policy = await prisma.employeeLeavePolicy.findFirst({
+      where: { user_id: userId, effective_to: null },
+      orderBy: { leave_type_id: 'asc' }
+    });
+    return policy?.leave_type_id ?? 1;
+  }
+
+  /**
    * Process absence for a specific user on a specific date (no attendance logs)
    */
   private static async processAttendance(userId: string, targetDateRaw: Date, monthlySalary: number, userShift?: any) {
@@ -511,8 +522,11 @@ export class AbsenceService {
       return; // Skip leave deduction and absence marking entirely
     }
 
+    // Determine which leave type to deduct from
+    const leaveTypeId = await this.getDefaultLeaveTypeId(userId);
+
     // Get or create user's leave bank record, and ensure monthly reset
-    const leaveBankRecord = await this.ensureMonthlyReset(userId, date);
+    const leaveBankRecord = await this.ensureMonthlyReset(userId, date, leaveTypeId);
 
     // Compare target date against TODAY in Karachi timezone (independent of Windows system clock)
     const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
@@ -531,7 +545,7 @@ export class AbsenceService {
 
       // Update leave bank record
       await prisma.leaveBank.update({
-        where: { user_id: userId },
+        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
         data: { leaves_remaining: newLeavesRemaining }
       });
     } else {
@@ -598,11 +612,11 @@ export class AbsenceService {
    * If the month of the given date doesn't match last_reset_month, reset leaves_remaining
    * to the user's leave_bank value from the User table.
    */
-  private static async ensureMonthlyReset(userId: string, date: Date) {
+  private static async ensureMonthlyReset(userId: string, date: Date, leaveTypeId: number = 1) {
     const currentMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
     let leaveBankRecord = await prisma.leaveBank.findUnique({
-      where: { user_id: userId }
+      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } }
     });
 
     const user = await prisma.user.findUnique({
@@ -615,24 +629,23 @@ export class AbsenceService {
     }
 
     if (!leaveBankRecord) {
-      // Create new leave bank record with full leaves for this month
       leaveBankRecord = await prisma.leaveBank.create({
         data: {
           user_id: userId,
+          leave_type_id: leaveTypeId,
           leaves_remaining: user.leave_bank,
           last_reset_month: currentMonth
         }
       });
     } else if (leaveBankRecord.last_reset_month !== currentMonth) {
-      // New month — reset leaves to the user's allowed leave_bank
       leaveBankRecord = await prisma.leaveBank.update({
-        where: { user_id: userId },
+        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
         data: {
           leaves_remaining: user.leave_bank,
           last_reset_month: currentMonth
         }
       });
-      console.log(`Leave bank reset for user ${userId}: ${user.leave_bank} leaves for ${currentMonth}`);
+      console.log(`Leave bank reset for user ${userId} (type ${leaveTypeId}): ${user.leave_bank} leaves for ${currentMonth}`);
     }
 
     return leaveBankRecord;
@@ -755,73 +768,103 @@ export class AbsenceService {
   }
 
   /**
-   * Get leave bank record for a user (with automatic monthly reset)
+   * Get leave bank records for a user (all leave types, with automatic monthly reset)
    */
-  static async getUserLeaveBank(userId: string) {
+  static async getUserLeaveBank(userId: string, leaveTypeId?: number) {
     const now = new Date();
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    let leaveBankRecord = await prisma.leaveBank.findUnique({
-      where: { user_id: userId },
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { leave_bank: true }
+    });
+
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    const whereClause: any = { user_id: userId };
+    if (leaveTypeId) {
+      whereClause.leave_type_id = leaveTypeId;
+    }
+
+    let leaveBankRecords = await prisma.leaveBank.findMany({
+      where: whereClause,
       include: {
         user: {
           select: {
             id: true,
             name: true,
-            leave_bank: true // Total allowed leaves
+            leave_bank: true
+          }
+        },
+        leave_type: {
+          select: {
+            id: true,
+            name: true,
+            is_paid: true
           }
         }
       }
     });
 
-    // If no leave bank record exists, create one
-    if (!leaveBankRecord) {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { leave_bank: true }
-      });
+    // Auto-create records for leave types the user doesn't have yet
+    if (!leaveTypeId) {
+      const allLeaveTypes = await prisma.leaveType.findMany();
+      const existingTypeIds = leaveBankRecords.map(lb => lb.leave_type_id);
 
-      if (!user) {
-        throw new Error(`User ${userId} not found`);
+      for (const lt of allLeaveTypes) {
+        if (!existingTypeIds.includes(lt.id)) {
+          const newRecord = await prisma.leaveBank.create({
+            data: {
+              user_id: userId,
+              leave_type_id: lt.id,
+              leaves_remaining: user.leave_bank,
+              last_reset_month: currentMonth
+            },
+            include: {
+              user: {
+                select: { id: true, name: true, leave_bank: true }
+              },
+              leave_type: {
+                select: { id: true, name: true, is_paid: true }
+              }
+            }
+          });
+          leaveBankRecords.push(newRecord);
+        }
       }
-
-      leaveBankRecord = await prisma.leaveBank.create({
-        data: {
-          user_id: userId,
-          leaves_remaining: user.leave_bank,
-          last_reset_month: currentMonth
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              leave_bank: true
-            }
-          }
-        }
-      });
-    } else if (leaveBankRecord.last_reset_month !== currentMonth) {
-      // New month — reset leaves
-      leaveBankRecord = await prisma.leaveBank.update({
-        where: { user_id: userId },
-        data: {
-          leaves_remaining: leaveBankRecord.user.leave_bank,
-          last_reset_month: currentMonth
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              leave_bank: true
-            }
-          }
-        }
-      });
     }
 
-    return leaveBankRecord;
+    // Process monthly resets
+    const processedBanks = [];
+    for (const lb of leaveBankRecords) {
+      if (lb.last_reset_month !== currentMonth) {
+        const updated = await prisma.leaveBank.update({
+          where: { user_id_leave_type_id: { user_id: userId, leave_type_id: lb.leave_type_id } },
+          data: {
+            leaves_remaining: user.leave_bank,
+            last_reset_month: currentMonth
+          },
+          include: {
+            user: {
+              select: { id: true, name: true, leave_bank: true }
+            },
+            leave_type: {
+              select: { id: true, name: true, is_paid: true }
+            }
+          }
+        });
+        processedBanks.push(updated);
+      } else {
+        processedBanks.push(lb);
+      }
+    }
+
+    if (leaveTypeId) {
+      return processedBanks[0] || null;
+    }
+    return processedBanks;
   }
 
   /**
@@ -837,38 +880,51 @@ export class AbsenceService {
           select: {
             id: true,
             name: true,
-            leave_bank: true // Total allowed leaves
+            leave_bank: true
+          }
+        },
+        leave_type: {
+          select: {
+            id: true,
+            name: true,
+            is_paid: true
           }
         }
       }
     });
 
-    // For users without leave bank records, create them
+    // For users without leave bank records, create them for all leave types
     const allUsers = await prisma.user.findMany({
       select: { id: true, leave_bank: true }
     });
+    const allLeaveTypes = await prisma.leaveType.findMany();
 
-    const existingUserIds = leaveBanks.map(lb => lb.user_id);
-    const missingUsers = allUsers.filter(user => !existingUserIds.includes(user.id));
+    const existingKeys = new Set(leaveBanks.map(lb => `${lb.user_id}-${lb.leave_type_id}`));
 
-    for (const user of missingUsers) {
-      const newLeaveBank = await prisma.leaveBank.create({
-        data: {
-          user_id: user.id,
-          leaves_remaining: user.leave_bank,
-          last_reset_month: currentMonth
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              leave_bank: true
+    for (const user of allUsers) {
+      for (const lt of allLeaveTypes) {
+        const key = `${user.id}-${lt.id}`;
+        if (!existingKeys.has(key)) {
+          const newLeaveBank = await prisma.leaveBank.create({
+            data: {
+              user_id: user.id,
+              leave_type_id: lt.id,
+              leaves_remaining: user.leave_bank,
+              last_reset_month: currentMonth
+            },
+            include: {
+              user: {
+                select: { id: true, name: true, leave_bank: true }
+              },
+              leave_type: {
+                select: { id: true, name: true, is_paid: true }
+              }
             }
-          }
+          });
+          leaveBanks.push(newLeaveBank);
+          existingKeys.add(key);
         }
-      });
-      leaveBanks.push(newLeaveBank);
+      }
     }
 
     // Process resets
@@ -876,18 +932,17 @@ export class AbsenceService {
     for (const lb of leaveBanks) {
       if (lb.last_reset_month !== currentMonth) {
         const updated = await prisma.leaveBank.update({
-          where: { user_id: lb.user_id },
+          where: { user_id_leave_type_id: { user_id: lb.user_id, leave_type_id: lb.leave_type_id } },
           data: {
             leaves_remaining: lb.user.leave_bank,
             last_reset_month: currentMonth
           },
           include: {
             user: {
-              select: {
-                id: true,
-                name: true,
-                leave_bank: true
-              }
+              select: { id: true, name: true, leave_bank: true }
+            },
+            leave_type: {
+              select: { id: true, name: true, is_paid: true }
             }
           }
         });
@@ -903,12 +958,13 @@ export class AbsenceService {
   /**
    * Update leave bank for a user (admin function)
    */
-  static async updateLeaveBank(userId: string, leavesRemaining: number) {
+  static async updateLeaveBank(userId: string, leavesRemaining: number, leaveTypeId: number = 1) {
     const leaveBankRecord = await prisma.leaveBank.upsert({
-      where: { user_id: userId },
+      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
       update: { leaves_remaining: leavesRemaining },
       create: {
         user_id: userId,
+        leave_type_id: leaveTypeId,
         leaves_remaining: leavesRemaining
       },
       include: {
@@ -917,6 +973,13 @@ export class AbsenceService {
             id: true,
             name: true,
             leave_bank: true
+          }
+        },
+        leave_type: {
+          select: {
+            id: true,
+            name: true,
+            is_paid: true
           }
         }
       }
@@ -928,7 +991,7 @@ export class AbsenceService {
   /**
    * Reset leave bank to user's total allowed leaves
    */
-  static async resetLeaveBank(userId: string) {
+  static async resetLeaveBank(userId: string, leaveTypeId: number = 1) {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { leave_bank: true }
@@ -938,7 +1001,7 @@ export class AbsenceService {
       throw new Error(`User ${userId} not found`);
     }
 
-    return await this.updateLeaveBank(userId, user.leave_bank);
+    return await this.updateLeaveBank(userId, user.leave_bank, leaveTypeId);
   }
 
   /**
@@ -946,18 +1009,21 @@ export class AbsenceService {
    * Throws 'INSUFFICIENT_LEAVES' if the user doesn't have enough leaves.
    * Deduction amounts: absent = 1.0, half-day = 0.5, late = 0.3
    */
-  static async deductLeaveBank(userId: string, amount: number, reason: string = 'manual', recordDate?: Date) {
+  static async deductLeaveBank(userId: string, amount: number, reason: string = 'manual', recordDate?: Date, leaveTypeId: number = 1) {
     const leaveBankRecord = await prisma.leaveBank.findUnique({
-      where: { user_id: userId },
+      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
       include: {
         user: {
           select: { id: true, name: true, leave_bank: true }
+        },
+        leave_type: {
+          select: { id: true, name: true, is_paid: true }
         }
       }
     });
 
     if (!leaveBankRecord) {
-      throw new Error(`Leave bank not found for user ${userId}`);
+      throw new Error(`Leave bank not found for user ${userId} (type ${leaveTypeId})`);
     }
 
     const currentBalance = leaveBankRecord.leaves_remaining;
@@ -970,16 +1036,19 @@ export class AbsenceService {
 
     // 1. Deduct leaves from leave bank
     const updated = await prisma.leaveBank.update({
-      where: { user_id: userId },
+      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
       data: { leaves_remaining: newBalance },
       include: {
         user: {
           select: { id: true, name: true, leave_bank: true }
+        },
+        leave_type: {
+          select: { id: true, name: true, is_paid: true }
         }
       }
     });
 
-    console.log(`[LeaveBank] Deducted ${amount} leaves from user ${userId} (reason: ${reason}). Balance: ${currentBalance} → ${newBalance}`);
+    console.log(`[LeaveBank] Deducted ${amount} leaves from user ${userId} (type ${leaveTypeId}, reason: ${reason}). Balance: ${currentBalance} → ${newBalance}`);
 
     // 2. If a specific date is provided, clean up attendance and delete cash deductions
     if (recordDate) {

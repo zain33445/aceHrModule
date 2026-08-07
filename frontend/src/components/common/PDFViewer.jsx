@@ -32,7 +32,7 @@ export function PDFViewer({ src, title = "Document" }) {
   const goToNextPage = () => setCurrentPage((p) => Math.min(p + 1, numPages));
 
   return (
-    <div className="flex flex-col h-[calc(80vh)] w-1/2 m-auto">
+    <div className="flex flex-col h-[calc(80vh)] w-3/4 m-auto">
       <style>{`
         .pdf-viewer-scroll::-webkit-scrollbar { width: 6px; }
         .pdf-viewer-scroll::-webkit-scrollbar-track { background: transparent; }
