@@ -49,24 +49,7 @@ async function main() {
       });
     }
 
-    // c. Migrate User.leave_bank to LeaveLedger as a starting ADJUSTMENT if they don't have ledger entries
-    const existingLedgerEntries = await prisma.leaveLedger.count({
-      where: { user_id: user.id }
-    });
-    
-    if (existingLedgerEntries === 0 && user.leave_bank > 0) {
-      await prisma.leaveLedger.create({
-        data: {
-          user_id: user.id,
-          leave_type_id: casualTypeId, // Assuming legacy bank applies to casual
-          transaction_type: 'ADJUSTMENT',
-          amount: user.leave_bank,
-          idempotency_key: `MIGRATION_INITIAL_BAL_${user.id}`,
-          notes: 'Migrated from legacy User.leave_bank',
-          created_by_type: 'SYSTEM'
-        }
-      });
-    }
+    // c. Removed old leave_bank migration as field is dropped
   }
 
   // 4. Backfill existing LeaveRequests

@@ -189,7 +189,7 @@ try {
       // -----------------------------
       const user = await tx.user.findUnique({
         where: { id: user_id },
-        select: { leave_bank: true }
+        select: { id: true }
       });
 
       if (!user) continue;
@@ -227,31 +227,17 @@ try {
         }
       });
 
-      // -----------------------------
-      // 4. UPDATE LEAVE BANK (CACHE)
-      // -----------------------------
-      if (leaveBank.last_reset_month !== currentMonth) {
-        const updated = await tx.leaveBank.update({
-          where: { user_id_leave_type_id: { user_id, leave_type_id } },
-          data: {
-            leaves_remaining: user.leave_bank + totalAccrual,
-            last_reset_month: currentMonth
-          }
-        });
+      const updated = await tx.leaveBank.update({
+        where: { user_id_leave_type_id: { user_id, leave_type_id } },
+        data: {
+          leaves_remaining: {
+            increment: totalAccrual
+          },
+          last_reset_month: currentMonth
+        }
+      });
 
-        results.push(updated);
-      } else {
-        const updated = await tx.leaveBank.update({
-          where: { user_id_leave_type_id: { user_id, leave_type_id } },
-          data: {
-            leaves_remaining: {
-              increment: totalAccrual
-            }
-          }
-        });
-
-        results.push(updated);
-      }
+      results.push(updated);
     }
 
     return results;

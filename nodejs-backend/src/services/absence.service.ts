@@ -607,11 +607,6 @@ export class AbsenceService {
     }
   }
 
-  /**
-   * Ensure leave bank is reset for the current month.
-   * If the month of the given date doesn't match last_reset_month, reset leaves_remaining
-   * to the user's leave_bank value from the User table.
-   */
   private static async ensureMonthlyReset(userId: string, date: Date, leaveTypeId: number = 1) {
     const currentMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
@@ -619,21 +614,12 @@ export class AbsenceService {
       where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } }
     });
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { leave_bank: true }
-    });
-
-    if (!user) {
-      throw new Error(`User ${userId} not found`);
-    }
-
     if (!leaveBankRecord) {
       leaveBankRecord = await prisma.leaveBank.create({
         data: {
           user_id: userId,
           leave_type_id: leaveTypeId,
-          leaves_remaining: user.leave_bank,
+          leaves_remaining: 0,
           last_reset_month: currentMonth
         }
       });
@@ -641,11 +627,10 @@ export class AbsenceService {
       leaveBankRecord = await prisma.leaveBank.update({
         where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
         data: {
-          leaves_remaining: user.leave_bank,
           last_reset_month: currentMonth
         }
       });
-      console.log(`Leave bank reset for user ${userId} (type ${leaveTypeId}): ${user.leave_bank} leaves for ${currentMonth}`);
+      console.log(`Leave bank month tracked for user ${userId} (type ${leaveTypeId}) for ${currentMonth}`);
     }
 
     return leaveBankRecord;
@@ -776,7 +761,7 @@ export class AbsenceService {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { leave_bank: true }
+      select: { id: true }
     });
 
     if (!user) {
@@ -794,8 +779,7 @@ export class AbsenceService {
         user: {
           select: {
             id: true,
-            name: true,
-            leave_bank: true
+            name: true
           }
         },
         leave_type: {
@@ -819,12 +803,12 @@ export class AbsenceService {
             data: {
               user_id: userId,
               leave_type_id: lt.id,
-              leaves_remaining: user.leave_bank,
+              leaves_remaining: 0,
               last_reset_month: currentMonth
             },
             include: {
               user: {
-                select: { id: true, name: true, leave_bank: true }
+                select: { id: true, name: true }
               },
               leave_type: {
                 select: { id: true, name: true, is_paid: true }
@@ -843,12 +827,11 @@ export class AbsenceService {
         const updated = await prisma.leaveBank.update({
           where: { user_id_leave_type_id: { user_id: userId, leave_type_id: lb.leave_type_id } },
           data: {
-            leaves_remaining: user.leave_bank,
             last_reset_month: currentMonth
           },
           include: {
             user: {
-              select: { id: true, name: true, leave_bank: true }
+              select: { id: true, name: true }
             },
             leave_type: {
               select: { id: true, name: true, is_paid: true }
@@ -879,8 +862,7 @@ export class AbsenceService {
         user: {
           select: {
             id: true,
-            name: true,
-            leave_bank: true
+            name: true
           }
         },
         leave_type: {
@@ -895,7 +877,7 @@ export class AbsenceService {
 
     // For users without leave bank records, create them for all leave types
     const allUsers = await prisma.user.findMany({
-      select: { id: true, leave_bank: true }
+      select: { id: true }
     });
     const allLeaveTypes = await prisma.leaveType.findMany();
 
@@ -909,12 +891,12 @@ export class AbsenceService {
             data: {
               user_id: user.id,
               leave_type_id: lt.id,
-              leaves_remaining: user.leave_bank,
+              leaves_remaining: 0,
               last_reset_month: currentMonth
             },
             include: {
               user: {
-                select: { id: true, name: true, leave_bank: true }
+                select: { id: true, name: true }
               },
               leave_type: {
                 select: { id: true, name: true, is_paid: true }
@@ -934,12 +916,11 @@ export class AbsenceService {
         const updated = await prisma.leaveBank.update({
           where: { user_id_leave_type_id: { user_id: lb.user_id, leave_type_id: lb.leave_type_id } },
           data: {
-            leaves_remaining: lb.user.leave_bank,
             last_reset_month: currentMonth
           },
           include: {
             user: {
-              select: { id: true, name: true, leave_bank: true }
+              select: { id: true, name: true }
             },
             leave_type: {
               select: { id: true, name: true, is_paid: true }
@@ -971,8 +952,7 @@ export class AbsenceService {
         user: {
           select: {
             id: true,
-            name: true,
-            leave_bank: true
+            name: true
           }
         },
         leave_type: {
@@ -988,20 +968,16 @@ export class AbsenceService {
     return leaveBankRecord;
   }
 
-  /**
-   * Reset leave bank to user's total allowed leaves
-   */
   static async resetLeaveBank(userId: string, leaveTypeId: number = 1) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { leave_bank: true }
+    const policy = await prisma.employeeLeavePolicy.findFirst({
+      where: { user_id: userId, leave_type_id: leaveTypeId, effective_to: null }
     });
 
-    if (!user) {
-      throw new Error(`User ${userId} not found`);
+    if (!policy) {
+      throw new Error(`No active leave policy found for user ${userId}`);
     }
 
-    return await this.updateLeaveBank(userId, user.leave_bank, leaveTypeId);
+    return await this.updateLeaveBank(userId, Number(policy.accrual_rate), leaveTypeId);
   }
 
   /**
@@ -1014,7 +990,7 @@ export class AbsenceService {
       where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
       include: {
         user: {
-          select: { id: true, name: true, leave_bank: true }
+          select: { id: true, name: true }
         },
         leave_type: {
           select: { id: true, name: true, is_paid: true }
@@ -1040,7 +1016,7 @@ export class AbsenceService {
       data: { leaves_remaining: newBalance },
       include: {
         user: {
-          select: { id: true, name: true, leave_bank: true }
+          select: { id: true, name: true }
         },
         leave_type: {
           select: { id: true, name: true, is_paid: true }

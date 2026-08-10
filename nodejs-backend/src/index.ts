@@ -216,7 +216,6 @@ server.listen(PORT, () => {
     }
   }, 60 * 60 * 1000); // Run every hour
 
-  // ── Background Workers ──────────────────────────────────────────────────
   // Process outbox events every 10 seconds
   setInterval(async () => {
     await processOutboxEvents();
@@ -226,6 +225,87 @@ server.listen(PORT, () => {
   setInterval(async () => {
     await recoverStuckEvents();
   }, 5 * 60 * 1000);
+
+  // ── Monthly accrual cron (runs every hour, fires on 1st of month in Karachi TZ) ──
+  // Accruals are idempotent — each (user, leave_type, month) is processed at most once.
+  const runMonthlyAccrual = async () => {
+    try {
+      const now = new Date();
+      const karachiNow = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
+      const dayOfMonth = karachiNow.getDate();
+      const currentMonth = `${karachiNow.getFullYear()}-${String(karachiNow.getMonth() + 1).padStart(2, '0')}`;
+
+      // Only fire on the 1st of the month (checked hourly so it fires within an hour of midnight)
+      if (dayOfMonth !== 1) return;
+
+      const activePolicies = await prisma.employeeLeavePolicy.findMany({
+        where: { effective_to: null, effective_from: { lte: now } }
+      });
+
+      if (activePolicies.length === 0) return;
+
+      // Group accrual per (user_id, leave_type_id)
+      const accrualByKey = activePolicies.reduce((acc, policy) => {
+        const key = `${policy.user_id}-${policy.leave_type_id}`;
+        acc[key] = (acc[key] || 0) + Number(policy.accrual_rate);
+        return acc;
+      }, {} as Record<string, number>);
+
+      let applied = 0;
+      let skipped = 0;
+
+      await prisma.$transaction(async (tx) => {
+        for (const [key, totalAccrual] of Object.entries(accrualByKey)) {
+          const sepIdx = key.lastIndexOf('-');
+          const user_id = key.substring(0, sepIdx);
+          const leave_type_id = parseInt(key.substring(sepIdx + 1));
+          const idempotencyKey = `${user_id}-${leave_type_id}-${currentMonth}-ACCRUAL`;
+
+          // Skip if already processed this month
+          const existing = await tx.leaveLedger.findUnique({ where: { idempotency_key: idempotencyKey } });
+          if (existing) { skipped++; continue; }
+
+          // Ensure leave bank row exists
+          await tx.leaveBank.upsert({
+            where: { user_id_leave_type_id: { user_id, leave_type_id } },
+            create: { user_id, leave_type_id, leaves_remaining: 0, last_reset_month: currentMonth },
+            update: {}
+          });
+
+          // Record in ledger (source of truth)
+          await tx.leaveLedger.create({
+            data: {
+              user_id, leave_type_id,
+              transaction_type: 'ACCRUAL',
+              amount: totalAccrual,
+              idempotency_key: idempotencyKey,
+              notes: `Monthly accrual for ${currentMonth}`,
+              created_by_type: 'SYSTEM'
+            }
+          });
+
+          // Increment leave bank (no reset — purely additive)
+          await tx.leaveBank.update({
+            where: { user_id_leave_type_id: { user_id, leave_type_id } },
+            data: { leaves_remaining: { increment: totalAccrual }, last_reset_month: currentMonth }
+          });
+
+          applied++;
+        }
+      });
+
+      if (applied > 0 || skipped > 0) {
+        console.log(`[AccrualCron] ${currentMonth}: applied=${applied}, skipped(already done)=${skipped}`);
+      }
+    } catch (err) {
+      console.error('[AccrualCron] Monthly accrual failed:', err);
+    }
+  };
+
+  // Run once at startup to catch up if the server was down on the 1st
+  setTimeout(runMonthlyAccrual, 10000);
+  // Then check every hour
+  setInterval(runMonthlyAccrual, 60 * 60 * 1000);
 
   // ── Daily cron: Auto-transition probation employees to permanent ─────────
   setInterval(async () => {

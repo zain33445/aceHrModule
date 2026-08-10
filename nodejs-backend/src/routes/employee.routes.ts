@@ -126,21 +126,7 @@ router.post('/update-employee', async (req, res) => {
   }
 });
 
-// Update employee leaves (Legacy)
-router.post('/update-leaves', async (req, res) => {
-  const { user_id, leave_bank } = req.body;
-  try {
-    const newTotal = parseInt(leave_bank);
-    await prisma.user.update({
-      where: { id: String(user_id) },
-      data: { leave_bank: newTotal }
-    });
-
-    res.json({ message: "Leave bank updated (Legacy)" });
-  } catch (error: any) {
-    res.status(500).json({ error: "Failed to update employee leaves", details: error.message });
-  }
-});
+// Note: /update-leaves (Legacy) removed. Leave allocation is now driven by accrual_rate in employee_leave_policies.
 
 // Update employee username
 router.post('/update-username', async (req, res) => {

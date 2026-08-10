@@ -40,7 +40,6 @@ model User {
   email                  String?               @unique
   password_hash          String?
   monthly_salary         Float                 @default(0.0)
-  leave_bank             Int                   @default(5)
   department_id          Int?
   status                 EmployeeStatus        @default(active)
   type                   EmployeeType          @default(probation)

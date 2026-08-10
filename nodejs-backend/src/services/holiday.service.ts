@@ -78,16 +78,12 @@ export class HolidayService {
               where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } }
             });
 
-            const user = await prisma.user.findUnique({
-              where: { id: employee.id },
-              select: { leave_bank: true }
-            });
-
-            if (leaveBank && user) {
-              // Refund 1 leave but never exceed the user's monthly allowance
+            if (leaveBank) {
+              // Refund 1 leave but never exceed the user's monthly allowance (accrual rate)
+              const maxLeaves = policy ? Number(policy.accrual_rate) : 0;
               const refunded = Math.min(
                 leaveBank.leaves_remaining + 1,
-                user.leave_bank
+                maxLeaves
               );
               await prisma.leaveBank.update({
                 where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } },
