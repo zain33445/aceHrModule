@@ -48,6 +48,7 @@ import { DepartmentManager } from "./departments/DepartmentManager";
 import { DataExportPanel } from "./export/DataExportPanel";
 import { AuditLogTab } from "./audit/AuditLogTab";
 import { HRDisputesTab } from "./disputes/HRDisputesTab";
+import StaffManager from "./StaffManager";
 import { formatTime12h, formatDateLocal, calculateWorkingHours } from "../utils/formatters";
 import { OvertimeEmployeeTab } from "./overtime/OvertimeEmployeeTab";
 import { OvertimeAdminTab } from "./overtime/OvertimeAdminTab";
@@ -148,6 +149,7 @@ function EmployeeDashboard({ user, onLogout }) {
   const [recordingState, setRecordingState] = useState("idle");
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [grantedTabs, setGrantedTabs] = useState([]);
+  const [employees, setEmployees] = useState([]);
 
   const getSalaryDateRange = useCallback(() => {
     const [y, m] = salaryMonth.split("-").map(Number);
@@ -183,6 +185,52 @@ function EmployeeDashboard({ user, onLogout }) {
       .then((res) => setGrantedTabs(res.data.tabs || []))
       .catch(console.error);
   }, [user?.user_id]);
+
+  const fetchEmployees = useCallback(async () => {
+    try {
+      const res = await api.getEmployees();
+      setEmployees(res.data || []);
+    } catch (err) {
+      console.error("Error fetching employees:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      grantedTabs.includes("employees") ||
+      grantedTabs.includes("leave-allocation")
+    ) {
+      fetchEmployees();
+    }
+  }, [grantedTabs, fetchEmployees]);
+
+  const handleUpdateEmployee = useCallback(
+    async (userId, value, key) => {
+      try {
+        if (key === "monthly_salary") {
+          await api.updateEmployee(userId, value);
+        } else if (key === "leave_bank") {
+          await api.updateLeaves(userId, value);
+        }
+        fetchEmployees();
+      } catch {
+        alert("Failed to update setting");
+      }
+    },
+    [fetchEmployees],
+  );
+
+  const handleShowHistory = useCallback((employee) => {
+    alert(`Checking history for ${employee.name}`);
+  }, []);
+
+  const handleUpdatePassword = useCallback(async (userId, newPassword) => {
+    try {
+      await api.updatePassword(userId, newPassword);
+    } catch {
+      alert("Failed to update password");
+    }
+  }, []);
 
   const handleSyncAttendance = async () => {
     setIsSyncing(true);
@@ -679,7 +727,7 @@ function EmployeeDashboard({ user, onLogout }) {
         "leave-allocation": {
           id: "admin-leave-allocation",
           label: "Leave Allocation",
-          content: <LeaveAllocationTab employees={[]} user={user} />,
+          content: <LeaveAllocationTab employees={employees} user={user} />,
         },
         "leave-balances": {
           id: "admin-leave-balances",
@@ -690,6 +738,19 @@ function EmployeeDashboard({ user, onLogout }) {
           id: "admin-overtime",
           label: "Overtime",
           content: <OvertimeAdminTab user={user} />,
+        },
+        employees: {
+          id: "admin-employees",
+          label: "Employees",
+          content: (
+            <StaffManager
+              employees={employees}
+              onUpdate={handleUpdateEmployee}
+              onShowHistory={handleShowHistory}
+              onUpdatePassword={handleUpdatePassword}
+              onRefresh={fetchEmployees}
+            />
+          ),
         },
       };
 
@@ -722,6 +783,11 @@ function EmployeeDashboard({ user, onLogout }) {
     fetchSalaryDeductionHistory,
     fetchDisputeData,
     grantedTabs,
+    employees,
+    handleUpdateEmployee,
+    handleShowHistory,
+    handleUpdatePassword,
+    fetchEmployees,
   ]);
 
   return (
