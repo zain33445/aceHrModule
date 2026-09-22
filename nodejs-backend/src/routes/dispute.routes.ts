@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { DisputeService } from '../services/dispute.service';
 import prisma from '../prisma';
+import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
 const router = Router();
 
@@ -79,12 +80,12 @@ router.post('/', async (req, res) => {
       });
 
       if (dept?.lead_id) {
-        await prisma.notification.create({
-          data: {
-            user_id: dept.lead_id,
-            type: 'new_dispute',
-            message: `${employee.name} filed a new dispute for ${new Date(dispute_date).toLocaleDateString()}.`
-          }
+        await createAndDeliver({
+          userId: dept.lead_id,
+          type: NOTIFICATION_TYPES.NEW_DISPUTE,
+          title: 'New Dispute Filed',
+          message: `${employee.name} filed a new dispute for ${new Date(dispute_date).toLocaleDateString()}.`,
+          link: '/disputes',
         });
       }
     }

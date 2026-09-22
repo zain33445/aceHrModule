@@ -8,19 +8,18 @@ router.get('/balance/:user_id', async (req, res) => {
   try {
     const { user_id } = req.params;
     
-    // Using raw query to compute SUM safely grouped by leave_type_id
+    // Using leave bank table to get the balance for each leave type for the user
     const balances: any[] = await prisma.$queryRaw`
-      SELECT 
-        lt.id as leave_type_id,
+      SELECT
+        lb.leave_type_id,
         lt.name,
-        COALESCE(SUM(ll.amount), 0) as available_balance
-      FROM leave_types lt
-      LEFT JOIN leave_ledger ll ON lt.id = ll.leave_type_id AND ll.user_id = ${user_id}
-      GROUP BY lt.id, lt.name
+        lb.leaves_remaining AS available_balance
+      FROM leave_bank lb
+      JOIN leave_type lt ON lb.leave_type_id = lt.id
+      WHERE lb.user_id = ${user_id}
     `;
 
     res.json(balances);
-    console.log(balances);
   } catch (error) {
     console.error('Failed to fetch balance:', error);
     res.status(500).json({ error: 'Failed to fetch balance' });

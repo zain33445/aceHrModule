@@ -50,7 +50,6 @@ const statusConfig = {
 const leaveTypeIcons = {
   Casual: Activity,
   Medical: Stethoscope,
-  Legacy: BookOpen,
 };
 const LeaveTypeIcon = ({ name }) => {
   const Icon = leaveTypeIcons[name] || HelpCircle;

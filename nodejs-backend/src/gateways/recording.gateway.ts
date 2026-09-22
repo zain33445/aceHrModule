@@ -137,6 +137,9 @@ export class RecordingGateway {
           socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
           socket.destroy();
         }
+      } else if (url.pathname === '/chat-ws') {
+        // Owned by the chat gateway's own upgrade listener — do not touch.
+        return;
       } else {
         console.warn(`[WS Gateway] Unknown upgrade path: ${url.pathname}`);
         socket.destroy();

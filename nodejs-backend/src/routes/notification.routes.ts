@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { getUserPreferences, upsertUserPreferences } from '../services/notification.service';
 
 const router = Router();
 
@@ -16,6 +17,47 @@ router.get('/user/:userId', async (req, res) => {
   } catch (error) {
     console.error('Error fetching notifications:', error);
     res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
+// Get unread count for a user
+router.get('/user/:userId/unread-count', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const count = await prisma.notification.count({
+      where: { user_id: userId, is_read: false }
+    });
+    res.json({ count });
+  } catch (error) {
+    console.error('Error fetching unread count:', error);
+    res.status(500).json({ error: "Failed to fetch unread count" });
+  }
+});
+
+// Get notification preferences for a user
+router.get('/preferences/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const prefs = await getUserPreferences(userId);
+    res.json(prefs);
+  } catch (error) {
+    console.error('Error fetching notification preferences:', error);
+    res.status(500).json({ error: "Failed to fetch notification preferences" });
+  }
+});
+
+// Upsert notification preferences for a user
+router.put('/preferences', async (req, res) => {
+  const { user_id, preferences } = req.body;
+  if (!user_id || !Array.isArray(preferences)) {
+    return res.status(400).json({ error: 'user_id and preferences array required' });
+  }
+  try {
+    const result = await upsertUserPreferences(user_id, preferences);
+    res.json(result);
+  } catch (error) {
+    console.error('Error saving notification preferences:', error);
+    res.status(500).json({ error: "Failed to save notification preferences" });
   }
 });
 

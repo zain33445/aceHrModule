@@ -9,7 +9,7 @@
  */
 
 import electronPkg from 'electron';
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog } = electronPkg;
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog, Notification } = electronPkg;
 import electronUpdaterPkg from 'electron-updater';
 const { autoUpdater } = electronUpdaterPkg;
 import path from 'path';
@@ -23,6 +23,7 @@ import { logger } from './electron/logger.js';
 import { initRecorderMain, getRecordingState } from './electron/recorder-main.js';
 import { initWsClient, setWsUserId, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
 import { stopScheduler } from './electron/scheduler.js';
+import { initNotificationClient, setNotificationUserId, shutdownNotificationClient } from './electron/notification-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,40 @@ if (!gotTheLock) {
 
 let mainWindow = null;
 let tray = null;
+
+function showMainWindow(link) {
+  const wasCreated = !mainWindow;
+  if (wasCreated) createWindow();
+  
+  const sendNavigate = () => {
+    if (link) {
+      try {
+        const url = String(link);
+        if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+        else mainWindow.webContents.send('notification:navigate', url);
+      } catch { /* ignore bad links */ }
+    }
+  };
+
+  const reveal = () => {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    sendNavigate();
+  };
+
+  if (wasCreated) {
+    // Window was just created — wait for ready-to-show so we don't flash a white screen
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', reveal);
+    } else {
+      // Already loaded (or ready-to-show already fired) — safe to show immediately
+      reveal();
+    }
+  } else {
+    reveal();
+  }
+}
 
 // ─────────────────────────────────────────
 // 1. Window Creation (existing functionality)
@@ -295,11 +330,24 @@ app.whenReady().then(() => {
   ipcMain.on('set-user-id', (event, userId) => {
     setUserId(userId);
     setWsUserId(userId); // Also update the recording WS client
+    setNotificationUserId(userId); // Connect notification WS
     logger.info(`Main process received userId from frontend: ${userId}`);
   });
 
   // Recording state query from renderer (transparency layer)
   ipcMain.handle('recording:get-state', () => getRecordingState());
+
+  // Push notifications — show native OS notification
+  ipcMain.on('notification:show', (_event, title, body, link) => {
+    if (!Notification.isSupported()) return;
+    const iconPath = path.join(__dirname, app.isPackaged ? 'dist' : 'public', 'aceLogo.png');
+    const n = new Notification({ title, body, icon: iconPath });
+    n.on('click', () => showMainWindow(link));
+    n.show();
+  });
+
+  // Open window when notification-client fires a click
+  process.on('notification-click', (link) => showMainWindow(link));
 
   logger.info('All systems initialized');
 });
@@ -319,6 +367,7 @@ app.on('before-quit', () => {
   app.isQuitting = true;
   stopMonitor();
   shutdownWsClient();
+  shutdownNotificationClient();
   stopScheduler();
   logger.info('=== ACE HR Electron App Shutting Down ===');
 });

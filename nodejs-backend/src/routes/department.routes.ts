@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { syncDepartmentGroupMembers } from '../services/chat.service';
 
 const router = Router();
 
@@ -74,6 +75,7 @@ router.put('/:id/assign-employee', async (req, res) => {
       where: { id: String(user_id) },
       data: { department_id: deptId }
     });
+    await syncDepartmentGroupMembers(deptId); // keep the dept group chat in sync
     // Return fresh department data
     const department = await prisma.department.findUnique({
       where: { id: deptId },
@@ -99,6 +101,7 @@ router.put('/:id/remove-employee', async (req, res) => {
       where: { id: String(user_id) },
       data: { department_id: null }
     });
+    await syncDepartmentGroupMembers(deptId); // drop the user from the dept group chat
     const department = await prisma.department.findUnique({
       where: { id: deptId },
       include: {

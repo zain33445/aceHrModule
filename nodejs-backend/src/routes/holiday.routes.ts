@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../prisma';
 import { HolidayService } from '../services/holiday.service';
+import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
 const router = Router();
 
@@ -30,6 +31,21 @@ router.post('/', async (req, res) => {
         department_id: department_id ? parseInt(department_id) : null
       }
     });
+
+    // Notify relevant users
+    const where: any = { status: 'active' };
+    if (department_id) where.department_id = parseInt(department_id);
+    const users = await prisma.user.findMany({ where, select: { id: true } });
+    for (const u of users) {
+      await createAndDeliver({
+        userId: u.id,
+        type: NOTIFICATION_TYPES.HOLIDAY_CREATED,
+        title: 'New Holiday Announced',
+        message: `${name} on ${new Date(date).toLocaleDateString()}${department_id ? ' (your department)' : ''}.`,
+        link: '/calendar',
+      });
+    }
+
     res.json(holiday);
   } catch (error) {
     res.status(500).json({ error: 'Failed to create holiday' });

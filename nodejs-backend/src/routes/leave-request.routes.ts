@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
 const router = Router();
 
@@ -116,12 +117,12 @@ router.put('/:id/lead-approval', async (req, res) => {
     });
 
     // Notify employee
-    await prisma.notification.create({
-      data: {
-        user_id: leaveReq.user_id,
-        type: `leave_lead_${action}`,
-        message: `Your leave request has been ${action} by your team lead.`
-      }
+    await createAndDeliver({
+      userId: leaveReq.user_id,
+      type: action === 'approved' ? NOTIFICATION_TYPES.LEAD_LEAVE_DECISION : NOTIFICATION_TYPES.LEAD_LEAVE_DECISION,
+      title: `Leave Request ${action === 'approved' ? 'Approved' : 'Rejected'} by Lead`,
+      message: `Your leave request has been ${action} by your team lead.`,
+      link: '/leaves',
     });
 
     res.json(updated);
@@ -199,12 +200,12 @@ router.post('/', async (req, res) => {
     // Notify admins (Outside transaction is safer)
     const admins = await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } });
     for (const admin of admins) {
-      await prisma.notification.create({
-        data: {
-          user_id: admin.id,
-          type: 'new_leave_request',
-          message: `${request.user.name} submitted a leave request.`
-        }
+      await createAndDeliver({
+        userId: admin.id,
+        type: NOTIFICATION_TYPES.NEW_LEAVE_REQUEST,
+        title: 'New Leave Request',
+        message: `${request.user.name} submitted a leave request.`,
+        link: '/leaves',
       });
     }
 
@@ -310,12 +311,12 @@ router.put('/:id/status', async (req, res) => {
     });
 
     // Notify employee (Outside transaction)
-    await prisma.notification.create({
-      data: {
-        user_id: updatedRequest.user_id,
-        type: `leave_${status.toLowerCase()}`,
-        message: `Your leave request has been ${status}.`
-      }
+    await createAndDeliver({
+      userId: updatedRequest.user_id,
+      type: NOTIFICATION_TYPES.ADMIN_LEAVE_DECISION,
+      title: `Leave Request ${status.charAt(0) + status.slice(1).toLowerCase()}`,
+      message: `Your leave request has been ${status}.`,
+      link: '/leaves',
     });
 
     res.json(updatedRequest);

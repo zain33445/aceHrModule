@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../prisma';
 import { OvertimeService } from '../services/overtime.service';
 import { DisputeService } from '../services/dispute.service';
+import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
 const router = Router();
 
@@ -84,6 +85,14 @@ router.post('/bulk-pay', async (req, res) => {
           }
         });
         paidCount++;
+
+        await createAndDeliver({
+          userId: user.id,
+          type: NOTIFICATION_TYPES.SALARY_GENERATED,
+          title: 'Salary Processed',
+          message: `Your salary for ${paymentDate.toLocaleString('default', { month: 'long', year: 'numeric' })} has been processed.`,
+          link: '/salary',
+        });
       }
     }
 

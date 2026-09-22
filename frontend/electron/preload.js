@@ -16,5 +16,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeAllListeners('recording:state-update');
     },
   },
+
+  // Push notifications — show native OS notification from renderer
+  showNotification: (title, body, link) => ipcRenderer.send('notification:show', title, body, link || null),
+  // Notification click → main opens window and tells renderer where to navigate
+  onNotificationNavigate: (callback) => {
+    const handler = (_event, link) => callback(link);
+    ipcRenderer.on('notification:navigate', handler);
+    return () => ipcRenderer.removeListener('notification:navigate', handler);
+  },
 });
 

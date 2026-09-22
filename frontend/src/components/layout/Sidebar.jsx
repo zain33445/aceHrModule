@@ -23,6 +23,7 @@ import {
   Timer,
   BookOpen,
   CalendarCheck,
+  MessageCircle,
 } from 'lucide-react';
 
 // Grouped nav structure
@@ -31,6 +32,7 @@ const adminNavGroups = [
     label: 'Overview',
     items: [
       { id: 'overview', label: 'Analytics', icon: LayoutDashboard },
+      { id: 'chat', label: 'Messages', icon: MessageCircle },
     ],
   },
   {
@@ -88,6 +90,7 @@ const employeeNavGroups = [
     label: 'Overview',
     items: [
       { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
+      { id: 'chat', label: 'Messages', icon: MessageCircle },
     ],
   },
   {

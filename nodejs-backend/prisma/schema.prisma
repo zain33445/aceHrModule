@@ -20,14 +20,15 @@ model Shift {
 }
 
 model Department {
-  id       Int       @id @default(autoincrement())
-  name     String    @unique
-  shift_id Int?
-  lead_id  String?
-  lead     User?     @relation("DepartmentLead", fields: [lead_id], references: [id])
-  shift    Shift?    @relation(fields: [shift_id], references: [id])
-  holidays Holiday[]
-  users    User[]
+  id         Int               @id @default(autoincrement())
+  name       String            @unique
+  shift_id   Int?
+  lead_id    String?
+  lead       User?             @relation("DepartmentLead", fields: [lead_id], references: [id])
+  shift      Shift?            @relation(fields: [shift_id], references: [id])
+  holidays   Holiday[]
+  users      User[]
+  chat_group ChatConversation?
 
   @@map("departments")
 }
@@ -80,8 +81,12 @@ model User {
   tab_access             UserTabAccess[]
   overtime_requests      OvertimeRequest[]     @relation("EmployeeOvertimeRequests")
   overtime_approvals     OvertimeRequest[]     @relation("OvertimeApprover")
-  overtime_lead_approvals OvertimeRequest[]    @relation("OvertimeLeadApprover")
+  overtime_lead_approvals OvertimeRequest[]     @relation("OvertimeLeadApprover")
   leave_lead_approvals   LeaveRequest[]        @relation("LeaveLeadApprover")
+  chat_conversations_created ChatConversation[]    @relation("ChatConversationCreator")
+  chat_participants          ChatParticipant[]
+  chat_messages_sent         ChatMessage[]         @relation("ChatMessageSender")
+  notification_preferences   UserNotificationPreference[]
 
   @@map("users")
 }
@@ -114,31 +119,31 @@ model Salary {
 }
 
 model OvertimeRequest {
-  id               Int        @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   user_id          String
   date             DateTime
   hours_worked     Float
   reason           String?
-  status           String     @default("pending")
-  multiplier       Float      @default(1)
+  status           String    @default("pending")
+  multiplier       Float     @default(1)
   hourly_rate      Float?
   overtime_pay     Float?
-  is_weekend       Boolean    @default(false)
-  is_holiday       Boolean    @default(false)
+  is_weekend       Boolean   @default(false)
+  is_holiday       Boolean   @default(false)
   holiday_name     String?
   approved_by      String?
   approved_at      DateTime?
   rejection_reason String?
-  lead_status      String     @default("pending")
+  lead_status      String    @default("pending")
   lead_approved_by String?
   lead_approved_at DateTime?
   lead_remarks     String?
-  created_at       DateTime   @default(now())
-  updated_at       DateTime   @updatedAt
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
 
-  user             User       @relation("EmployeeOvertimeRequests", fields: [user_id], references: [id], onDelete: Cascade)
-  approver         User?     @relation("OvertimeApprover", fields: [approved_by], references: [id])
-  leadApprover     User?     @relation("OvertimeLeadApprover", fields: [lead_approved_by], references: [id])
+  user         User  @relation("EmployeeOvertimeRequests", fields: [user_id], references: [id], onDelete: Cascade)
+  approver     User? @relation("OvertimeApprover", fields: [approved_by], references: [id])
+  leadApprover User? @relation("OvertimeLeadApprover", fields: [lead_approved_by], references: [id])
 
   @@unique([user_id, date])
   @@map("overtime_requests")
@@ -258,7 +263,9 @@ model Notification {
   id         Int      @id @default(autoincrement())
   user_id    String
   type       String
+  title      String   @default("")
   message    String
+  link       String?
   is_read    Boolean  @default(false)
   created_at DateTime @default(now())
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -493,4 +500,83 @@ enum EmployeeStatus {
 enum EmployeeType {
   probation
   permanent
+}
+
+enum ChatConversationType {
+  group
+  direct
+}
+
+model ChatConversation {
+  id                 String               @id @default(uuid())
+  conversation_type  ChatConversationType
+  department_id      Int?                 @unique // set for groups → one group per department; null for direct
+  created_by_user_id String
+  created_at         DateTime             @default(now())
+  last_message_at    DateTime             @default(now()) // sorts the inbox, newest first
+
+  department   Department?       @relation(fields: [department_id], references: [id])
+  created_by   User              @relation("ChatConversationCreator", fields: [created_by_user_id], references: [id])
+  participants ChatParticipant[]
+  messages     ChatMessage[]
+
+  @@map("chat_conversations")
+}
+
+model ChatParticipant {
+  id              Int      @id @default(autoincrement())
+  conversation_id String
+  user_id         String
+  last_read_at    DateTime @default(now()) // drives the unread badge
+  joined_at       DateTime @default(now())
+  is_active       Boolean  @default(true) // false when someone leaves or changes department
+
+  conversation ChatConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([conversation_id, user_id]) // a person can't be in the same chat twice
+  @@index([user_id])
+  @@map("chat_participants")
+}
+
+model ChatMessage {
+  id              String    @id @default(uuid())
+  conversation_id String
+  sender_user_id  String
+  message_text    String? // null when the message is only a file
+  created_at      DateTime  @default(now())
+  edited_at       DateTime?
+  deleted_at      DateTime? // soft delete, so history stays intact
+
+  conversation ChatConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  sender       User             @relation("ChatMessageSender", fields: [sender_user_id], references: [id])
+  attachments  ChatAttachment[]
+
+  @@index([conversation_id, created_at]) // fast paged history
+  @@map("chat_messages")
+}
+
+model ChatAttachment {
+  id           Int      @id @default(autoincrement())
+  message_id   String
+  file_name    String
+  mime_type    String
+  size_bytes   Int
+  storage_path String // path on disk under uploads/chat/, same as recordings
+  created_at   DateTime @default(now())
+
+  message ChatMessage @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@map("chat_attachments")
+}
+
+model UserNotificationPreference {
+  id      Int    @id @default(autoincrement())
+  user_id String
+  type    String
+  enabled Boolean @default(true)
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, type])
+  @@map("user_notification_preferences")
 }

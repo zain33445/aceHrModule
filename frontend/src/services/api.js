@@ -152,6 +152,8 @@ const api = {
   getNotifications: (userId) => axios.get(`${API_BASE}/notifications/user/${userId}`),
   markNotificationRead: (id) => axios.put(`${API_BASE}/notifications/${id}/read`),
   markAllNotificationsRead: (userId) => axios.put(`${API_BASE}/notifications/user/${userId}/read-all`),
+  getNotificationPreferences: (userId) => axios.get(`${API_BASE}/notifications/preferences/${userId}`),
+  saveNotificationPreferences: (userId, preferences) => axios.put(`${API_BASE}/notifications/preferences`, { user_id: userId, preferences }),
 
   // Departments
   getDepartments: () => axios.get(`${API_BASE}/departments`),
@@ -296,6 +298,25 @@ const api = {
     axios.put(`${API_BASE}/leave-requests/${id}/lead-approval`, { lead_id: leadId, action: 'approved', remarks }),
   leadRejectLeave: (id, leadId, remarks) =>
     axios.put(`${API_BASE}/leave-requests/${id}/lead-approval`, { lead_id: leadId, action: 'rejected', remarks }),
+
+  // ── Chat ──────────────────────────────────────────────
+  getChatConversations: (userId) =>
+    axios.get(`${API_BASE}/chat/conversations`, { headers: { 'X-User-Id': userId } }),
+  getChatMessages: (userId, conversationId, before) =>
+    axios.get(`${API_BASE}/chat/conversations/${conversationId}/messages`, {
+      headers: { 'X-User-Id': userId },
+      params: before ? { before } : {},
+    }),
+  openDirectChat: (userId, otherUserId) =>
+    axios.post(`${API_BASE}/chat/direct`, { user_id: userId, other_user_id: otherUserId }),
+  createDepartmentGroup: (userId, departmentId) =>
+    axios.post(`${API_BASE}/chat/groups`, { user_id: userId, department_id: departmentId }),
+  sendChatMessage: (userId, conversationId, text, attachments = []) =>
+    axios.post(`${API_BASE}/chat/conversations/${conversationId}/messages`, { user_id: userId, text, attachments }),
+  markChatRead: (userId, conversationId) =>
+    axios.post(`${API_BASE}/chat/conversations/${conversationId}/read`, { user_id: userId }),
+  chatAttachmentUrl: (conversationLessAttachmentId, userId) =>
+    `${API_BASE}/chat/attachments/${conversationLessAttachmentId}?user_id=${encodeURIComponent(userId)}`,
 };
 
 

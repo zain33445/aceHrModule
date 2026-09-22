@@ -42,6 +42,7 @@ import { AuditLogTab } from "./audit/AuditLogTab";
 import { DataExportPanel } from "./export/DataExportPanel";
 import ScreenshotsTab from "./dashboard/ScreenshotsTab";
 import RecordingTab from "./dashboard/RecordingTab";
+import ChatHub from "./chat/ChatHub";
 import { PayrollTab } from "./salary/PayrollTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
@@ -172,6 +173,27 @@ function AdminDashboardNew({
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, [user?.user_id]);
+
+  // Native push notification click → main shows window + sends link → switch tab
+  useEffect(() => {
+    if (!window.electronAPI?.onNotificationNavigate) return;
+    const off = window.electronAPI.onNotificationNavigate((link) => {
+      if (!link) return;
+      const route = String(link).split('?')[0];
+      const map = {
+        '/disputes': 'disputes',
+        '/leaves': 'leaves',
+        '/attendance': 'attendance',
+        '/salary': 'payroll',
+        '/overtime': 'overtime',
+        '/chat': 'chat',
+        '/calendar': 'holidays',
+      };
+      const tab = map[route];
+      if (tab) setActiveTab(tab);
+    });
+    return () => off?.();
+  }, []);
 
   const handleNotificationClick = async (notif) => {
     if (!notif.read) {
@@ -512,6 +534,11 @@ function AdminDashboardNew({
             onFetch={onRefresh}
           />
         ),
+      },
+      {
+        id: "chat",
+        label: "Messages",
+        content: <ChatHub user={user} />,
       },
       {
         id: "leaves",

@@ -29,6 +29,9 @@ import recordingRoutes from './routes/recording.routes';
 import tabAccessRoutes from './routes/tab-access.routes';
 import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
+import { initChatGateway } from './gateways/chat.gateway';
+import chatRoutes from './routes/chat.routes';
+import { ensureAdminHrInAllGroups } from './services/chat.service';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
 import prisma from './prisma';
@@ -92,6 +95,7 @@ app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/recording', recordingRoutes);
 app.use('/api/tab-access', tabAccessRoutes);
 app.use('/api/overtime', overtimeRoutes);
+app.use('/api/chat', chatRoutes);
 
 
 app.get('/', (req, res) => {
@@ -103,6 +107,9 @@ const server = createServer(app);
 // Initialize WebSocket gateway for recording control
 const recordingGateway = initGateway(server);
 console.log('[Server] Recording WebSocket gateway attached to HTTP server');
+
+// Initialize WebSocket gateway for chat (registered after recording so it yields /chat-ws)
+initChatGateway(server);
 
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
@@ -143,6 +150,18 @@ server.listen(PORT, () => {
       console.error('[Startup] Orphan cleanup failed:', err);
     }
   }, 3000); // wait 3s for DB connections to settle
+
+  // ── Startup: ensure admin/HR are participants on every department group ──
+  setTimeout(async () => {
+    try {
+      const added = await ensureAdminHrInAllGroups();
+      if (added > 0) {
+        console.log(`[Chat] Backfill added admin/HR to ${added} group participant slot(s)`);
+      }
+    } catch (err) {
+      console.error('[Chat] Admin/HR group backfill failed:', err);
+    }
+  }, 3000);
 
   // ── Startup: process any pending holidays created while server was down ──
   setTimeout(async () => {

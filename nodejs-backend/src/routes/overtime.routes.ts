@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { OvertimeService } from '../services/overtime.service';
+import prisma from '../prisma';
+import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
 const router = Router();
 
@@ -26,6 +28,31 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'user_id, date, and hours_worked are required' });
     }
     const request = await OvertimeService.createRequest(user_id, date, hours_worked, reason);
+
+    // Notify lead + admins about new overtime request
+    const employee = await prisma.user.findUnique({
+      where: { id: user_id },
+      select: { department_id: true, name: true }
+    });
+    if (employee?.department_id) {
+      const dept = await prisma.department.findUnique({
+        where: { id: employee.department_id },
+        select: { lead_id: true }
+      });
+      const adminIds = (await prisma.user.findMany({ where: { role: 'admin' }, select: { id: true } })).map((a) => a.id);
+      const notifyIds = new Set<string>(adminIds);
+      if (dept?.lead_id) notifyIds.add(dept.lead_id);
+      for (const id of notifyIds) {
+        await createAndDeliver({
+          userId: id,
+          type: NOTIFICATION_TYPES.NEW_OVERTIME_REQUEST,
+          title: 'New Overtime Request',
+          message: `${employee.name} submitted an overtime request for ${new Date(date).toLocaleDateString()}.`,
+          link: '/overtime',
+        });
+      }
+    }
+
     res.status(201).json({ message: 'Overtime request created', request });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to create overtime request';
@@ -64,6 +91,15 @@ router.put('/:id/approve', async (req, res) => {
     const { approved_by, multiplier } = req.body;
     if (!approved_by) return res.status(400).json({ error: 'approved_by is required' });
     const result = await OvertimeService.approveRequest(parseInt(req.params.id), approved_by, multiplier);
+
+    await createAndDeliver({
+      userId: result.user.id,
+      type: NOTIFICATION_TYPES.OVERTIME_ADMIN_DECISION,
+      title: 'Overtime Approved',
+      message: `Your overtime request for ${new Date(result.date).toLocaleDateString()} has been approved by Admin.`,
+      link: '/overtime',
+    });
+
     res.json({ message: 'Overtime request approved', request: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to approve request';
@@ -77,6 +113,15 @@ router.put('/:id/reject', async (req, res) => {
     const { approved_by, rejection_reason } = req.body;
     if (!approved_by) return res.status(400).json({ error: 'approved_by is required' });
     const result = await OvertimeService.rejectRequest(parseInt(req.params.id), approved_by, rejection_reason);
+
+    await createAndDeliver({
+      userId: result.user.id,
+      type: NOTIFICATION_TYPES.OVERTIME_ADMIN_DECISION,
+      title: 'Overtime Rejected',
+      message: `Your overtime request for ${new Date(result.date).toLocaleDateString()} has been rejected by Admin.`,
+      link: '/overtime',
+    });
+
     res.json({ message: 'Overtime request rejected', request: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to reject request';
@@ -138,6 +183,15 @@ router.put('/:id/lead-approve', async (req, res) => {
     const { lead_id, multiplier, remarks } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
     const result = await OvertimeService.leadApprove(parseInt(req.params.id), lead_id, multiplier, remarks);
+
+    await createAndDeliver({
+      userId: result.user.id,
+      type: NOTIFICATION_TYPES.OVERTIME_LEAD_DECISION,
+      title: 'Overtime Approved by Lead',
+      message: `Your overtime request for ${new Date(result.date).toLocaleDateString()} has been approved by your team lead.`,
+      link: '/overtime',
+    });
+
     res.json({ message: 'Overtime request approved by lead', request: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to approve request';
@@ -151,6 +205,15 @@ router.put('/:id/lead-reject', async (req, res) => {
     const { lead_id, remarks } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
     const result = await OvertimeService.leadReject(parseInt(req.params.id), lead_id, remarks);
+
+    await createAndDeliver({
+      userId: result.user.id,
+      type: NOTIFICATION_TYPES.OVERTIME_LEAD_DECISION,
+      title: 'Overtime Rejected by Lead',
+      message: `Your overtime request for ${new Date(result.date).toLocaleDateString()} has been rejected by your team lead.`,
+      link: '/overtime',
+    });
+
     res.json({ message: 'Overtime request rejected by lead', request: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to reject request';

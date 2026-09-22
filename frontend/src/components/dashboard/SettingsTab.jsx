@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Shield, 
@@ -9,8 +9,6 @@ import {
   Eye,
   EyeOff,
   UserCircle,
-  Mail,
-  Smartphone,
   Monitor
 } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '../common/Card';
@@ -19,6 +17,21 @@ import { Button } from '../common/Button';
 import Avatar from '../common/Avatar';
 import api from '../../services/api';
 import { SlideUp } from '../animations';
+
+const NOTIFICATION_EVENT_TYPES = [
+  { id: 'new_dispute', label: 'New Dispute Filed', desc: 'When an employee files a dispute' },
+  { id: 'dispute_lead_approved', label: 'Dispute Lead Approval', desc: 'When a lead approves a dispute' },
+  { id: 'dispute_approved', label: 'Dispute Fully Approved', desc: 'When admin/HR approves a dispute' },
+  { id: 'new_leave_request', label: 'New Leave Request', desc: 'When an employee requests leave' },
+  { id: 'lead_leave_decision', label: 'Lead Leave Decision', desc: 'When a lead acts on a leave request' },
+  { id: 'admin_leave_decision', label: 'Admin Leave Decision', desc: 'When admin approves/rejects leave' },
+  { id: 'new_overtime_request', label: 'New Overtime Request', desc: 'When an employee requests overtime' },
+  { id: 'overtime_lead_decision', label: 'Overtime Lead Decision', desc: 'When a lead acts on overtime' },
+  { id: 'overtime_admin_decision', label: 'Overtime Admin Decision', desc: 'When admin approves/rejects overtime' },
+  { id: 'holiday_created', label: 'Holiday Announcements', desc: 'When a new holiday is created' },
+  { id: 'salary_generated', label: 'Salary Processed', desc: 'When your salary is generated' },
+  { id: 'new_message', label: 'New Chat Message', desc: 'When you receive a chat message' },
+];
 
 export const SettingsTab = ({ user }) => {
   const [activeSection, setActiveSection] = useState('security');
@@ -30,14 +43,32 @@ export const SettingsTab = ({ user }) => {
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Notification states (mock)
-  const [notifSettings, setNotifSettings] = useState({
-    email: true,
-    push: true,
-    desktop: false,
-    disputes: true,
-    attendance: true
+  // Notification preferences — backed by backend
+  const [notifSettings, setNotifSettings] = useState(() => {
+    const initial = {};
+    NOTIFICATION_EVENT_TYPES.forEach((t) => { initial[t.id] = true; });
+    return initial;
   });
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifMsg, setNotifMsg] = useState('');
+
+  // Load preferences from backend
+  useEffect(() => {
+    if (!user?.user_id) return;
+    setNotifLoading(true);
+    api.getNotificationPreferences(user.user_id)
+      .then(({ data }) => {
+        if (Array.isArray(data) && data.length > 0) {
+          const merged = {};
+          NOTIFICATION_EVENT_TYPES.forEach((t) => { merged[t.id] = true; });
+          data.forEach((p) => { if (p.type in merged) merged[p.type] = p.enabled; });
+          setNotifSettings(merged);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setNotifLoading(false));
+  }, [user?.user_id]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -50,7 +81,7 @@ export const SettingsTab = ({ user }) => {
     }
 
     if (newPassword.length < 6) {
-      setErrorMsg('New password must be at least 6 characters.');
+      setErrorMsg('New Password must be at least 6 characters.');
       return;
     }
 
@@ -73,6 +104,22 @@ export const SettingsTab = ({ user }) => {
 
   const toggleNotif = (key) => {
     setNotifSettings(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const saveNotifPreferences = async () => {
+    setNotifSaving(true);
+    setNotifMsg('');
+    try {
+      const preferences = NOTIFICATION_EVENT_TYPES.map((t) => ({
+        type: t.id,
+        enabled: !!notifSettings[t.id],
+      }));
+      await api.saveNotificationPreferences(user.user_id, preferences);
+      setNotifMsg('Preferences saved.');
+    } catch {
+      setNotifMsg('Failed to save preferences.');
+    }
+    setNotifSaving(false);
   };
 
   const renderSecurity = () => (
@@ -175,68 +222,63 @@ export const SettingsTab = ({ user }) => {
         <CardHeader 
           icon={Bell} 
           title="Notification Preferences" 
-          subtitle="Choose how you want to be notified"
+          subtitle="Control which notifications you receive"
         />
         <CardBody className="p-8">
           <div className="space-y-6">
             <div className="space-y-4">
-              <h4 className="text-sm font-bold text-neutral-900 uppercase tracking-wider">Channels</h4>
-              {[
-                { id: 'email', label: 'Email Notifications', icon: Mail, desc: 'Receive updates via your registered email' },
-                { id: 'push', label: 'Push Notifications', icon: Smartphone, desc: 'Receive alerts on your mobile device' },
-                { id: 'desktop', label: 'Desktop Alerts', icon: Monitor, desc: 'Browser notifications when you are active' },
-              ].map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-4 bg-neutral-50/50 rounded-2xl border border-neutral-100">
-                  <div className="flex items-center gap-4">
-                    <div className="p-2.5 bg-white rounded-xl shadow-sm text-neutral-500">
-                      <item.icon size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-neutral-900">{item.label}</p>
-                      <p className="text-xs text-neutral-500">{item.desc}</p>
-                    </div>
+              <h4 className="text-sm font-bold text-neutral-900 uppercase tracking-wider">Desktop Notifications</h4>
+              <div className="flex items-center justify-between p-4 bg-neutral-50/50 rounded-2xl border border-neutral-100">
+                <div className="flex items-center gap-4">
+                  <div className="p-2.5 bg-white rounded-xl shadow-sm text-neutral-500">
+                    <Monitor size={20} />
                   </div>
-                  <button 
-                    onClick={() => toggleNotif(item.id)}
-                    className={`w-12 h-6 rounded-full transition-colors relative ${notifSettings[item.id] ? 'bg-primary-500' : 'bg-neutral-300'}`}
-                  >
-                    <motion.div 
-                      animate={{ x: notifSettings[item.id] ? 26 : 4 }}
-                      className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
-                    />
-                  </button>
+                  <div>
+                    <p className="text-sm font-bold text-neutral-900">Desktop Alerts</p>
+                    <p className="text-xs text-neutral-500">Native OS notifications on your desktop</p>
+                  </div>
                 </div>
-              ))}
+                <div className="w-12 h-6 rounded-full bg-primary-500 relative">
+                  <div className="absolute top-1 left-[26px] w-4 h-4 bg-white rounded-full shadow-sm" />
+                </div>
+              </div>
             </div>
 
             <div className="pt-6 border-t border-neutral-100">
               <h4 className="text-sm font-bold text-neutral-900 uppercase tracking-wider mb-4">Event Types</h4>
-              <div className="space-y-3">
-                {[
-                  { id: 'disputes', label: 'Dispute Status Updates' },
-                  { id: 'attendance', label: 'Attendance & Leave Alerts' },
-                ].map((item) => (
-                  <label key={item.id} className="flex items-center gap-3 cursor-pointer group">
-                    <div className="relative flex items-center">
-                      <input 
-                        type="checkbox" 
-                        checked={notifSettings[item.id]} 
-                        onChange={() => toggleNotif(item.id)}
-                        className="peer sr-only"
-                      />
-                      <div className="w-5 h-5 border-2 border-neutral-300 rounded-md peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all" />
-                      <CheckCircle2 size={12} className="absolute left-1 text-white opacity-0 peer-checked:opacity-100 transition-opacity" />
-                    </div>
-                    <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">{item.label}</span>
-                  </label>
-                ))}
-              </div>
+              {notifLoading ? (
+                <p className="text-sm text-neutral-500">Loading preferences...</p>
+              ) : (
+                <div className="space-y-3">
+                  {NOTIFICATION_EVENT_TYPES.map((item) => (
+                    <label key={item.id} className="flex items-center justify-between gap-3 cursor-pointer group p-2 rounded-lg hover:bg-neutral-50 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="relative flex items-center">
+                          <input 
+                            type="checkbox" 
+                            checked={!!notifSettings[item.id]} 
+                            onChange={() => toggleNotif(item.id)}
+                            className="peer sr-only"
+                          />
+                          <div className="w-5 h-5 border-2 border-neutral-300 rounded-md peer-checked:border-primary-500 peer-checked:bg-primary-500 transition-all" />
+                          <CheckCircle2 size={12} className="absolute left-1 text-white opacity-0 peer-checked:opacity-100 transition-opacity" />
+                        </div>
+                        <div>
+                          <span className="text-sm text-neutral-700 group-hover:text-neutral-900 transition-colors">{item.label}</span>
+                          <p className="text-xs text-neutral-400">{item.desc}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="pt-6">
-              <Button variant="primary" className="w-full md:w-auto">
-                Save Preferences
+            <div className="pt-6 flex items-center gap-3">
+              <Button variant="primary" className="w-full md:w-auto" onClick={saveNotifPreferences} disabled={notifSaving}>
+                {notifSaving ? 'Saving...' : 'Save Preferences'}
               </Button>
+              {notifMsg && <span className="text-sm text-neutral-500">{notifMsg}</span>}
             </div>
           </div>
         </CardBody>

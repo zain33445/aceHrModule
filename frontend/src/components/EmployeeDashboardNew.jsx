@@ -39,6 +39,7 @@ import {
 import { AttendanceCalendar } from "./calendar/AttendanceCalendar";
 import { HolidayCalendar } from "./calendar/HolidayCalendar";
 import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
+import ChatHub from "./chat/ChatHub";
 import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
 import LeaveBalanceTab from "./leaves/LeaveBalanceTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
@@ -301,6 +302,26 @@ function EmployeeDashboard({ user, onLogout }) {
     const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, [user?.user_id]);
+
+  // Native push notification click → main shows window + sends link → switch tab
+  useEffect(() => {
+    if (!window.electronAPI?.onNotificationNavigate) return;
+    const off = window.electronAPI.onNotificationNavigate((link) => {
+      if (!link) return;
+      const route = String(link).split('?')[0];
+      const map = {
+        '/disputes': 'disputes',
+        '/leaves': 'leaves',
+        '/attendance': 'attendance',
+        '/salary': 'salary',
+        '/overtime': 'overtime',
+        '/chat': 'chat',
+      };
+      const tab = map[route];
+      if (tab) setActiveTab(tab);
+    });
+    return () => off?.();
+  }, []);
 
   const handleNotificationClick = async (notif) => {
     if (!notif.read) {
@@ -622,6 +643,11 @@ function EmployeeDashboard({ user, onLogout }) {
             onMonthChange={setSalaryMonth}
           />
         ),
+      },
+      {
+        id: "chat",
+        label: "Messages",
+        content: <ChatHub user={user} />,
       },
       {
         id: "leaves",

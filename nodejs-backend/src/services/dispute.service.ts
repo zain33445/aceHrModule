@@ -1,6 +1,7 @@
 import prisma from '../prisma';
 import { DISPUTE_STATUS, ACTION_TYPES } from '../constants/dispute.constants';
 import { DisputeWorkflow } from './dispute.workflow';
+import { createAndDeliver, NOTIFICATION_TYPES } from './notification.service';
 
 export class DisputeService {
   // Helper to get active working days in a month (excluding weekends and holidays)
@@ -230,12 +231,12 @@ export class DisputeService {
         }
       });
 
-      await tx.notification.create({
-        data: {
-          user_id: dispute.req_by,
-          type: 'dispute_partially_approved',
-          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} was approved by your Team Lead.`
-        }
+      await createAndDeliver({
+        userId: dispute.req_by,
+        type: NOTIFICATION_TYPES.DISPUTE_LEAD_APPROVED,
+        title: 'Dispute Approved by Lead',
+        message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} was approved by your Team Lead.`,
+        link: '/disputes',
       });
 
       return updated;
@@ -334,12 +335,12 @@ export class DisputeService {
         }
       });
 
-      await tx.notification.create({
-        data: {
-          user_id: dispute.req_by,
-          type: 'dispute_approved',
-          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been fully approved by Admin.`
-        }
+      await createAndDeliver({
+        userId: dispute.req_by,
+        type: NOTIFICATION_TYPES.DISPUTE_APPROVED,
+        title: 'Dispute Approved by Admin',
+        message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been fully approved by Admin.`,
+        link: '/disputes',
       });
 
       return updated;
@@ -404,12 +405,12 @@ export class DisputeService {
         }
       });
 
-      await tx.notification.create({
-        data: {
-          user_id: dispute.req_by,
-          type: 'dispute_approved',
-          message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been approved by HR.`
-        }
+      await createAndDeliver({
+        userId: dispute.req_by,
+        type: NOTIFICATION_TYPES.DISPUTE_APPROVED,
+        title: 'Dispute Approved by HR',
+        message: `Your dispute for ${new Date(dispute.dispute_date).toLocaleDateString()} has been approved by HR.`,
+        link: '/disputes',
       });
 
       return updated;
