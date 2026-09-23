@@ -310,21 +310,6 @@ export class AbsenceService {
       });
 
       if (existingRecord) {
-        // If status was manually set to 'leave' (via leave bank deduction), preserve it
-        if (existingRecord.status === 'leave') {
-          // Still update check-in/out times from biometric data, but don't touch status or deductions
-          await prisma.attendanceRecord.update({
-            where: { id: existingRecord.id },
-            data: {
-              check_in_time: checkInTime || existingRecord.check_in_time,
-              check_out_time: checkOutTime || existingRecord.check_out_time,
-              check_in_source: checkInTime ? 'fp' : existingRecord.check_in_source,
-              check_out_source: checkOutTime ? 'fp' : existingRecord.check_out_source,
-            }
-          });
-          return; // Skip deduction logic entirely
-        }
-
         // ZK Teco Priority Strategy: If fingerprint punch exists, strictly override existing app punch.
         let finalCheckIn = checkInTime ? checkInTime : existingRecord.check_in_time;
         let finalCheckOut = checkOutTime ? checkOutTime : existingRecord.check_out_time;
@@ -340,6 +325,33 @@ export class AbsenceService {
 
         isLate = finalStatus === 'late';
         isHalfday = finalStatus === 'halfday';
+
+        if (existingRecord.status === 'leave') {
+          // A real punch has now arrived for a day that was auto-marked 'leave'
+          // (deducted before this punch had synced in). A punch can never
+          // legitimately produce 'leave', so that earlier deduction was wrong —
+          // refund it, logged through leave_ledger, before the status is overwritten.
+          const leaveTypeId = await this.getDefaultLeaveTypeId(userId);
+          const dateKey = this.getUtcDateKey(date);
+
+          await prisma.$transaction([
+            prisma.leaveBank.update({
+              where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
+              data: { leaves_remaining: { increment: 1 } }
+            }),
+            prisma.leaveLedger.create({
+              data: {
+                user_id: userId,
+                leave_type_id: leaveTypeId,
+                transaction_type: 'REVERSAL',
+                amount: 1,
+                idempotency_key: `${userId}-${leaveTypeId}-${dateKey}-LEAVE_REVERSAL`,
+                notes: `Reversal: auto-deducted for ${dateKey} before punch synced`,
+                created_by_type: 'SYSTEM'
+              }
+            })
+          ]);
+        }
 
         await prisma.attendanceRecord.update({
           where: { id: existingRecord.id },
@@ -486,15 +498,6 @@ export class AbsenceService {
     // Use provided shift or fallback to first shift
     const shift = userShift || await prisma.shift.findFirst();
 
-
-    // Clean up previous deductions for this specific date and user to avoid duplicates or orphaned deductions
-    await prisma.deduction.deleteMany({
-      where: {
-        user_id: userId,
-        date: date
-      }
-    });
-
     // Check if it's a weekend BEFORE deducting leaves or marking absent
     const dayOfWeek = date.getUTCDay();
     if (dayOfWeek === 0 || dayOfWeek === 6) {
@@ -522,6 +525,26 @@ export class AbsenceService {
       return; // Skip leave deduction and absence marking entirely
     }
 
+    // This function can be invoked repeatedly for the same user/date (the 5-minute
+    // cron reprocesses "yesterday" every cycle until the date rolls over). If the
+    // record has already been finalized (anything other than 'pending'), stop here —
+    // otherwise every repeated call would deduct another leave.
+    const existingRec = await prisma.attendanceRecord.findUnique({
+      where: { user_id_date: { user_id: userId, date: date } }
+    });
+
+    if (existingRec && existingRec.status !== 'pending') {
+      return;
+    }
+
+    // Clean up previous deductions for this specific date and user to avoid duplicates or orphaned deductions
+    await prisma.deduction.deleteMany({
+      where: {
+        user_id: userId,
+        date: date
+      }
+    });
+
     // Determine which leave type to deduct from
     const leaveTypeId = await this.getDefaultLeaveTypeId(userId);
 
@@ -543,22 +566,34 @@ export class AbsenceService {
       status = 'leave';
       newLeavesRemaining = leaveBankRecord.leaves_remaining - 1;
 
-      // Update leave bank record
-      await prisma.leaveBank.update({
-        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-        data: { leaves_remaining: newLeavesRemaining }
-      });
+      const dateKey = this.getUtcDateKey(date);
+
+      // Update leave bank and log the consumption atomically — every leave
+      // transaction must be traceable through leave_ledger.
+      await prisma.$transaction([
+        prisma.leaveBank.update({
+          where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
+          data: { leaves_remaining: newLeavesRemaining }
+        }),
+        prisma.leaveLedger.create({
+          data: {
+            user_id: userId,
+            leave_type_id: leaveTypeId,
+            transaction_type: 'CONSUMPTION',
+            amount: -1,
+            idempotency_key: `${userId}-${leaveTypeId}-${dateKey}-LEAVE_CONSUMPTION`,
+            notes: `Auto-deducted for unexcused absence on ${dateKey}`,
+            created_by_type: 'SYSTEM'
+          }
+        })
+      ]);
     } else {
       // Rule 2: Past date with no leaves
       status = 'absent';
     }
 
-    // Create or update attendance record — but PRESERVE existing check-in/out times
-    // (set by the Electron desktop monitor) if they already exist.
-    const existingRec = await prisma.attendanceRecord.findUnique({
-      where: { user_id_date: { user_id: userId, date: date } }
-    });
-
+    // Create or finalize the attendance record — but PRESERVE existing check-in/out
+    // times (set by the Electron desktop monitor) if they already exist.
     if (!existingRec) {
       // No record at all — create a fresh one
       await prisma.attendanceRecord.create({
@@ -570,27 +605,18 @@ export class AbsenceService {
           is_halfday: false
         }
       });
-    } else {
-      // If status was manually set to 'leave', don't overwrite
-      if (existingRec.status === 'leave') {
-        return;
-      }
-
-      // Record exists. Only update status if check_in_time is still null
-      // (meaning the Electron monitor hasn't set it yet).
-      // If the monitor already set check_in_time, do NOT overwrite anything.
-      if (existingRec.check_in_time === null && existingRec.check_out_time === null) {
-        await prisma.attendanceRecord.update({
-          where: { id: existingRec.id },
-          data: {
-            status: status,
-            is_late: false,
-            is_halfday: false
-          }
-        });
-      }
-      // If check_in_time or check_out_time already has a value, leave the record untouched.
+    } else if (existingRec.check_in_time === null && existingRec.check_out_time === null) {
+      // Record exists as 'pending' with no punches yet — finalize it.
+      await prisma.attendanceRecord.update({
+        where: { id: existingRec.id },
+        data: {
+          status: status,
+          is_late: false,
+          is_halfday: false
+        }
+      });
     }
+    // If check_in_time or check_out_time already has a value, leave the record untouched.
 
     if (status === 'absent') {
       const amount = await DisputeService.calculateDeductionAmount('absent', monthlySalary, date);

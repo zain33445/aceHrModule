@@ -30,19 +30,20 @@ router.post('/attendance', async (req, res) => {
 
       if (!userExists) continue;
 
-      const startOfDay = new Date(timestamp);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(timestamp);
-      endOfDay.setHours(23, 59, 59, 999);
-
       const punch = log.punch !== undefined && log.punch !== null ? Number(log.punch) : Number(log.status);
 
-      // Check for duplicate log
-      const duplicate = await prisma.attendanceLog.findFirst({
+      // Check for an exact duplicate (same user, same exact timestamp, same punch
+      // type) — matches the table's actual unique constraint. Do NOT broaden this to
+      // "same day, same status": that silently drops genuinely distinct punches, e.g.
+      // a real end-of-day checkout when an earlier stray same-status punch that day
+      // already exists.
+      const duplicate = await prisma.attendanceLog.findUnique({
         where: {
-          user_id: userId,
-          status: punch,
-          timestamp: { gte: startOfDay, lte: endOfDay }
+          user_id_timestamp_status: {
+            user_id: userId,
+            timestamp,
+            status: punch
+          }
         }
       });
 
