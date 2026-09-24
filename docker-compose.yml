@@ -1,0 +1,65 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB: acehrm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nodejs-backend:
+    build:
+      context: ./nodejs-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-password}@db:5432/acehrm
+      CHAT_UPLOADS_DIR: /data/chat-uploads
+      RECORDINGS_DIR: /data/recordings
+    ports:
+      # Published to the host so python-microservice (host networking, see below)
+      # and any on-LAN device agents can reach it at http://<this-laptop>:5000
+      - '5000:5000'
+    volumes:
+      - backend_chat_uploads:/data/chat-uploads
+      - backend_recordings:/data/recordings
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Needs to sit on the same LAN as the physical ZKTeco attendance device, so it
+  # uses host networking instead of the docker bridge network — see README.
+  python-microservice:
+    build:
+      context: ./python-microservice
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DEVICE_IP: ${DEVICE_IP:-192.168.18.101}
+      DEVICE_PORT: ${DEVICE_PORT:-4370}
+      COMM_KEY: ${COMM_KEY:-11}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5000/api/webhooks/attendance}
+      WEBHOOK_URL_USER: ${WEBHOOK_URL_USER:-http://localhost:5000/api/webhooks/users}
+    depends_on:
+      - nodejs-backend
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nodejs-backend
+
+volumes:
+  postgres_data:
+  backend_chat_uploads:
+  backend_recordings:

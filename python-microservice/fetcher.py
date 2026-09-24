@@ -9,12 +9,12 @@ from zk import ZK
 
 app = Flask(__name__)
 
-DEVICE_IP = '192.168.18.101'
-DEVICE_PORT = 4370
-COMM_KEY = 11
+DEVICE_IP = os.environ.get('DEVICE_IP', '192.168.18.101')
+DEVICE_PORT = int(os.environ.get('DEVICE_PORT', 4370))
+COMM_KEY = int(os.environ.get('COMM_KEY', 11))
 
-WEBHOOK_URL = 'http://localhost:5000/api/webhooks/attendance'
-WEBHOOK_URL_USER = 'http://localhost:5000/api/webhooks/users'
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'http://localhost:5000/api/webhooks/attendance')
+WEBHOOK_URL_USER = os.environ.get('WEBHOOK_URL_USER', 'http://localhost:5000/api/webhooks/users')
 
 INITIAL_SYNC_DATE = datetime.datetime(2026, 5, 1)
 
