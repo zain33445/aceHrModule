@@ -17,6 +17,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
 
+  // Floating chat bubble (shown while main window is minimized)
+  openChatBubble: () => ipcRenderer.send('chat-bubble:click'),
+  moveChatBubble: (dx, dy) => ipcRenderer.send('chat-bubble:move', dx, dy),
+
   // Push notifications — show native OS notification from renderer
   showNotification: (title, body, link) => ipcRenderer.send('notification:show', title, body, link || null),
   // Notification click → main opens window and tells renderer where to navigate

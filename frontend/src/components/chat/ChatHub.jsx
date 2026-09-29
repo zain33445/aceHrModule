@@ -20,10 +20,10 @@ function timeAgo(date) {
 /**
  * ChatHub — department group chats + 1:1 direct messages.
  * Permission rules enforced server-side; this file mirrors them for the DM picker and + Group button:
- *   DM: same-dept | either side HR/Admin | lead ↔ lead (any dept); no self-DM.
+ *   DM: same-dept | either side HR/Admin; no self-DM.
  *   Groups: admin/superadmin/role-hr or employee of a department named "HR".
  */
-export default function ChatHub({ user }) {
+export default function ChatHub({ user, fullHeight = false }) {
   const myId = user?.user_id;
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -31,7 +31,6 @@ export default function ChatHub({ user }) {
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]); // {file_name, mime_type, data}
   const [employees, setEmployees] = useState([]);
-  const [leadIds, setLeadIds] = useState(new Set());
   const [departments, setDepartments] = useState([]);
   const [typingIn, setTypingIn] = useState(null);
   const [showNew, setShowNew] = useState(false);
@@ -50,7 +49,6 @@ export default function ChatHub({ user }) {
     [departments, myDepartmentId],
   );
   const iAmHr = user?.role === 'hr' || (myDeptName || '').trim().toLowerCase() === 'hr';
-  const iAmLead = !!(user?.is_lead || leadIds.has(myId));
   const iAmAdmin = isAdminRole;
   const canCreateGroup = iAmAdmin || iAmHr;
 
@@ -61,7 +59,6 @@ export default function ChatHub({ user }) {
   const targetIsHr = (u) =>
     u.role === 'hr' || (deptNameOf(u.department_id) || '').trim().toLowerCase() === 'hr';
   const targetIsAdmin = (u) => ADMIN_ROLES.has(u.role);
-  const targetIsLead = (u) => leadIds.has(u.id);
 
   const refreshConversations = useCallback(async () => {
     if (!myId) return;
@@ -75,10 +72,7 @@ export default function ChatHub({ user }) {
   useEffect(() => {
     refreshConversations();
     api.getEmployees().then(({ data }) => setEmployees(data)).catch(() => {});
-    api.getDepartments().then(({ data }) => {
-      setDepartments(data);
-      setLeadIds(new Set(data.map((d) => d.lead_id).filter(Boolean)));
-    }).catch(() => {});
+    api.getDepartments().then(({ data }) => setDepartments(data)).catch(() => {});
   }, [refreshConversations]);
 
   // WS events
@@ -157,10 +151,9 @@ export default function ChatHub({ user }) {
     const sameDept = myDepartmentId != null && u.department_id === myDepartmentId;
     if (sameDept) return true;
     if (iAmHr || iAmAdmin || targetIsHr(u) || targetIsAdmin(u)) return true;
-    if (iAmLead && targetIsLead(u)) return true;
     return false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [employees, myId, myDepartmentId, iAmHr, iAmAdmin, iAmLead, leadIds, departments]);
+  }), [employees, myId, myDepartmentId, iAmHr, iAmAdmin, departments]);
 
   const startDirect = async (otherId) => {
     try {
@@ -189,7 +182,7 @@ export default function ChatHub({ user }) {
   const deptsWithoutGroup = departments.filter((d) => !conversations.some((c) => c.type === 'group' && c.department?.id === d.id));
 
   return (
-    <div style={S.wrap}>
+    <div style={fullHeight ? { ...S.wrap, height: '100vh', minHeight: 0, border: 'none', borderRadius: 0 } : S.wrap}>
       {/* Left: conversation list */}
       <div style={S.list}>
         <div style={S.listHeader}>

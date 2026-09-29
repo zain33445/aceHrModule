@@ -9,7 +9,7 @@
  */
 
 import electronPkg from 'electron';
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog, Notification } = electronPkg;
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog, Notification, screen } = electronPkg;
 import electronUpdaterPkg from 'electron-updater';
 const { autoUpdater } = electronUpdaterPkg;
 import path from 'path';
@@ -150,11 +150,71 @@ if (isDev) {
     }
   });
 
+  // Floating chat bubble while minimized or closed to tray
+  mainWindow.on('minimize', showBubble);
+  mainWindow.on('hide', showBubble);
+  mainWindow.on('restore', hideBubble);
+  mainWindow.on('show', hideBubble);
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 
   // mainWindow.webContents.openDevTools(); // optional for debugging
+}
+
+// Load the renderer bundle with a hash to pick a view (#chat)
+function loadApp(win, hash) {
+  if (isDev) win.loadURL(`http://localhost:5173/#${hash}`);
+  else win.loadFile(path.join(__dirname, 'dist_build', 'index.html'), { hash });
+}
+
+let bubbleWindow = null;
+let chatWindow = null;
+
+function showBubble() {
+  if (!bubbleWindow) {
+    const { workArea } = screen.getPrimaryDisplay();
+    bubbleWindow = new BrowserWindow({
+      width: 72, height: 72,
+      x: workArea.x + workArea.width - 96, y: workArea.y + workArea.height - 96,
+      frame: false, transparent: true, resizable: false, alwaysOnTop: true,
+      skipTaskbar: true, focusable: false, show: false,
+      webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'electron', 'preload.js') },
+    });
+    bubbleWindow.setAlwaysOnTop(true, 'screen-saver');
+    bubbleWindow.loadFile(path.join(__dirname, 'electron', 'bubble.html'));
+    bubbleWindow.once('ready-to-show', () => bubbleWindow?.showInactive());
+    bubbleWindow.on('closed', () => { bubbleWindow = null; });
+  } else {
+    bubbleWindow.showInactive();
+  }
+}
+
+// Close (not hide) so the extra renderer processes free their RAM while restored
+function hideBubble() {
+  bubbleWindow?.close();
+  chatWindow?.close();
+}
+
+function toggleChatWindow() {
+  if (chatWindow) {
+    if (chatWindow.isVisible()) chatWindow.hide();
+    else { chatWindow.show(); chatWindow.focus(); }
+    return;
+  }
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = 760, height = 560;
+  chatWindow = new BrowserWindow({
+    width, height,
+    x: workArea.x + workArea.width - width - 24, y: workArea.y + workArea.height - height - 110,
+    title: 'aceHRM Chat', icon: getIconPath(), alwaysOnTop: true, skipTaskbar: true,
+    autoHideMenuBar: true, show: false,
+    webPreferences: { contextIsolation: true, preload: path.join(__dirname, 'electron', 'preload.js') },
+  });
+  loadApp(chatWindow, 'chat');
+  chatWindow.once('ready-to-show', () => chatWindow?.show());
+  chatWindow.on('closed', () => { chatWindow = null; });
 }
 
 // ─────────────────────────────────────────
@@ -332,6 +392,13 @@ app.whenReady().then(() => {
     setWsUserId(userId); // Also update the recording WS client
     setNotificationUserId(userId); // Connect notification WS
     logger.info(`Main process received userId from frontend: ${userId}`);
+  });
+
+  ipcMain.on('chat-bubble:click', toggleChatWindow);
+  ipcMain.on('chat-bubble:move', (_event, dx, dy) => {
+    if (!bubbleWindow) return;
+    const [x, y] = bubbleWindow.getPosition();
+    bubbleWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
   });
 
   // Recording state query from renderer (transparency layer)

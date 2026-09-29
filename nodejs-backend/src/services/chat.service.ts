@@ -9,8 +9,7 @@
  *   canOpenDirect(a,b):
  *     same department  → allowed
  *     either side isHr or isAdmin → allowed (anyone)
- *     both isLead → allowed (lead ↔ lead, any department)
- *     otherwise → blocked (cross-dept employees / employee↔other-dept lead)
+ *     otherwise → blocked (any cross-dept pair, leads included)
  *   canCreateGroup = isAdmin OR isHr
  *   Groups: admin + HR users are auto-added as participants so they see every dept group.
  *
@@ -47,8 +46,6 @@ export function canOpenDirect(a: ChatUser, b: ChatUser): boolean {
   if (sameDept) return true;
   // HR and admin may DM anyone
   if (a.isHr || b.isHr || a.isAdmin || b.isAdmin) return true;
-  // Leads may only DM other departments' leads (cross-dept); same-dept handled above
-  if (a.isLead && b.isLead) return true;
   return false;
 }
 
@@ -425,8 +422,8 @@ if (require.main === module) {
   assert(!canOpenDirect(emp(1), emp(2)), 'cross-dept employees blocked');
   // Cross-dept employee ↔ lead blocked (unless HR/admin).
   assert(!canOpenDirect(emp(1), lead(2)), 'employee ↔ other-dept lead blocked');
-  // Leads may DM other departments' leads.
-  assert(canOpenDirect(lead(1), lead(2)), 'lead ↔ other-dept lead allowed');
+  // Leads may not DM other departments (leads included).
+  assert(!canOpenDirect(lead(1), lead(2)), 'lead ↔ other-dept lead blocked');
   // HR (role or HR-dept) and admin may DM anyone.
   assert(canOpenDirect(emp(1), hrRole), 'employee ↔ role-hr allowed');
   assert(canOpenDirect(emp(1), hrDeptEmp), 'employee ↔ HR-dept emp allowed');
