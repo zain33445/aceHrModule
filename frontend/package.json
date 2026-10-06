@@ -19,7 +19,6 @@
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.4.0",
-    "@rollup/rollup-linux-x64-gnu": "^4.62.4",
     "axios": "^1.13.6",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
