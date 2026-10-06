@@ -13,7 +13,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron": "electron .",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac --arm64 --publish never",
+    "dist:mac:universal": "npm run build && electron-builder --mac --universal --publish never"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.4.0",
@@ -92,6 +94,24 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "public/aceLogo.png",
+      "category": "public.app-category.business",
+      "artifactName": "aceHRM-Setup-${version}-${arch}.${ext}",
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "minimumSystemVersion": "11.0",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "aceHRM reads the frontmost app name to log your working application."
+      }
     }
   }
 }

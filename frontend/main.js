@@ -224,6 +224,8 @@ function createTray() {
   // Load the logo for the tray icon using the centralized path logic
   const iconPath = getIconPath();
   const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+  // macOS menu bar only renders template (monochrome) images cleanly
+  if (process.platform === 'darwin') icon.setTemplateImage(true);
 
   tray = new Tray(icon);
   tray.setToolTip('aceHRM Monitor');
@@ -278,12 +280,17 @@ function createTray() {
 // ─────────────────────────────────────────
 // 3. Auto-Start with Windows
 // ─────────────────────────────────────────
+/**
+ * Register the app to launch on user login.
+ * macOS ignores `path` (it registers a Login Item), so only send it elsewhere.
+ */
 function setupAutoStart() {
-  app.setLoginItemSettings({
-    openAtLogin: true,
-    path: process.execPath,
-  });
-  logger.info('Auto-start with Windows enabled');
+  const settings = { openAtLogin: true };
+  if (process.platform !== 'darwin') {
+    settings.path = process.execPath;
+  }
+  app.setLoginItemSettings(settings);
+  logger.info(`Auto-start enabled (${process.platform})`);
 }
 
 // ─────────────────────────────────────────
