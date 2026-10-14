@@ -604,12 +604,15 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
     }
 
     let destroyed = false;
+    let webrtcConnected = false;
+    let httpStarted = false;
+    let abortCtrl = null;
 
     const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:5000/api').replace(/\/+$/, '');
     const wsBaseUrl = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
     const streamUrl = `${apiBase}/recording/sessions/${sessionId}/stream`;
 
-    let ws, pc, webrtcTimer;
+    let ws, pc, webrtcTimer, mediaTimer;
 
     async function startWebRTC(wsUrl) {
       ws = new WebSocket(wsUrl);
@@ -626,7 +629,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       };
 
       pc.onicecandidate = (event) => {
-        if (event.candidate && ws.readyState === WebSocket.OPEN) {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({
             type: 'WEBRTC_ICE_CANDIDATE',
             candidate: event.candidate,
@@ -644,7 +647,11 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       };
 
       ws.onopen = async () => {
+        if (webrtcTimer) { clearTimeout(webrtcTimer); webrtcTimer = null; }
         if (destroyed) { cleanup(); return; }
+        mediaTimer = setTimeout(() => {
+          if (!webrtcConnected && !destroyed) fallbackToHttp();
+        }, 10000);
         try {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
@@ -658,6 +665,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       ws.onmessage = async (event) => {
         try {
           const msg = JSON.parse(event.data);
+          if (destroyed || !pc) return;
           if (msg.type === 'WEBRTC_ANSWER') {
             await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
           } else if (msg.type === 'WEBRTC_ICE_CANDIDATE') {
@@ -675,17 +683,37 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       };
 
       ws.onerror = () => {
+        if (webrtcTimer) { clearTimeout(webrtcTimer); webrtcTimer = null; }
+        setError('Live feed connection failed');
         if (!webrtcConnected) fallbackToHttp();
       };
 
-      // FIX #3: Timeout — if WebRTC hasn't connected in 10s, fall back
+      ws.onclose = (ev) => {
+        if (webrtcTimer) { clearTimeout(webrtcTimer); webrtcTimer = null; }
+        if (!destroyed && !webrtcConnected && ev.code !== 1000) {
+          setError(`Live feed disconnected (code ${ev.code})`);
+          fallbackToHttp();
+        }
+      };
+
+      // FIX #3: Timeout — bail out if the handshake never completes in 10s.
+      // Never tear the socket down from here: closing a CONNECTING socket is
+      // what produces "WebSocket is closed before the connection is established".
       webrtcTimer = setTimeout(() => {
-        if (!webrtcConnected && !destroyed) fallbackToHttp();
+        if (destroyed) return;
+        if (ws.readyState !== WebSocket.OPEN) {
+          setError('Live feed connection timed out');
+          return;
+        }
+        if (!webrtcConnected) fallbackToHttp();
       }, 10000);
     }
 
-    let webrtcConnected = false;
-    let httpStarted = false;
+    function clearTimers() {
+      if (webrtcTimer) clearTimeout(webrtcTimer);
+      if (mediaTimer) clearTimeout(mediaTimer);
+      webrtcTimer = mediaTimer = null;
+    }
 
     function fallbackToHttp() {
       if (httpStarted || destroyed) return;
@@ -696,9 +724,11 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
 
     async function startHttpStream() {
       if (destroyed) return;
+      abortCtrl = new AbortController();
       try {
         const response = await fetch(streamUrl, {
-          headers: { 'X-Admin-Id': adminId }
+          headers: { 'X-Admin-Id': adminId },
+          signal: abortCtrl.signal,
         });
         if (!response.ok) {
           setError(`HTTP stream failed (${response.status})`);
@@ -738,14 +768,31 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
           }
         };
       } catch (err) {
-        if (!destroyed) setError(`HTTP stream error: ${err.message}`);
+        if (destroyed || err.name === 'AbortError') return;
+        setError(`HTTP stream error: ${err.message}`);
       }
     }
 
     function cleanupWebRTC() {
-      if (webrtcTimer) clearTimeout(webrtcTimer);
-      if (ws) try { ws.close(); } catch {}
-      if (pc) try { pc.close(); } catch {}
+      clearTimers();
+      if (ws) {
+        const s = ws;
+        ws = null;
+        s.onopen = s.onmessage = s.onerror = s.onclose = s.onicecandidate = null;
+        if (s.readyState === WebSocket.CONNECTING) {
+          // Let the handshake finish, then close — calling close() mid-CONNECTING
+          // is what makes the browser log "WebSocket is closed before the
+          // connection is established".
+          s.onopen = () => s.close(1000, 'cleanup');
+        } else if (s.readyState === WebSocket.OPEN) {
+          s.close(1000, 'cleanup');
+        }
+      }
+      if (pc) {
+        const p = pc;
+        pc = null;
+        if (p.signalingState !== 'closed') p.close();
+      }
     }
 
     // Start with WebRTC — fetch WS token first for authenticated connection
@@ -764,6 +811,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
     function cleanup() {
       destroyed = true;
       cleanupWebRTC();
+      if (abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
       if (refs.mediaSource && refs.mediaSource.readyState === 'open') {
         try { refs.mediaSource.endOfStream(); } catch {}
       }
