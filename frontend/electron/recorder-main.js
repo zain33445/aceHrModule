@@ -14,13 +14,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let _recorderWindow = null;
-let _state = 'idle'; // idle | starting | recording | stopping
+let _state = 'idle'; // idle | starting | recording | stopping | permission_denied
 let _sessionId = null;
 let _uploadQueue = [];
 let _isUploading = false;
 let _onStateChange = null;
 let _getToken = null;
 let _listenersReady = false;
+let _warmupDone = false;
+let _startRetries = 0;
+const MAX_START_RETRIES = 3;
 
 // ─── Init ─────────────────────────────────
 export function initRecorderMain(getToken, onStateChange) {
@@ -35,14 +38,50 @@ export function initRecorderMain(getToken, onStateChange) {
 
   ipcMain.on('recording:state', (_e, { state, sessionId }) => {
     logger.info(`[Recorder] State → ${state} (session: ${sessionId})`);
-    _state = state === 'recording' ? 'recording' : 'idle';
+    if (state === 'recording') {
+      _state = 'recording';
+      _startRetries = 0; // success — reset silent retry budget
+    } else {
+      _state = 'idle';
+    }
     if (_onStateChange) _onStateChange(state, sessionId);
   });
 
-  ipcMain.on('recording:error', (_e, { code, message }) => {
-    logger.error(`[Recorder] Error [${code}]: ${message}`);
-    _state = 'idle';
-    if (_onStateChange) _onStateChange('error', _sessionId);
+  ipcMain.on('recording:error', (_e, { code, message, sessionId }) => {
+    const sid = sessionId || _sessionId;
+    const isPermission = code === 'PERMISSION_DENIED';
+    logger.error(`[Recorder] Error [${code}]: ${message} (session: ${sid})`);
+
+    // Silent retry — never show UI to the end user
+    if (isPermission && sid && _startRetries < MAX_START_RETRIES) {
+      _startRetries++;
+      const delay = 2000 * _startRetries;
+      logger.warn(`[Recorder] Permission error — silent retry ${_startRetries}/${MAX_START_RETRIES} in ${delay}ms`);
+      _state = 'starting';
+      if (_onStateChange) _onStateChange('starting', sid);
+      setTimeout(() => {
+        startRecording(sid).catch((err) => {
+          logger.error(`[Recorder] Silent retry failed: ${err.message}`);
+        });
+      }, delay);
+      return;
+    }
+
+    _state = isPermission ? 'permission_denied' : 'idle';
+    if (_onStateChange) _onStateChange(isPermission ? 'permission_denied' : 'error', sid);
+
+    // Forward to backend so the admin dashboard can see it (employee never sees this)
+    _forwardErrorToGateway({
+      type: 'ERROR',
+      code: code || 'START_FAILED',
+      message: message || 'Recording failed',
+      sessionId: sid ?? undefined,
+    });
+  });
+
+  ipcMain.on('recording:warmup-result', (_e, ok) => {
+    _warmupDone = !!ok;
+    logger.info(`[Recorder] Capture warm-up ${ok ? 'succeeded' : 'failed'}`);
   });
 
   ipcMain.on('recording:webrtc-out', (_e, msg) => {
@@ -54,6 +93,36 @@ export function initRecorderMain(getToken, onStateChange) {
   logger.info('[Recorder Main] Initialized');
 }
 
+function _forwardErrorToGateway(msg) {
+  import('./ws-client.js').then(({ sendWsMessage }) => {
+    sendWsMessage(msg);
+  }).catch(err => logger.error(`[Recorder] Gateway error forward failed: ${err.message}`));
+}
+
+// ─── Preflight warm-up (no UI) ────────────
+/**
+ * Silently exercises desktopCapturer + a short getUserMedia capture inside
+ * the hidden recorder window so any one-time OS/Chromium grant happens at
+ * idle time — not during an admin-initiated live session.
+ */
+export async function warmupCapture() {
+  if (_warmupDone) return true;
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    if (!sources?.length) {
+      logger.warn('[Recorder] Warm-up: no screen sources');
+      return false;
+    }
+    const win = await _ensureWindow();
+    win.webContents.send('recording:warmup', { sourceId: sources[0].id });
+    // Result arrives via recording:warmup-result (async)
+    return true;
+  } catch (err) {
+    logger.warn(`[Recorder] Warm-up failed: ${err.message}`);
+    return false;
+  }
+}
+
 // ─── Public API ───────────────────────────
 export async function startRecording(sessionId, quality = DEFAULT_QUALITY) {
   if (_state === 'recording') {
@@ -61,9 +130,16 @@ export async function startRecording(sessionId, quality = DEFAULT_QUALITY) {
     return false;
   }
   try {
+    // New session id ⇒ fresh retry budget (silent retries keep the same session)
+    if (_sessionId !== sessionId) _startRetries = 0;
     _sessionId = sessionId;
     _state = 'starting';
     _ensureSessionDir(sessionId);
+
+    // Ensure capture path is warm before the real start (silent, no UI)
+    if (!_warmupDone) {
+      await warmupCapture().catch(() => {});
+    }
 
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
     if (!sources?.length) throw new Error('No screen sources found');
@@ -80,6 +156,13 @@ export async function startRecording(sessionId, quality = DEFAULT_QUALITY) {
   } catch (err) {
     logger.error(`[Recorder] Start failed: ${err.message}`);
     _state = 'idle';
+    _forwardErrorToGateway({
+      type: 'ERROR',
+      code: 'START_FAILED',
+      message: err.message,
+      sessionId,
+    });
+    if (_onStateChange) _onStateChange('error', sessionId);
     return false;
   }
 }

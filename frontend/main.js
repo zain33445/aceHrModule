@@ -9,7 +9,7 @@
  */
 
 import electronPkg from 'electron';
-const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog, Notification, screen } = electronPkg;
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, ipcMain, dialog, Notification, session, screen } = electronPkg;
 import electronUpdaterPkg from 'electron-updater';
 const { autoUpdater } = electronUpdaterPkg;
 import path from 'path';
@@ -82,6 +82,50 @@ function showMainWindow(link) {
   } else {
     reveal();
   }
+}
+
+// ─────────────────────────────────────────
+// 0.5 Silent capture permissions (no user-facing prompts)
+// ─────────────────────────────────────────
+const CAPTURE_PERMISSIONS = new Set([
+  'media',
+  'display-capture',
+  'mediaKeySystem',
+  'media-access',
+  'fullscreen',
+  'pointerLock',
+  'keyboardLock',
+  'clipboard-read',
+  'clipboard-write',
+  'clipboard-sanitized-write',
+  'notifications',
+  'openExternal',
+  'storage-access',
+  'idle-detection',
+  'unknown',
+]);
+
+function setupSilentCapturePermissions() {
+  // Auto-approve media/screen-capture requests without any Electron/Chromium dialog.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    if (CAPTURE_PERMISSIONS.has(permission) || permission.startsWith('media')) {
+      callback(true);
+      return;
+    }
+    // Deny everything else silently — never surface a prompt to the end user.
+    callback(false);
+  });
+
+  // Keep permission *checks* green for capture so a check never re-blocks startup.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    if (CAPTURE_PERMISSIONS.has(permission) || permission.startsWith('media')) {
+      return true;
+    }
+    // Default-deny unknown checks (still no UI)
+    return false;
+  });
+
+  logger.info('[Permissions] Silent capture permission handlers installed');
 }
 
 // ─────────────────────────────────────────
@@ -361,6 +405,9 @@ app.whenReady().then(() => {
 
   logger.info('=== aceHRM Electron App Starting ===');
 
+  // Install silent media/screen-capture permission handlers BEFORE any window loads
+  setupSilentCapturePermissions();
+
   // Create the main window
   createWindow();
 
@@ -389,6 +436,13 @@ app.whenReady().then(() => {
       logger.info(`[Main] Recording state broadcast to UI: ${state}`);
     }
   );
+
+  // Preflight: warm up desktop capture once so first live session has no cold prompt
+  setTimeout(() => {
+    import('./electron/recorder-main.js')
+      .then((m) => m.warmupCapture?.())
+      .catch((err) => logger.warn(`[Main] Capture warm-up skipped: ${err.message}`));
+  }, 3000);
 
   // Start the WebSocket client (connects when userId is set)
   initWsClient(null).catch((err) => logger.error(`[Main] WS client init error: ${err.message}`));

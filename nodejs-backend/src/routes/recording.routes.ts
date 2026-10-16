@@ -330,6 +330,7 @@ router.get('/status/:userId', requireAdmin, async (req: Request, res: Response) 
       userId,
       agentConnected: liveStatus.connected,
       activeSession: activeSession ?? null,
+      agentError: getGateway()?.getAgentError(userId) ?? null,
     });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to get status' });

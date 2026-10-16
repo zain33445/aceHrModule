@@ -69,6 +69,8 @@ export class RecordingGateway {
   private agents: Map<string, WebSocket> = new Map();
   // Map<adminId, WebSocket>
   private admins: Map<string, WebSocket> = new Map();
+  // Latest agent error per userId (for status API / admin UI)
+  private agentErrors: Map<string, { code: string; message: string; sessionId?: string; at: string }> = new Map();
 
   constructor(server: Server) {
     this.wss = new WebSocketServer({ noServer: true });
@@ -364,6 +366,10 @@ export class RecordingGateway {
       case 'STATUS':
         // Agent reports its current recording state
         console.log(`[WS Gateway] Agent ${userId} state=${msg.state} session=${msg.sessionId ?? 'none'}`);
+        // Clear stale permission errors once capture is healthy again
+        if (msg.state === 'recording') {
+          this.agentErrors.delete(userId);
+        }
         break;
 
       case 'CHUNK_UPLOADED':
@@ -386,11 +392,40 @@ export class RecordingGateway {
 
       case 'ERROR':
         console.error(`[WS Gateway] Agent error from ${userId}: [${msg.code}] ${msg.message}`);
+        // Persist for GET /status/:userId so admin sees it even without live WS
+        this.agentErrors.set(userId, {
+          code: String(msg.code ?? 'ERROR'),
+          message: String(msg.message ?? 'Agent error'),
+          sessionId: msg.sessionId,
+          at: new Date().toISOString(),
+        });
+        // Fan out to all connected admins (admin-only visibility)
+        for (const [, adminWs] of this.admins) {
+          if (adminWs.readyState === WebSocket.OPEN) {
+            this.send(adminWs, {
+              type: 'AGENT_ERROR',
+              targetUserId: userId,
+              code: msg.code,
+              message: msg.message,
+              sessionId: msg.sessionId,
+            });
+          }
+        }
         break;
 
       default:
         console.warn(`[WS Gateway] Unknown message type from ${userId}: ${msg.type}`);
     }
+  }
+
+  /** Latest recorded agent error for a user (or null). */
+  getAgentError(userId: string): { code: string; message: string; sessionId?: string; at: string } | null {
+    return this.agentErrors.get(userId) ?? null;
+  }
+
+  /** Clear a stored agent error (e.g. when admin retries start). */
+  clearAgentError(userId: string): void {
+    this.agentErrors.delete(userId);
   }
 
   // ─────────────────────────────────────────

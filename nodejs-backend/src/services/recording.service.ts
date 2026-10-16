@@ -147,6 +147,7 @@ export async function startSession(
 
     // Send command to agent via WebSocket
     const gateway = getGateway();
+    gateway?.clearAgentError(userId); // fresh attempt — drop stale permission errors
     const agentConnected = gateway?.broadcast(userId, {
       type: 'START_RECORDING',
       sessionId: session.id,

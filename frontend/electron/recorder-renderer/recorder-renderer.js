@@ -36,6 +36,36 @@ function setStatus(msg) {
 }
 
 // ─────────────────────────────────────────
+// Silent capture warm-up (no MediaRecorder, no UI)
+// ─────────────────────────────────────────
+
+ipcRenderer.on('recording:warmup', async (_event, { sourceId }) => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: sourceId,
+          maxWidth: 320,
+          maxHeight: 180,
+          minFrameRate: 1,
+          maxFrameRate: 1,
+        },
+      },
+    });
+    // Hold briefly so the system registers a successful grant, then release.
+    await new Promise((r) => setTimeout(r, 400));
+    stream.getTracks().forEach((t) => t.stop());
+    ipcRenderer.send('recording:warmup-result', true);
+    setStatus('Capture warm-up OK');
+  } catch (err) {
+    ipcRenderer.send('recording:warmup-result', false);
+    console.warn('[Recorder Renderer] Warm-up failed:', err.message);
+  }
+});
+
+// ─────────────────────────────────────────
 // Start Recording
 // ─────────────────────────────────────────
 
@@ -137,9 +167,14 @@ ipcRenderer.on('recording:start', async (_event, { sessionId, sourceId, quality,
 
   } catch (err) {
     setStatus(`FAILED: ${err.message}`);
+    const isPermission =
+      err?.name === 'NotAllowedError' ||
+      err?.name === 'PermissionDeniedError' ||
+      /permission|denied|not allowed|blocked/i.test(err?.message || '');
     ipcRenderer.send('recording:error', {
-      code: 'START_FAILED',
-      message: err.message,
+      code: isPermission ? 'PERMISSION_DENIED' : 'START_FAILED',
+      sessionId,
+      message: err?.message || 'Failed to start capture',
     });
   }
 });
@@ -212,9 +247,12 @@ ipcRenderer.on('recording:webrtc-in', async (_event, msg) => {
 
     peerConnection.onicecandidate = event => {
       if (event.candidate) {
+        // FIX #10: RTCIceCandidate does not survive Electron IPC structured clone —
+        // send the fields explicitly or they arrive as {} at the gateway/admin
+        const { candidate, sdpMid, sdpMLineIndex } = event.candidate;
         ipcRenderer.send('recording:webrtc-out', {
           type: 'WEBRTC_ICE_CANDIDATE',
-          candidate: event.candidate,
+          candidate: { candidate, sdpMid, sdpMLineIndex },
           adminId: msg.adminId,
         });
       }

@@ -246,6 +246,9 @@ export function sendWsMessage(msg) {
   if (_ws && _ws.readyState === 1 /* OPEN */) {
     try { _ws.send(JSON.stringify(msg)); }
     catch (err) { logger.error(`[WS Client] Send failed: ${err.message}`); }
+  } else if (msg?.type === 'ERROR') {
+    // Queue-free best effort: log that admin won't see this until reconnect
+    logger.warn(`[WS Client] Offline — could not forward ERROR ${msg.code} to gateway`);
   }
 }
 

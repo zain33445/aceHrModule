@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Recording API — exposes read-only state to React UI (transparency layer)
   recording: {
-    /** Returns current recording state: 'idle' | 'recording' | 'starting' | 'stopping' | 'error' */
+    /** Returns current recording state: 'idle' | 'recording' | 'starting' | 'stopping' | 'error' | 'permission_denied' */
     getState: () => ipcRenderer.invoke('recording:get-state'),
     /** Listen for state changes pushed from the main process */
     onStateChange: (callback) => {

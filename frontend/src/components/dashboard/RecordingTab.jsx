@@ -45,6 +45,7 @@ const SESSION_STATUS_META = {
   stopping:   { label: 'Stopping...',  color: '#f97316', bg: '#fff7ed' },
   assembled:  { label: 'Ready',        color: '#10b981', bg: '#ecfdf5' },
   error:      { label: 'Error',        color: '#6b7280', bg: '#f9fafb' },
+  permission_denied: { label: 'Capture blocked', color: '#dc2626', bg: '#fef2f2' },
 };
 
 function statusMeta(status) {
@@ -231,6 +232,8 @@ export default function RecordingTab({ adminId, employees = [] }) {
               const liveStatus = statuses[String(emp.id)];
               const activeSession = liveStatus?.activeSession;
               const isRecording = activeSession?.status === 'recording' || activeSession?.status === 'pending';
+              const permissionBlocked =
+                liveStatus?.agentError?.code === 'PERMISSION_DENIED' && !isRecording;
               const actionState = actionLoading[emp.id];
               const initials = emp.name?.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase() || '??';
 
@@ -300,6 +303,25 @@ export default function RecordingTab({ adminId, employees = [] }) {
                       <span style={{ fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
                         Recording · {fmtDuration(activeSession.started_at)}
                       </span>
+                    </div>
+                  )}
+
+                  {/* Admin-only: agent denied screen capture (employee never sees this) */}
+                  {permissionBlocked && (
+                    <div style={{
+                      background: '#fef2f2', border: '1px solid #fecaca',
+                      borderRadius: 8, padding: '8px 12px', marginBottom: 12,
+                      display: 'flex', alignItems: 'flex-start', gap: 8,
+                    }}>
+                      <AlertCircle size={14} style={{ color: '#dc2626', flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <p style={{ fontSize: 12, color: '#dc2626', fontWeight: 600, margin: 0 }}>
+                          Capture permission blocked
+                        </p>
+                        <p style={{ fontSize: 11, color: '#b91c1c', margin: '2px 0 0' }}>
+                          Agent could not access the screen. Start again after permission is restored on the device.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -622,7 +644,6 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       pc.addTransceiver('video', { direction: 'recvonly' });
 
       pc.ontrack = (event) => {
-        webrtcConnected = true;
         if (videoRef.current && !destroyed) {
           videoRef.current.srcObject = event.streams[0];
         }
@@ -638,10 +659,13 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
         }
       };
 
-      // FIX #4: Monitor ICE connection state
+      // FIX #11: ontrack (SDP answer) fires before any media flows — only treat
+      // connectionState 'connected' as WebRTC being up, else the HTTP fallback never runs.
       pc.onconnectionstatechange = () => {
         const state = pc.connectionState;
-        if ((state === 'failed' || state === 'disconnected') && !webrtcConnected) {
+        if (state === 'connected') {
+          webrtcConnected = true;
+        } else if ((state === 'failed' || state === 'disconnected') && !webrtcConnected) {
           fallbackToHttp();
         }
       };
@@ -669,13 +693,20 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
           if (msg.type === 'WEBRTC_ANSWER') {
             await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
           } else if (msg.type === 'WEBRTC_ICE_CANDIDATE') {
-            if (msg.candidate) {
+            // FIX #12: reject deformed candidate payloads ({} clones) that abort RTCIceCandidate construction
+            if (msg.candidate && msg.candidate.candidate) {
               await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
             }
           } else if (msg.type === 'WEBRTC_ERROR') {
             // FIX #3: Handle agent WebRTC errors properly
             setError(`Agent: ${msg.message}`);
             fallbackToHttp();
+          } else if (msg.type === 'AGENT_ERROR') {
+            if (msg.code === 'PERMISSION_DENIED') {
+              setError('Capture permission blocked on agent — screen access was denied');
+            } else {
+              setError(`Agent error: ${msg.message || msg.code}`);
+            }
           }
         } catch (err) {
           console.error('[LivePlayer] WS message error:', err);
