@@ -59,9 +59,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+          # NOTE: this step inherits working-directory: frontend, so paths must be relative to frontend/
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" frontend/release_build/*.dmg --clobber
+            gh release upload "$TAG" release_build/*.dmg --clobber
           else
-            gh release create "$TAG" frontend/release_build/*.dmg \
+            gh release create "$TAG" release_build/*.dmg \
               --title "aceHRM $TAG" --generate-notes
           fi
