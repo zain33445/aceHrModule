@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '../../services/api';
+import { API_BASE as apiBase, WS_BASE } from '../../services/endpoints';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
@@ -630,8 +631,9 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
     let httpStarted = false;
     let abortCtrl = null;
 
-    const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:5000/api').replace(/\/+$/, '');
-    const wsBaseUrl = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    // WS_BASE is empty when the dev server proxies the gateway, which makes
+    // the socket URL relative (and therefore same-origin and secure).
+    const wsBaseUrl = WS_BASE;
     const streamUrl = `${apiBase}/recording/sessions/${sessionId}/stream`;
 
     let ws, pc, webrtcTimer, mediaTimer;

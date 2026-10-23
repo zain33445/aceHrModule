@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { signSessionToken } from '../middleware/requireUser';
 
 const router = Router();
 
@@ -30,7 +31,10 @@ router.post('/login', async (req, res) => {
       user_id: user.id,
       name: user.name,
       role: user.role,
-      is_lead: user.led_departments.length > 0
+      is_lead: user.led_departments.length > 0,
+      // Signed session token. Additive — the fields above are unchanged so
+      // existing clients keep working. Used by the strict (requireUser) routes.
+      token: signSessionToken({ id: user.id, name: user.name, role: user.role }),
     });
   } catch (error) {
     res.status(500).json({ msg: "Internal server error", error });

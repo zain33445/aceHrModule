@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { WS_BASE } from '../services/endpoints';
 
 /**
  * useChatSocket — connects to the chat WS gateway (/chat-ws?userId=) with auto-reconnect.
@@ -16,8 +17,9 @@ export function useChatSocket(userId, onEvent) {
     let closed = false;
     let retry;
 
-    const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:5000/api').replace(/\/+$/, '');
-    const wsBase = apiBase.replace(/^http/, 'ws').replace(/\/api\/?$/, '');
+    // WS_BASE is empty when the dev server proxies the gateway, which makes
+    // the socket URL relative (and therefore same-origin and secure).
+    const wsBase = WS_BASE;
     const url = `${wsBase}/chat-ws?userId=${encodeURIComponent(userId)}`;
 
     const connect = () => {

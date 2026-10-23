@@ -43,6 +43,7 @@ import { DataExportPanel } from "./export/DataExportPanel";
 import ScreenshotsTab from "./dashboard/ScreenshotsTab";
 import RecordingTab from "./dashboard/RecordingTab";
 import ChatHub from "./chat/ChatHub";
+import CallsTab from "./calls/CallsTab";
 import { PayrollTab } from "./salary/PayrollTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { SettingsTab } from "./dashboard/SettingsTab";
@@ -539,6 +540,11 @@ function AdminDashboardNew({
         id: "chat",
         label: "Messages",
         content: <ChatHub user={user} />,
+      },
+      {
+        id: "calls",
+        label: "Calls",
+        content: <CallsTab user={user} />,
       },
       {
         id: "leaves",

@@ -41,6 +41,11 @@ model User {
   email                  String?               @unique
   password_hash          String?
   monthly_salary         Float                 @default(0.0)
+  // Legacy static leave cap. The app no longer reads it (the balance lives in
+  // the leave_bank table), but the column is created by the initial migration
+  // and still holds data, so it stays in the schema to stop `prisma db push`
+  // from proposing to drop it.
+  leave_bank             Int                   @default(5)
   department_id          Int?
   status                 EmployeeStatus        @default(active)
   type                   EmployeeType          @default(probation)
@@ -87,6 +92,11 @@ model User {
   chat_participants          ChatParticipant[]
   chat_messages_sent         ChatMessage[]         @relation("ChatMessageSender")
   notification_preferences   UserNotificationPreference[]
+  calls_started              CallSession[]         @relation("CallStarter")
+  call_participations        CallParticipant[]
+  call_recordings            CallRecording[]
+  call_logs_as_caller        CallLog[]             @relation("CallLogCaller")
+  call_logs_as_callee        CallLog[]             @relation("CallLogCallee")
 
   @@map("users")
 }
@@ -579,4 +589,99 @@ model UserNotificationPreference {
 
   @@unique([user_id, type])
   @@map("user_notification_preferences")
+}
+
+// ─────────────────────────────────────────
+// Voice & video calling
+// ─────────────────────────────────────────
+
+enum CallStatus {
+  ringing
+  active
+  ended
+}
+
+enum CallParticipantRole {
+  host
+  member
+}
+
+enum CallOutcome {
+  answered
+  declined
+  missed
+  cancelled
+}
+
+model CallSession {
+  id                String     @id @default(uuid())
+  conversation_id   String? // optional link back to the chat thread it was started from
+  started_by        String
+  status            CallStatus @default(ringing)
+  started_at        DateTime   @default(now())
+  ended_at          DateTime?
+  max_participants  Int        @default(4)
+  is_recording      Boolean    @default(false)
+  recording_consent Boolean   @default(false)
+
+  started_by_user User             @relation("CallStarter", fields: [started_by], references: [id])
+  participants    CallParticipant[]
+  recordings      CallRecording[]
+  logs            CallLog[]
+
+  @@index([status])
+  @@index([started_at])
+  @@map("call_sessions")
+}
+
+model CallParticipant {
+  id        String              @id @default(uuid())
+  call_id   String
+  user_id   String
+  peer_id   String @default("") // stable per-call mesh peer identifier, assigned on join
+  role      CallParticipantRole @default(member)
+  joined_at DateTime            @default(now())
+  left_at   DateTime?
+
+  call CallSession @relation(fields: [call_id], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([call_id, user_id])
+  @@index([user_id])
+  @@map("call_participants")
+}
+
+model CallRecording {
+  id           String   @id @default(uuid())
+  call_id      String
+  user_id      String // which participant's mix this file holds
+  file_path    String
+  file_size    Int
+  duration_sec Int?
+  created_at   DateTime @default(now())
+
+  call CallSession @relation(fields: [call_id], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([call_id])
+  @@map("call_recordings")
+}
+
+model CallLog {
+  id           String      @id @default(uuid())
+  call_id      String
+  from_user_id String
+  to_user_id   String
+  outcome      CallOutcome
+  started_at   DateTime    @default(now())
+  duration_sec Int?
+
+  call      CallSession @relation(fields: [call_id], references: [id], onDelete: Cascade)
+  from_user User        @relation("CallLogCaller", fields: [from_user_id], references: [id], onDelete: Cascade)
+  to_user   User        @relation("CallLogCallee", fields: [to_user_id], references: [id], onDelete: Cascade)
+
+  @@index([from_user_id])
+  @@index([to_user_id])
+  @@index([started_at])
+  @@map("call_logs")
 }

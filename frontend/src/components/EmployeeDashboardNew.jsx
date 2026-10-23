@@ -40,6 +40,7 @@ import { AttendanceCalendar } from "./calendar/AttendanceCalendar";
 import { HolidayCalendar } from "./calendar/HolidayCalendar";
 import { LeaveRequestHub } from "./leaves/LeaveRequestHub";
 import ChatHub from "./chat/ChatHub";
+import CallsTab from "./calls/CallsTab";
 import { LeaveAllocationTab } from "./leaves/LeaveAllocationTab";
 import LeaveBalanceTab from "./leaves/LeaveBalanceTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
@@ -648,6 +649,11 @@ function EmployeeDashboard({ user, onLogout }) {
         id: "chat",
         label: "Messages",
         content: <ChatHub user={user} />,
+      },
+      {
+        id: "calls",
+        label: "Calls",
+        content: <CallsTab user={user} />,
       },
       {
         id: "leaves",

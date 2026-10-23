@@ -6,3 +6,6 @@ __pycache__/
 .env.local
 !.env.example
 *.db
+
+# Local dev server logs
+server.log

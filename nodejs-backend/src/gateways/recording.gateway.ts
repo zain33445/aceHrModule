@@ -142,6 +142,9 @@ export class RecordingGateway {
       } else if (url.pathname === '/chat-ws') {
         // Owned by the chat gateway's own upgrade listener — do not touch.
         return;
+      } else if (url.pathname === '/call-ws') {
+        // Owned by the call gateway's own upgrade listener — do not touch.
+        return;
       } else {
         console.warn(`[WS Gateway] Unknown upgrade path: ${url.pathname}`);
         socket.destroy();

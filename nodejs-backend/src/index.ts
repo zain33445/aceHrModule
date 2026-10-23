@@ -31,7 +31,10 @@ import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
 import { initChatGateway } from './gateways/chat.gateway';
 import chatRoutes from './routes/chat.routes';
+import callRoutes from './routes/call.routes';
+import { initCallGateway } from './gateways/call.gateway';
 import { ensureAdminHrInAllGroups } from './services/chat.service';
+import { cleanupExpiredRecordings } from './services/callrecording.service';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
 import prisma from './prisma';
@@ -46,6 +49,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Raw binary parser for video chunk uploads (agent uses Content-Type: application/octet-stream)
 app.use('/api/recording/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+// Raw binary parser for call audio chunk uploads
+app.use('/api/call/recordings/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 
 
 // Audit Middleware
@@ -56,7 +61,9 @@ app.use(async (req, res, next) => {
         try {
           await prisma.auditLog.create({
             data: {
-              user_id: req.body?.user_id || req.body?.reviewed_by || req.body?.hr_id || req.body?.lead_id || req.body?.admin_id || req.body?.req_by || null,
+              // Prefer the verified identity attached by requireUser; fall back
+              // to sniffing the legacy body fields for the older routes.
+              user_id: (req as any).user?.userId || req.body?.user_id || req.body?.reviewed_by || req.body?.hr_id || req.body?.lead_id || req.body?.admin_id || req.body?.req_by || null,
               action: `${req.method} ${req.path}`,
               details: JSON.stringify(req.body || {}).substring(0, 1000)
             }
@@ -96,6 +103,7 @@ app.use('/api/recording', recordingRoutes);
 app.use('/api/tab-access', tabAccessRoutes);
 app.use('/api/overtime', overtimeRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/call', callRoutes);
 
 
 app.get('/', (req, res) => {
@@ -110,6 +118,9 @@ console.log('[Server] Recording WebSocket gateway attached to HTTP server');
 
 // Initialize WebSocket gateway for chat (registered after recording so it yields /chat-ws)
 initChatGateway(server);
+
+// Initialize WebSocket gateway for calls (registered last; recording yields /call-ws)
+initCallGateway(server);
 
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
@@ -234,6 +245,18 @@ server.listen(PORT, () => {
       console.error(`[Cron] 3-day retention cleanup failed`, err);
     }
   }, 60 * 60 * 1000); // Run every hour
+
+  // Daily sweep for expired call recordings (default 90-day retention)
+  setInterval(async () => {
+    try {
+      const removed = await cleanupExpiredRecordings();
+      if (removed > 0) {
+        console.log(`[Cron] Deleted ${removed} expired call recordings`);
+      }
+    } catch (err) {
+      console.error('[Cron] Call recording retention cleanup failed', err);
+    }
+  }, 24 * 60 * 60 * 1000); // Run every 24 hours
 
   // Process outbox events every 10 seconds
   setInterval(async () => {

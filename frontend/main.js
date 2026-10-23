@@ -31,6 +31,15 @@ const __dirname = path.dirname(__filename);
 // ─────────────────────────────────────────
 // 0. Single Instance Lock
 // ─────────────────────────────────────────
+// The single-instance lock (and the userData folder that holds the agent
+// token, logs and cookies) is keyed on the userData path. Pointing it
+// somewhere else lets a development build run alongside an installed copy —
+// which is what the automated tests need, because the installed agent
+// otherwise grabs the lock and the dev build quits immediately.
+if (process.env.ACEHRM_USER_DATA) {
+  app.setPath('userData', process.env.ACEHRM_USER_DATA);
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -149,6 +158,10 @@ const getIconPath = () => {
   }
 };
 
+// Dev server address. Set ACEHRM_DEV_URL when the dev server is served over
+// HTTPS (the browser only grants camera/microphone on a secure origin).
+const DEV_URL = process.env.ACEHRM_DEV_URL || 'http://localhost:5173';
+
 function createWindow() {
   const iconPath = getIconPath();
   logger.info(`Resolved icon path: ${iconPath}`);
@@ -178,7 +191,7 @@ function createWindow() {
 
 if (isDev) {
   // Dev server during development
-  mainWindow.loadURL('http://localhost:5173');
+  mainWindow.loadURL(DEV_URL);
 } else {
   // Production: load from ASAR
   const indexPath = path.join(__dirname, 'dist_build', 'index.html'); 
@@ -209,12 +222,102 @@ if (isDev) {
 
 // Load the renderer bundle with a hash to pick a view (#chat)
 function loadApp(win, hash) {
-  if (isDev) win.loadURL(`http://localhost:5173/#${hash}`);
+  if (isDev) win.loadURL(`${DEV_URL}/#${hash}`);
   else win.loadFile(path.join(__dirname, 'dist_build', 'index.html'), { hash });
 }
 
 let bubbleWindow = null;
 let chatWindow = null;
+let activeCallNotification = null;
+/** Call requested from the floating chat window, awaiting the main renderer. */
+let pendingChatCallStart = null;
+
+/** Relay an Accept / Decline choice back to the renderer that owns the call. */
+function sendCallAction(action, callId) {
+  const payload = { action, callId };
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('call:action', payload);
+  }
+}
+
+/**
+ * Places a call requested from the floating chat window in the main window.
+ * The request is kept until the main renderer consumes it, in case the main
+ * window was still loading — otherwise the click would be silently lost.
+ */
+function delegateCallStart(payload) {
+  if (!payload || !Array.isArray(payload.userIds) || payload.userIds.length === 0) return;
+  const request = {
+    userIds: payload.userIds.map(String),
+    conversationId: payload.conversationId ? String(payload.conversationId) : null,
+    requestedAt: Date.now(),
+  };
+  pendingChatCallStart = request;
+  showMainWindow(null);
+
+  const deliver = () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('call:start', request);
+    }
+  };
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once('did-finish-load', deliver);
+  } else {
+    deliver();
+  }
+}
+
+/**
+ * Raise a native OS notification for an incoming call.
+ * Electron notification actions are honoured on Windows and macOS; on Linux
+ * the notification is still shown and clicking it accepts the call.
+ */
+function showIncomingCallNotification({ callId, fromName }) {
+  if (!Notification.isSupported()) return;
+
+  if (activeCallNotification) {
+    try { activeCallNotification.close(); } catch { /* already gone */ }
+    activeCallNotification = null;
+  }
+
+  const iconPath = path.join(__dirname, app.isPackaged ? 'dist' : 'public', 'aceLogo.png');
+
+  const n = new Notification({
+    title: 'Incoming call',
+    body: `${fromName || 'Someone'} is calling you`,
+    icon: iconPath,
+    timeoutType: 'never',
+    actions: [
+      { type: 'button', text: 'Decline' },
+      { type: 'button', text: 'Accept' },
+    ],
+  });
+
+  n.on('action', (_event, index) => {
+    const action = index === 0 ? 'decline' : 'accept';
+    if (action === 'accept') showMainWindow(null);
+    sendCallAction(action, callId);
+    try { n.close(); } catch { /* already gone */ }
+    activeCallNotification = null;
+  });
+
+  n.on('click', () => {
+    showMainWindow(null);
+    sendCallAction('accept', callId);
+    try { n.close(); } catch { /* already gone */ }
+    activeCallNotification = null;
+  });
+
+  n.on('close', () => { activeCallNotification = null; });
+
+  n.show();
+  activeCallNotification = n;
+
+  // Bring the app forward so the in-app incoming-call dialog is visible too.
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+    mainWindow.showInactive();
+  }
+}
 
 function showBubble() {
   if (!bubbleWindow) {
@@ -473,6 +576,54 @@ app.whenReady().then(() => {
     n.on('click', () => showMainWindow(link));
     n.show();
   });
+
+  // ── Voice & video calls ───────────────────────────────────
+  // The renderer detects an incoming call over the call WebSocket and reports
+  // it here; the main process raises a native OS notification with
+  // Accept / Decline buttons and relays the choice back to the renderer.
+  ipcMain.on('call:incoming', (_event, payload) => {
+    showIncomingCallNotification(payload || {});
+  });
+
+  ipcMain.on('call:ended', () => {
+    if (activeCallNotification) {
+      try { activeCallNotification.close(); } catch { /* already gone */ }
+      activeCallNotification = null;
+    }
+  });
+
+  // The floating chat window has no call socket of its own. Its Call button
+  // delegates the request here: the main window is focused and its CallProvider
+  // places the call, so a user never ends up as two peers in the same call.
+  ipcMain.on('call:start', (_event, payload) => {
+    delegateCallStart(payload);
+  });
+
+  // Whatever the main renderer has not picked up yet (for example the window
+  // was still loading when the request arrived). Consuming it is atomic, so a
+  // request can never start twice.
+  ipcMain.handle('call:consume-pending-start', () => {
+    const request = pendingChatCallStart;
+    pendingChatCallStart = null;
+    // Do not surprise the user with a call they asked for minutes ago (the
+    // main window may have been on the login screen when it arrived).
+    if (!request || Date.now() - request.requestedAt > 20_000) return null;
+    return request;
+  });
+
+  ipcMain.on('call:start-consumed', () => {
+    pendingChatCallStart = null;
+  });
+
+  // Test hook: lets the automated Electron test exercise the main→renderer
+  // direction of the call IPC without a human clicking the OS notification.
+  // Only registered when explicitly enabled, so it is absent in normal builds.
+  if (process.env.ACEHRM_ENABLE_TEST_HOOKS) {
+    ipcMain.on('call:simulate-action', (_event, payload) => {
+      sendCallAction(payload?.action || 'accept', payload?.callId);
+    });
+    logger.info('[Call] Test hooks enabled');
+  }
 
   // Open window when notification-client fires a click
   process.on('notification-click', (link) => showMainWindow(link));

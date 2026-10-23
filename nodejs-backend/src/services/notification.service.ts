@@ -25,6 +25,10 @@ export const NOTIFICATION_TYPES = {
   HOLIDAY_CREATED:         'holiday_created',
   SALARY_GENERATED:        'salary_generated',
   NEW_MESSAGE:             'new_message',
+  CALL_INCOMING:           'call_incoming',
+  CALL_DECLINED:           'call_declined',
+  CALL_MISSED:             'call_missed',
+  CALL_ENDED:              'call_ended',
 } as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[keyof typeof NOTIFICATION_TYPES];

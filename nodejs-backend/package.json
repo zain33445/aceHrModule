@@ -8,7 +8,10 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test-absence": "ts-node src/test-absence.ts"
+    "test-absence": "ts-node src/test-absence.ts",
+    "test-call-ws": "ts-node src/test-call-ws.ts",
+    "test-call-e2e": "ts-node src/test-call-e2e.ts",
+    "db:baseline": "ts-node src/db-baseline.ts"
   },
   "prisma": {
     "seed": "ts-node ./src/seed.ts"
@@ -20,6 +23,7 @@
   "dependencies": {
     "@prisma/client": "^5.22.0",
     "@types/ws": "^8.18.1",
+    "axios": "^1.13.6",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "exceljs": "^4.4.0",

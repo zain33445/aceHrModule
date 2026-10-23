@@ -29,5 +29,47 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notification:navigate', handler);
     return () => ipcRenderer.removeListener('notification:navigate', handler);
   },
+
+  // Voice & video calls.
+  // The renderer owns the call state; the main process only raises the native
+  // OS notification (with Accept / Decline actions) and relays the choice back.
+  call: {
+    /** Report an incoming call so the main process can ring natively. */
+    notifyIncoming: (payload) => ipcRenderer.send('call:incoming', payload),
+    /** Report that a call finished, so the main process can clear the notification. */
+    notifyEnded: (payload) => ipcRenderer.send('call:ended', payload),
+    /** Listen for the user's Accept / Decline choice from the native notification. */
+    onAction: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('call:action', handler);
+      return () => ipcRenderer.removeListener('call:action', handler);
+    },
+    /**
+     * Test hook: asks the main process to deliver a call action to the
+     * renderer. The main process only honours this when its own test hooks
+     * are enabled, so this is inert in normal builds.
+     */
+    simulateAction: (payload) => ipcRenderer.send('call:simulate-action', payload),
+
+    /**
+     * Ask the main window to place a call on this window's behalf. The floating
+     * chat window does not own a call socket, so the main process focuses the
+     * main window and hands the request to its CallProvider.
+     * Payload: { userIds: string[], conversationId?: string }
+     */
+    start: (payload) => ipcRenderer.send('call:start', payload),
+
+    /** Receive a start request delegated by the floating chat window. */
+    onStart: (callback) => {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on('call:start', handler);
+      return () => ipcRenderer.removeListener('call:start', handler);
+    },
+    /** Tell the main process a delegated start request has been handled. */
+    consumed: () => ipcRenderer.send('call:start-consumed'),
+    /** Claim a delegated start request that arrived before the listener existed. */
+    consumePending: () => ipcRenderer.invoke('call:consume-pending-start'),
+  },
 });
+
 

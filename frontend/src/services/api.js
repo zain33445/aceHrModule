@@ -1,6 +1,26 @@
 import axios from "axios";
+import { API_BASE } from "./endpoints";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
+/**
+ * Attaches the signed session token to every request.
+ *
+ * The token is issued by POST /api/auth/login and stored alongside the rest
+ * of the auth object in localStorage. The legacy per-endpoint headers
+ * (X-User-Id, X-Admin-Id) are untouched — this only *adds* a credential for
+ * the routes that require a verifiable identity (voice/video calling).
+ */
+axios.interceptors.request.use((config) => {
+  try {
+    const auth = JSON.parse(localStorage.getItem('bio_auth') || 'null');
+    if (auth?.token) {
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${auth.token}`;
+    }
+  } catch {
+    /* no stored session — leave the request unauthenticated */
+  }
+  return config;
+});
 
 const api = {
   // Existing methods...
@@ -317,6 +337,34 @@ const api = {
     axios.post(`${API_BASE}/chat/conversations/${conversationId}/read`, { user_id: userId }),
   chatAttachmentUrl: (conversationLessAttachmentId, userId) =>
     `${API_BASE}/chat/attachments/${conversationLessAttachmentId}?user_id=${encodeURIComponent(userId)}`,
+
+  // ── Voice & video calls ────────────────────────────────
+  // These require the signed session token (sent by the interceptor above).
+  getCallWsToken: () => axios.post(`${API_BASE}/call/ws-token`),
+  getCallIceServers: () => axios.get(`${API_BASE}/call/ice-servers`),
+  startCall: (userId, targetUserIds, conversationId) =>
+    axios.post(`${API_BASE}/call/sessions`, {
+      user_id: userId,
+      target_user_ids: targetUserIds,
+      conversation_id: conversationId || null,
+    }),
+  getCalls: (limit) => axios.get(`${API_BASE}/call/sessions`, { params: limit ? { limit } : {} }),
+  getCall: (callId) => axios.get(`${API_BASE}/call/sessions/${callId}`),
+  acceptCall: (callId) => axios.post(`${API_BASE}/call/sessions/${callId}/accept`),
+  declineCall: (callId) => axios.post(`${API_BASE}/call/sessions/${callId}/decline`),
+  leaveCall: (callId) => axios.post(`${API_BASE}/call/sessions/${callId}/leave`),
+  endCall: (callId) => axios.post(`${API_BASE}/call/sessions/${callId}/end`),
+  getCallHistory: (limit) => axios.get(`${API_BASE}/call/history`, { params: limit ? { limit } : {} }),
+  uploadCallChunk: (callId, chunkIndex, buffer) =>
+    axios.post(`${API_BASE}/call/recordings/chunk`, buffer, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Call-Id': callId,
+        'X-Chunk-Index': String(chunkIndex),
+      },
+    }),
+  getCallRecordings: (callId) => axios.get(`${API_BASE}/call/recordings/call/${callId}`),
+  callRecordingUrl: (callId) => `${API_BASE}/call/recordings/call/${callId}/play`,
 };
 
 

@@ -24,6 +24,7 @@ import {
   BookOpen,
   CalendarCheck,
   MessageCircle,
+  PhoneCall,
 } from 'lucide-react';
 
 // Grouped nav structure
@@ -33,6 +34,7 @@ const adminNavGroups = [
     items: [
       { id: 'overview', label: 'Analytics', icon: LayoutDashboard },
       { id: 'chat', label: 'Messages', icon: MessageCircle },
+      { id: 'calls', label: 'Calls', icon: PhoneCall },
     ],
   },
   {
@@ -91,6 +93,7 @@ const employeeNavGroups = [
     items: [
       { id: 'overview', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'chat', label: 'Messages', icon: MessageCircle },
+      { id: 'calls', label: 'Calls', icon: PhoneCall },
     ],
   },
   {
@@ -126,6 +129,7 @@ const employeeNavGroups = [
 // Map granted admin tab keys to grouped structure for non-admin HR users
 const adminGrantGroupMap = {
   overview: { group: 'Overview', item: { id: 'admin-overview', label: 'Analytics', icon: LayoutDashboard } },
+  calls: { group: 'Overview', item: { id: 'admin-calls', label: 'Calls', icon: PhoneCall } },
   employees: { group: 'Workforce', item: { id: 'admin-employees', label: 'Employees', icon: Users } },
   departments: { group: 'Workforce', item: { id: 'admin-departments', label: 'Departments', icon: Building2 } },
   attendance: { group: 'Time & Attendance', item: { id: 'admin-attendance', label: 'Attendance', icon: Clock } },

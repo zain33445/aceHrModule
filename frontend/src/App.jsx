@@ -10,12 +10,33 @@ import HistoryEverywhere from './components/HistoryEverywhere';
 import LoginNew from './components/LoginNew';
 import EmployeeDashboardNew from './components/EmployeeDashboardNew';
 import AdminDashboardNew from './components/AdminDashboardNew';
+import { CallProvider } from './context/CallContext';
+import CallOverlay from './components/calls/CallOverlay';
 
 function App() {
-  const [auth, setAuth] = useState(() => {
+  // Read the stored session once. A session saved before signed tokens were
+  // introduced carries no token and therefore cannot authenticate anything
+  // that requires a verified identity (voice/video calling). Rather than leave
+  // the user half-signed-in, discard it and ask them to sign in again — the
+  // token is then issued and stored with the session.
+  const [boot] = useState(() => {
     const saved = localStorage.getItem('bio_auth');
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return { auth: null, needsRelogin: false };
+    try {
+      const parsed = JSON.parse(saved);
+      if (!parsed.token) {
+        localStorage.removeItem('bio_auth');
+        return { auth: null, needsRelogin: true };
+      }
+      return { auth: parsed, needsRelogin: false };
+    } catch {
+      localStorage.removeItem('bio_auth');
+      return { auth: null, needsRelogin: false };
+    }
   });
+
+  const [auth, setAuth] = useState(boot.auth);
+  const [needsRelogin] = useState(boot.needsRelogin);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [employees, setEmployees] = useState([]);
   const [report, setReport] = useState([]);
@@ -98,20 +119,42 @@ function App() {
 
   // 1. Login View
   if (!auth) {
-    return <LoginNew onLoginSuccess={handleLoginSuccess} />;
+    return (
+      <LoginNew
+        onLoginSuccess={handleLoginSuccess}
+        notice={
+          needsRelogin
+            ? 'Your session was saved before signed sign-in was introduced. Please sign in again to enable calling.'
+            : null
+        }
+      />
+    );
   }
 
   // 2. Employee View - New Design
-  if (auth.role === 'employee') {
-    return <EmployeeDashboardNew user={auth} onLogout={handleLogout} />;
-  }
-
   // 3. Admin View - New Design
-  if (auth.role === 'admin') {
-    return <AdminDashboardNew employees={employees} report={report} user={auth} onLogout={handleLogout} onRefresh={fetchData} />;
-  }
+  //
+  // Both are wrapped in <CallProvider> so the calling feature is available
+  // over every tab, and <CallOverlay> renders the call UI above them.
+  return (
+    <CallProvider user={auth}>
+      {auth.role === 'employee' && (
+        <EmployeeDashboardNew user={auth} onLogout={handleLogout} />
+      )}
 
-  return null;
+      {auth.role === 'admin' && (
+        <AdminDashboardNew
+          employees={employees}
+          report={report}
+          user={auth}
+          onLogout={handleLogout}
+          onRefresh={fetchData}
+        />
+      )}
+
+      <CallOverlay />
+    </CallProvider>
+  );
 }
 
 export default App;

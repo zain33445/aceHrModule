@@ -7,7 +7,7 @@ import api from '../services/api';
 import aceLogo from '../assets/aceLogo.png';
 
 
-function LoginNew({ onLoginSuccess }) {
+function LoginNew({ onLoginSuccess, notice = null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -107,6 +107,17 @@ function LoginNew({ onLoginSuccess }) {
                 icon={Lock}
                 error={error || undefined}
               />
+
+              {notice && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-3 rounded-lg bg-info/10 border border-info/30 flex items-center gap-2 text-info text-sm"
+                >
+                  <AlertCircle size={16} />
+                  <span>{notice}</span>
+                </motion.div>
+              )}
 
               {error && (
                 <motion.div

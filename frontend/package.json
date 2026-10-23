@@ -1,7 +1,7 @@
 {
   "name": "acehrm",
   "private": true,
-  "version": "1.9.2",
+  "version": "1.10.0",
   "type": "module",
   "description": "aceHRM desktop monitoring agent",
   "author": "ACE HRM <theaceservices.site>",
@@ -9,6 +9,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -41,6 +42,7 @@
     "@tailwindcss/postcss": "^4.2.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.27",
     "electron": "^41.1.0",
@@ -109,7 +111,9 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSAppleEventsUsageDescription": "aceHRM reads the frontmost app name to log your working application."
+        "NSAppleEventsUsageDescription": "aceHRM reads the frontmost app name to log your working application.",
+        "NSCameraUsageDescription": "aceHRM uses the camera so you can appear on video calls you join or accept.",
+        "NSMicrophoneUsageDescription": "aceHRM uses the microphone so you can talk on voice and video calls you join or accept."
       }
     }
   }

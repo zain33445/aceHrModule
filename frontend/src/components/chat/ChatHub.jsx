@@ -1,8 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import api from '../../services/api';
 import { useChatSocket } from '../../hooks/useChatSocket';
+import { useCall } from '../../context/call-context';
 
 const ADMIN_ROLES = new Set(['superadmin', 'admin']);
+/** Keep in step with the backend's CALL_MAX_PARTICIPANTS. */
+const MAX_CALL_PARTICIPANTS = Math.max(
+  2,
+  parseInt(import.meta.env.VITE_MAX_CALL_PARTICIPANTS || '3', 10)
+);
 
 function timeAgo(date) {
   if (!date) return '';
@@ -25,6 +31,7 @@ function timeAgo(date) {
  */
 export default function ChatHub({ user, fullHeight = false }) {
   const myId = user?.user_id;
+  const { startCall, status: callStatus, enabled: callEnabled } = useCall();
   const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -181,6 +188,41 @@ export default function ChatHub({ user, fullHeight = false }) {
 
   const deptsWithoutGroup = departments.filter((d) => !conversations.some((c) => c.type === 'group' && c.department?.id === d.id));
 
+  /** The people in the active conversation, excluding me. */
+  const activeOthers = useMemo(() => {
+    const conv = conversations.find((c) => c.id === activeId);
+    if (!conv) return [];
+    return (conv.participants || []).filter((p) => p.id !== myId);
+  }, [conversations, activeId, myId]);
+
+  const activeConversation = conversations.find((c) => c.id === activeId);
+  const isDirectConversation = activeConversation?.type === 'direct';
+
+  // The floating Electron chat window owns no call socket, so a 1:1 call from
+  // it is delegated to the main window (see the call:start IPC bridge).
+  const canDelegateCall =
+    !callEnabled &&
+    isDirectConversation &&
+    typeof window !== 'undefined' &&
+    !!window.electronAPI?.call?.start;
+
+  const showCallButton = (callEnabled || canDelegateCall) && activeOthers.length > 0;
+
+  const canCallConversation =
+    (callEnabled || canDelegateCall) &&
+    activeOthers.length > 0 &&
+    activeOthers.length <= MAX_CALL_PARTICIPANTS - 1;
+
+  const callConversation = async () => {
+    if (!canCallConversation) return;
+    const ids = activeOthers.slice(0, MAX_CALL_PARTICIPANTS - 1).map((p) => p.id);
+    if (!callEnabled) {
+      window.electronAPI.call.start({ userIds: ids, conversationId: activeId });
+      return;
+    }
+    await startCall(ids, activeId);
+  };
+
   return (
     <div style={fullHeight ? { ...S.wrap, height: '100vh', minHeight: 0, border: 'none', borderRadius: 0 } : S.wrap}>
       {/* Left: conversation list */}
@@ -217,7 +259,33 @@ export default function ChatHub({ user, fullHeight = false }) {
       <div style={S.thread}>
         {activeId ? (
           <>
-            <div style={S.threadHeader}>{titleOf(conversations.find((c) => c.id === activeId) || {})}</div>
+            <div style={S.threadHeader}>
+              <span style={{ flex: 1 }}>{titleOf(activeConversation || {})}</span>
+              {showCallButton && (
+                <button
+                  type="button"
+                  onClick={callConversation}
+                  disabled={!canCallConversation || callStatus !== 'idle'}
+                  title={
+                    !canCallConversation
+                      ? `Group calls are limited to ${MAX_CALL_PARTICIPANTS} people`
+                      : callStatus !== 'idle'
+                        ? 'You are already in a call'
+                        : isDirectConversation
+                          ? `Call ${activeOthers[0]?.name || ''}`.trim()
+                          : 'Start a call'
+                  }
+                  style={{
+                    ...S.callBtn,
+                    opacity: canCallConversation && callStatus === 'idle' ? 1 : 0.45,
+                    cursor: canCallConversation && callStatus === 'idle' ? 'pointer' : 'not-allowed',
+                  }}
+                >
+                  <span>📞</span>
+                  Call
+                </button>
+              )}
+            </div>
             <div ref={scrollRef} style={S.messages}>
               {(() => {
                 return messages.map((m, idx) => {
@@ -317,10 +385,12 @@ const S = {
   list: { width: 300, borderRight: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column' },
   listHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #e2e8f0' },
   btn: { flex: 1, padding: '6px 8px', fontSize: 12, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc', cursor: 'pointer' },
+  callBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, flex: '0 0 auto', padding: '6px 14px', fontSize: 13, fontWeight: 600, color: '#fff', background: '#16a34a', border: 'none', borderRadius: 999 },
   convItem: { padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' },
   badge: { background: '#ef4444', color: '#fff', borderRadius: 10, fontSize: 11, padding: '0 6px', minWidth: 18, textAlign: 'center' },
   thread: { flex: 1, display: 'flex', flexDirection: 'column' },
-  threadHeader: { padding: '12px 16px', borderBottom: '1px solid #e2e8f0', fontWeight: 700 },
+  threadHeader: { padding: '12px 16px', borderBottom: '1px solid #e2e8f0',
+    fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 },
   messages: { flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 8, },
   msgRow: { display: 'flex'},
   bubble: { minWidth: '70%', padding: '8px 12px', borderRadius: 12, fontSize: 14 },
