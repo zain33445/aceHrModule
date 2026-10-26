@@ -335,6 +335,8 @@ const api = {
     axios.post(`${API_BASE}/chat/conversations/${conversationId}/messages`, { user_id: userId, text, attachments }),
   markChatRead: (userId, conversationId) =>
     axios.post(`${API_BASE}/chat/conversations/${conversationId}/read`, { user_id: userId }),
+  toggleChatReaction: (userId, messageId, emoji) =>
+    axios.post(`${API_BASE}/chat/messages/${messageId}/reactions`, { user_id: userId, emoji }),
   chatAttachmentUrl: (conversationLessAttachmentId, userId) =>
     `${API_BASE}/chat/attachments/${conversationLessAttachmentId}?user_id=${encodeURIComponent(userId)}`,
 

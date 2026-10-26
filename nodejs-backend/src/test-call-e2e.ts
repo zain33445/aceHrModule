@@ -11,7 +11,7 @@
  *      exchanged correctly (CALL_JOINED / CALL_PEER_JOINED).
  *   5. The call log records the call as "answered".
  *   6. A signal sent by one peer is relayed to the other.
- *   7. Recording consent: one decline aborts the whole recording.
+ *   7. Recording starts automatically when the call is answered.
  *   8. An audio chunk can be uploaded and is assembled into a playable file.
  *   9. Declining a call is recorded and relayed.
  *  10. The call history lists the call.
@@ -281,35 +281,41 @@ async function main() {
   );
   stranger.close();
 
-  // ── 7. Recording consent ──────────────────────────────────
-  section('7. Recording consent');
+  // ── 7. Automatic recording ────────────────────────────────
+  section('7. Automatic recording');
 
-  host.clear();
-  callee.clear();
-  host.send({ type: 'CALL_RECORD_REQUEST' });
-
-  const consentReq = await callee.waitFor('CALL_RECORD_CONSENT_REQUEST');
-  check('the other participant is asked for consent', !!consentReq);
-  check('the requester is not asked again', !host.messages.some((m) => m.type === 'CALL_RECORD_CONSENT_REQUEST'));
-
-  callee.send({ type: 'CALL_RECORD_CONSENT', consent: false });
-  const abort = await host.waitFor('CALL_RECORD_ABORT');
-  check('a single decline aborts the whole recording', !!abort);
-  check('the abort reports the reason', abort?.reason === 'declined');
-  check('the aborted call is not flagged as recording', !(await prisma.callSession.findUnique({ where: { id: callId } }))?.is_recording);
-
-  // Now everyone agrees.
-  host.clear();
-  callee.clear();
-  host.send({ type: 'CALL_RECORD_REQUEST' });
-  await callee.waitFor('CALL_RECORD_CONSENT_REQUEST');
-  callee.send({ type: 'CALL_RECORD_CONSENT', consent: true });
-
-  const start = await host.waitFor('CALL_RECORD_START');
-  check('the recording starts once everyone consents', !!start);
+  // The call was answered in section 4, so recording started on its own.
   await sleep(300);
   check(
-    'the call is flagged as recording',
+    'the call is recorded as soon as it is answered',
+    !!(await prisma.callSession.findUnique({ where: { id: callId } }))?.is_recording
+  );
+
+  host.clear();
+  callee.clear();
+  host.send({ type: 'CALL_RECORD_STOP' });
+  check('the recording can be stopped', !!(await callee.waitFor('CALL_RECORD_STOP')));
+  await sleep(300);
+  check(
+    'the stopped call is no longer flagged as recording',
+    !(await prisma.callSession.findUnique({ where: { id: callId } }))?.is_recording
+  );
+
+  host.clear();
+  callee.clear();
+  callee.send({ type: 'CALL_RECORD_REQUEST' });
+  const denied = await callee.waitFor('CALL_ERROR');
+  check('a non-host cannot restart the recording', !!denied);
+  check('nobody is ever asked for consent', !callee.messages.some((m) => m.type === 'CALL_RECORD_CONSENT_REQUEST'));
+
+  host.clear();
+  callee.clear();
+  host.send({ type: 'CALL_RECORD_REQUEST' });
+  const restart = await callee.waitFor('CALL_RECORD_START');
+  check('the host can restart the recording immediately', !!restart);
+  await sleep(300);
+  check(
+    'the restarted call is flagged as recording',
     !!(await prisma.callSession.findUnique({ where: { id: callId } }))?.is_recording
   );
 

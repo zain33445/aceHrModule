@@ -6,6 +6,7 @@
  *     this codebase's existing trust model — no signed user tokens exist yet).
  *   - Keep a registry Map<userId, Set<socket>> (a user may have several windows/devices).
  *   - Push MESSAGE events to participants when a message is posted (called from chat.routes).
+ *   - Push REACTION events when a message's emoji reactions change.
  *   - Relay TYPING and READ signals between participants.
  *
  * Sending messages is done over REST (chat.routes) so attachments can ride along; this
@@ -102,6 +103,14 @@ export class ChatGateway {
   /** Deliver a newly-posted message to every participant's live sockets. */
   broadcastMessage(participantIds: string[], message: unknown): void {
     this.broadcastToParticipants(participantIds, { type: 'MESSAGE', message });
+  }
+
+  /** Deliver an updated reaction summary to every participant's live sockets. */
+  broadcastReaction(
+    participantIds: string[],
+    payload: { conversationId: string; messageId: string; reactions: unknown },
+  ): void {
+    this.broadcastToParticipants(participantIds, { type: 'REACTION', ...payload });
   }
 
   /** Push a notification event to all of a user's connected sockets. */

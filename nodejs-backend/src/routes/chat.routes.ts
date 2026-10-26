@@ -21,6 +21,7 @@ import {
   listConversations,
   getMessages,
   markRead,
+  toggleMessageReaction,
   assertMemberAndGetParticipants,
 } from '../services/chat.service';
 import { getChatGateway } from '../gateways/chat.gateway';
@@ -152,6 +153,24 @@ router.post('/conversations/:id/messages', async (req, res) => {
     }
 
     res.json(message);
+  } catch (err) {
+    handle(res, err);
+  }
+});
+
+// Toggle an emoji reaction on a message.  Body: { user_id, emoji }
+router.post('/messages/:id/reactions', async (req, res) => {
+  const userId = actingUserId(req);
+  const emoji = req.body?.emoji;
+  if (!userId || !emoji) return res.status(400).json({ error: 'user_id and emoji required' });
+  try {
+    const result = await toggleMessageReaction(userId, req.params.id, String(emoji));
+    getChatGateway()?.broadcastReaction(result.participantIds, {
+      conversationId: result.conversationId,
+      messageId: result.messageId,
+      reactions: result.reactions,
+    });
+    res.json({ messageId: result.messageId, reactions: result.reactions });
   } catch (err) {
     handle(res, err);
   }

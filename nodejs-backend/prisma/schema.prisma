@@ -91,6 +91,7 @@ model User {
   chat_conversations_created ChatConversation[]    @relation("ChatConversationCreator")
   chat_participants          ChatParticipant[]
   chat_messages_sent         ChatMessage[]         @relation("ChatMessageSender")
+  chat_reactions             ChatMessageReaction[]
   notification_preferences   UserNotificationPreference[]
   calls_started              CallSession[]         @relation("CallStarter")
   call_participations        CallParticipant[]
@@ -561,6 +562,7 @@ model ChatMessage {
   conversation ChatConversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
   sender       User             @relation("ChatMessageSender", fields: [sender_user_id], references: [id])
   attachments  ChatAttachment[]
+  reactions    ChatMessageReaction[]
 
   @@index([conversation_id, created_at]) // fast paged history
   @@map("chat_messages")
@@ -578,6 +580,21 @@ model ChatAttachment {
   message ChatMessage @relation(fields: [message_id], references: [id], onDelete: Cascade)
 
   @@map("chat_attachments")
+}
+
+model ChatMessageReaction {
+  id         Int      @id @default(autoincrement())
+  message_id String
+  user_id    String
+  emoji      String
+  created_at DateTime @default(now())
+
+  message ChatMessage @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([message_id, user_id, emoji]) // one row per person per emoji; toggled on/off
+  @@index([message_id])
+  @@map("chat_message_reactions")
 }
 
 model UserNotificationPreference {

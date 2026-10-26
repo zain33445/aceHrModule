@@ -3,7 +3,8 @@ import { WS_BASE } from '../services/endpoints';
 
 /**
  * useChatSocket — connects to the chat WS gateway (/chat-ws?userId=) with auto-reconnect.
- * Calls onEvent(payload) for every server message: { type: 'MESSAGE'|'TYPING'|'READ_RECEIPT'|'CONNECTED', ... }.
+ * Calls onEvent(payload) for every server message:
+ * { type: 'MESSAGE'|'REACTION'|'TYPING'|'READ_RECEIPT'|'CONNECTED', ... }.
  * Returns { connected, sendTyping(conversationId), sendRead(conversationId) }.
  */
 export function useChatSocket(userId, onEvent) {

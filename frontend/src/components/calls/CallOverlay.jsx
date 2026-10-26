@@ -15,7 +15,6 @@ import {
   X,
   Circle,
   Disc,
-  ShieldQuestion,
 } from 'lucide-react';
 import { useCall, CALL_STATUS } from '../../context/call-context';
 
@@ -191,7 +190,6 @@ export default function CallOverlay() {
     isHost,
     connected,
     recording,
-    consentPrompt,
     acceptCall,
     declineCall,
     hangUp,
@@ -201,7 +199,6 @@ export default function CallOverlay() {
     clearError,
     startRecording,
     stopRecording,
-    respondConsent,
   } = useCall();
 
   // Remote audio is on by default: the overlay only appears after the user
@@ -325,11 +322,6 @@ export default function CallOverlay() {
                   <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide bg-error/20 text-error-300 px-1.5 py-0.5 rounded">
                     <span className="w-1.5 h-1.5 rounded-full bg-error animate-pulse" />
                     rec
-                  </span>
-                )}
-                {recording === 'requesting' && (
-                  <span className="text-[10px] uppercase tracking-wide bg-neutral-700 text-neutral-300 px-1.5 py-0.5 rounded">
-                    awaiting consent
                   </span>
                 )}
               </div>
@@ -464,83 +456,32 @@ export default function CallOverlay() {
                 {remoteMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
               </ControlButton>
 
-              <ControlButton
-                onClick={recording === 'recording' ? stopRecording : startRecording}
-                danger={recording === 'recording'}
-                active={recording === 'recording'}
-                title={
-                  recording === 'recording'
-                    ? 'Stop recording'
-                    : recording === 'requesting'
-                      ? 'Waiting for consent…'
-                      : 'Record this call'
-                }
-                disabled={recording === 'requesting'}
-              >
-                {recording === 'recording' ? (
-                  <Disc size={18} className="animate-pulse" />
-                ) : (
-                  <Circle size={18} />
-                )}
-              </ControlButton>
+              {/* Only the host sees the record button while it is idle (a
+                  restart is host-only). Everyone can stop a running recording
+                  by clicking it while it is active. */}
+              {(recording === 'recording' || isHost) && (
+                <ControlButton
+                  onClick={recording === 'recording' ? stopRecording : startRecording}
+                  danger={recording === 'recording'}
+                  active={recording === 'recording'}
+                  title={
+                    recording === 'recording'
+                      ? 'Stop recording'
+                      : 'Start recording'
+                  }
+                >
+                  {recording === 'recording' ? (
+                    <Disc size={18} className="animate-pulse" />
+                  ) : (
+                    <Circle size={18} />
+                  )}
+                </ControlButton>
+              )}
 
               <ControlButton onClick={handleHangUp} danger title="End call">
                 <PhoneOff size={20} />
               </ControlButton>
             </div>
-          </Motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Recording consent prompt ─────────────────── */}
-      <AnimatePresence>
-        {consentPrompt && (
-          <Motion.div
-            key="consent-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[92] bg-black/60 flex items-center justify-center p-4"
-          >
-            <Motion.div
-              key="consent-dialog"
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-[24rem] overflow-hidden"
-            >
-              <div className="px-6 pt-6 pb-4 flex flex-col items-center gap-3 text-center">
-                <div className="w-12 h-12 rounded-full bg-primary-50 text-primary-600 flex items-center justify-center">
-                  <ShieldQuestion size={24} />
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-neutral-900">
-                    Record this call?
-                  </h3>
-                  <p className="text-sm text-neutral-600 mt-1">
-                    A participant asked to record the audio of this call. The
-                    recording only starts if everyone agrees.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-center gap-3 px-6 py-5">
-                <button
-                  type="button"
-                  onClick={() => respondConsent(false)}
-                  className="px-4 py-2 rounded-md border border-neutral-300 text-neutral-700 text-sm font-medium hover:bg-neutral-50 transition-colors"
-                >
-                  Decline
-                </button>
-                <button
-                  type="button"
-                  onClick={() => respondConsent(true)}
-                  className="px-4 py-2 rounded-md bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 transition-colors"
-                >
-                  Agree to record
-                </button>
-              </div>
-            </Motion.div>
           </Motion.div>
         )}
       </AnimatePresence>

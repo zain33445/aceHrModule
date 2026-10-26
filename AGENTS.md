@@ -84,7 +84,7 @@ No CI workflows, no tests (root `npm test` is stub).
 - TURN: `src/services/turn.service.ts` mints short-lived HMAC credentials. Configure `TURN_URLS` + `TURN_SHARED_SECRET` in `nodejs-backend/.env` — without them calls only work on the office LAN.
 - Frontend: `src/context/CallContext.jsx` (shared state), `src/lib/callMesh.js` (WebRTC, perfect negotiation), `src/components/calls/` (overlay + history). The floating Electron chat window deliberately does **not** open a call socket; its 1:1 Call button delegates the request over IPC (`call:start`) to the main window, which owns the call.
 - Chat integration: `src/components/chat/ChatHub.jsx` shows a Call button in the thread header next to the conversation name (1:1 first; group calls also supported in the main window).
-- Recording: audio-only, **all-or-nothing consent** — one decline aborts the whole recording. Each participant records its own mix; the server mixes on playback. 90-day retention.
+- Recording: audio-only, **starts automatically when the call is answered**, with a visible in-call indicator (no per-call consent prompt; participants can stop it and the host can restart it). Each participant records its own mix; the server mixes on playback. 90-day retention.
 - Screen sharing is 1:1 only in v1.
 
 ## Useful scripts

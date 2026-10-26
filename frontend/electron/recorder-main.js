@@ -9,6 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
 import { RECORDING_CHUNK_ENDPOINT, CHUNK_RETRY_CONFIG, DEFAULT_QUALITY, RECORDING_CHUNK_INTERVAL_MS } from './config.js';
+import { pruneOldRecordings, RETENTION_SWEEP_INTERVAL_MS, RECORDING_RETENTION_MS } from './local-retention.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,8 @@ export function initRecorderMain(getToken, onStateChange) {
   _onStateChange = onStateChange;
   if (_listenersReady) return;
   _listenersReady = true;
+
+  _startRetentionSweep();
 
   ipcMain.on('recording:chunk', (_e, { sessionId, chunkIndex, buffer }) => {
     _handleChunk(sessionId, chunkIndex, Buffer.from(buffer));
@@ -271,6 +274,28 @@ function _upload({ sessionId, chunkIndex, buffer }) {
       req.end();
     } catch { resolve(false); }
   });
+}
+
+// ─── Local retention ──────────────────────
+/**
+ * Delete locally spooled chunks older than the retention window, on startup
+ * and every few hours. The session currently being recorded is never touched.
+ */
+function _startRetentionSweep() {
+  const sweep = () => {
+    pruneOldRecordings(_recordingsDir(), { skipSessionId: _sessionId })
+      .then(({ removedFiles, removedDirs }) => {
+        if (removedFiles || removedDirs) {
+          logger.info(
+            `[Recorder] Retention: removed ${removedFiles} local file(s) and ${removedDirs} empty session folder(s) older than ${Math.round(RECORDING_RETENTION_MS / 86400000)} days`
+          );
+        }
+      })
+      .catch((err) => logger.warn(`[Recorder] Retention sweep failed: ${err.message}`));
+  };
+  sweep();
+  const timer = setInterval(sweep, RETENTION_SWEEP_INTERVAL_MS);
+  if (typeof timer.unref === 'function') timer.unref();
 }
 
 // ─── Storage Helpers ──────────────────────

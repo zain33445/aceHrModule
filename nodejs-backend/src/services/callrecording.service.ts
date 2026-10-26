@@ -9,9 +9,9 @@
  * file therefore contains the full conversation, which makes it robust: if one
  * participant drops mid-call, the others' files still cover the whole call.
  *
- * Recording is all-or-nothing. The gateway collects consent from every
- * participant and aborts the whole thing if a single person declines, so no
- * recording can ever capture a voice that was not agreed to.
+ * Recording starts automatically when the call is answered. Every participant
+ * records their own mix and the in-call UI shows a recording indicator for as
+ * long as it is running.
  *
  * Chunk format matches the existing screen-recording pipeline: the chunks are
  * binary-concatenated and then remuxed with FFmpeg to produce a valid file

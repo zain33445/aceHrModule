@@ -18,7 +18,11 @@
 
 const rawBase = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api';
 
-export const USE_PROXY = import.meta.env.VITE_USE_PROXY === '1';
+// The proxy only exists on the Vite dev server. Never take this branch in a
+// production build: the packaged renderer is loaded from `file://`, so a
+// relative `/api` would resolve to `file:///C:/api`.
+export const USE_PROXY =
+  import.meta.env.DEV && import.meta.env.VITE_USE_PROXY === '1';
 
 /** Base for REST calls. Relative when the dev server proxies the API. */
 export const API_BASE = USE_PROXY ? '/api' : rawBase;

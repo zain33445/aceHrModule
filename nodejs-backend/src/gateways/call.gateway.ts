@@ -64,11 +64,14 @@ interface ActiveCall {
   status: 'ringing' | 'active' | 'ended';
   peers: Map<string, CallPeer>;
   createdAt: number;
-  /** Recording consent state. All-or-nothing: one decline aborts the recording. */
+  /**
+   * Recording state. Recording starts automatically when the call is
+   * answered, and participants can see it through the in-call indicator.
+   * `started` keeps the auto-start from re-arming after a manual stop.
+   */
   recording: {
-    requested: boolean;
-    consented: Set<string>;
-    declined: Set<string>;
+    active: boolean;
+    started: boolean;
   };
 }
 
@@ -305,10 +308,6 @@ export class CallGateway {
         this.handleRecordRequest(state);
         break;
 
-      case 'CALL_RECORD_CONSENT':
-        this.handleRecordConsent(state, !!msg.consent);
-        break;
-
       case 'CALL_RECORD_STOP':
         this.handleRecordStop(state);
         break;
@@ -361,7 +360,7 @@ export class CallGateway {
         status: session.status,
         peers: new Map(),
         createdAt: Date.now(),
-        recording: { requested: false, consented: new Set(), declined: new Set() },
+        recording: { active: false, started: false },
       };
       this.calls.set(callId, call);
     }
@@ -436,6 +435,17 @@ export class CallGateway {
         },
         peerId
       );
+    }
+
+    // Recording is on by default. The first person to answer activates the
+    // call and starts it for everyone; later joiners are told to start
+    // recording their own mix as well.
+    if (call.status === 'active') {
+      if (!call.recording.started) {
+        this.startRecording(call);
+      } else if (call.recording.active) {
+        this.send(ws, { type: 'CALL_RECORD_START', callId });
+      }
     }
 
     console.log(
@@ -650,18 +660,19 @@ export class CallGateway {
     return ids;
   }
 
-  // ── Recording consent ───────────────────────────────────
+  // ── Recording ───────────────────────────────────────────
 
   /**
-   * The host asks to start recording. Every participant — including the host —
-   * must consent, because a recording that captures someone's voice without
-   * their agreement is not defensible for an HR system.
+   * The host explicitly starts recording. Recording normally starts by
+   * itself when the call is answered; this path covers a restart after the
+   * host stopped it. It never asks the other participants first.
    */
   private handleRecordRequest(state: SocketState): void {
     if (!state.callId || !state.peerId) return;
 
     const call = this.calls.get(state.callId);
     if (!call) return;
+    if (call.status !== 'active') return;
 
     const isAdmin = state.role === 'admin' || state.role === 'superadmin';
     if (call.startedBy !== state.userId && !isAdmin) {
@@ -673,66 +684,15 @@ export class CallGateway {
       return;
     }
 
-    if (call.recording.requested) return;
+    if (call.recording.active) return;
 
-    call.recording.requested = true;
-    call.recording.consented = new Set();
-    call.recording.declined = new Set();
-
-    // The requester consents implicitly — they pressed the button.
-    call.recording.consented.add(state.peerId);
-
-    this.broadcastToCall(
-      call,
-      {
-        type: 'CALL_RECORD_CONSENT_REQUEST',
-        callId: state.callId,
-        requestedBy: state.userId,
-      },
-      state.peerId
-    );
-
-    this.maybeStartRecording(call);
+    this.startRecording(call);
   }
 
-  /** A participant answered the consent prompt. */
-  private handleRecordConsent(state: SocketState, consent: boolean): void {
-    if (!state.callId || !state.peerId) return;
-
-    const call = this.calls.get(state.callId);
-    if (!call || !call.recording.requested) return;
-    if (!call.peers.has(state.peerId)) return;
-
-    if (consent) {
-      call.recording.consented.add(state.peerId);
-    } else {
-      call.recording.declined.add(state.peerId);
-      // One decline aborts the whole recording.
-      this.broadcastToCall(call, {
-        type: 'CALL_RECORD_ABORT',
-        callId: state.callId,
-        reason: 'declined',
-        declinedBy: state.userId,
-      });
-      call.recording.requested = false;
-      call.recording.consented = new Set();
-      call.recording.declined = new Set();
-      prisma.callSession
-        .updateMany({
-          where: { id: state.callId },
-          data: { is_recording: false, recording_consent: false },
-        })
-        .catch(() => {});
-      return;
-    }
-
-    this.maybeStartRecording(call);
-  }
-
-  /** Starts the recording once every participant has consented. */
-  private maybeStartRecording(call: ActiveCall): void {
-    if (!call.recording.requested) return;
-    if (call.recording.consented.size < call.peers.size) return;
+  /** Starts the recording for every participant and flags the call. */
+  private startRecording(call: ActiveCall): void {
+    call.recording.active = true;
+    call.recording.started = true;
 
     this.broadcastToCall(call, {
       type: 'CALL_RECORD_START',
@@ -756,9 +716,7 @@ export class CallGateway {
 
     this.broadcastToCall(call, { type: 'CALL_RECORD_STOP', callId: state.callId });
 
-    call.recording.requested = false;
-    call.recording.consented = new Set();
-    call.recording.declined = new Set();
+    call.recording.active = false;
 
     prisma.callSession
       .updateMany({

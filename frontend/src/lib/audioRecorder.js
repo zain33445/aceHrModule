@@ -41,6 +41,8 @@ export class CallAudioRecorder {
     this.audioCtx = null;
     this.mixDest = null;
     this.primed = [];
+    /** Audio tracks already routed into the mix. */
+    this.routedTracks = new Set();
     this.chunkIndex = 0;
     this.active = false;
     /** Resolves when every chunk handed to the recorder has been uploaded. */
@@ -76,15 +78,7 @@ export class CallAudioRecorder {
     }
 
     for (const remote of remoteStreams) {
-      if (!remote || remote.getAudioTracks().length === 0) continue;
-
-      this.primeStream(remote);
-
-      try {
-        this.audioCtx.createMediaStreamSource(remote).connect(this.mixDest);
-      } catch (err) {
-        console.error('[Call Recording] could not route a remote stream:', err);
-      }
+      this.routeRemoteStream(remote);
     }
 
     const mimeType = pickMimeType();
@@ -114,6 +108,34 @@ export class CallAudioRecorder {
 
     this.recorder.start(this.chunkIntervalMs);
     this.active = true;
+  }
+
+  /**
+   * Mixes in a remote stream that became available after recording started.
+   *
+   * Recording begins the moment the call connects, but the peer connections
+   * are still being negotiated then. Without this, the beginning of the call
+   * (or a participant who joined later) would be missing from the mix.
+   */
+  addRemoteStream(stream) {
+    if (!this.active || !this.audioCtx || !this.mixDest) return;
+    this.routeRemoteStream(stream);
+  }
+
+  /** Routes one remote audio track into the mix (once). */
+  routeRemoteStream(stream) {
+    if (!stream) return;
+    const track = stream.getAudioTracks()[0];
+    if (!track || this.routedTracks.has(track)) return;
+    this.routedTracks.add(track);
+
+    this.primeStream(stream);
+
+    try {
+      this.audioCtx.createMediaStreamSource(stream).connect(this.mixDest);
+    } catch (err) {
+      console.error('[Call Recording] could not route a remote stream:', err);
+    }
   }
 
   /**
@@ -194,6 +216,7 @@ export class CallAudioRecorder {
       }
     }
     this.primed = [];
+    this.routedTracks.clear();
 
     this.active = false;
   }

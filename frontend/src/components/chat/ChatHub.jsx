@@ -10,6 +10,25 @@ const MAX_CALL_PARTICIPANTS = Math.max(
   parseInt(import.meta.env.VITE_MAX_CALL_PARTICIPANTS || '3', 10)
 );
 
+/** Shown at the top of every picker for one-tap reactions. */
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+
+/** Composer picker: a small curated set, deliberately dependency-free. */
+const EMOJI_SET = [
+  '😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😊',
+  '😇', '🙂', '🙃', '😉', '😍', '🥰', '😘', '😗',
+  '😋', '😛', '😜', '🤪', '😝', '🤗', '🤔', '🤐',
+  '😐', '😑', '😶', '🙄', '😏', '😴', '🤤', '😪',
+  '😵', '🤯', '🥳', '😎', '🤓', '🧐', '😕', '😟',
+  '🙁', '😮', '😯', '😲', '😳', '🥺', '😢', '😭',
+  '😱', '😤', '😡', '🤬', '💀', '🤡', '👻', '👽',
+  '🤖', '💩', '👍', '👎', '👌', '✌️', '🤞', '🤝',
+  '👏', '🙌', '🙏', '💪', '🫶', '❤️', '🧡', '💛',
+  '💚', '💙', '💜', '🖤', '🤍', '💔', '🔥', '⭐',
+  '✅', '❌', '⚡', '🎉', '🎊', '🎁', '☕', '🍕',
+  '🍔', '🌹', '🌈', '☀️', '🌙', '🤷', '🤦', '💯',
+];
+
 function timeAgo(date) {
   if (!date) return '';
   const seconds = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
@@ -42,9 +61,15 @@ export default function ChatHub({ user, fullHeight = false }) {
   const [typingIn, setTypingIn] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [showGroup, setShowGroup] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [reactionFor, setReactionFor] = useState(null); // message id
+  const [hoveredMessage, setHoveredMessage] = useState(null);
   const scrollRef = useRef(null);
   const typingTimer = useRef(null);
   const sendReadRef = useRef(null);
+  const inputRef = useRef(null);
+  const emojiPickerRef = useRef(null);
+  const reactionPickerRef = useRef(null);
 
   const isAdminRole = ADMIN_ROLES.has(user?.role);
   const myDepartmentId = useMemo(
@@ -97,6 +122,10 @@ export default function ChatHub({ user, fullHeight = false }) {
         m.sender_user_id === myId && !m.seen ? { ...m, seen: true, seen_at: now } : m
       ));
       refreshConversations();
+    } else if (evt.type === 'REACTION' && evt.conversationId === activeId) {
+      setMessages((prev) => prev.map((m) =>
+        m.id === evt.messageId ? { ...m, reactions: evt.reactions || [] } : m
+      ));
     } else if (evt.type === 'TYPING' && evt.conversationId === activeId && evt.userId !== myId) {
       setTypingIn(evt.conversationId);
       clearTimeout(typingTimer.current);
@@ -123,6 +152,68 @@ export default function ChatHub({ user, fullHeight = false }) {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
+
+  // Grow the composer with its content (Shift+Enter inserts a newline).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, [text]);
+
+  // Dismiss the emoji pickers on outside click or Escape.
+  useEffect(() => {
+    if (!showEmojiPicker && !reactionFor) return;
+    const onDown = (e) => {
+      if (emojiPickerRef.current?.contains(e.target)) return;
+      if (reactionPickerRef.current?.contains(e.target)) return;
+      setShowEmojiPicker(false);
+      setReactionFor(null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        setShowEmojiPicker(false);
+        setReactionFor(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [showEmojiPicker, reactionFor]);
+
+  /** Insert an emoji at the caret so the picker doesn't clobber existing text. */
+  const insertEmoji = (emoji) => {
+    const el = inputRef.current;
+    if (!el) {
+      setText((prev) => prev + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? text.length;
+    const end = el.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + emoji + text.slice(end));
+    sendTyping(activeId);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const toggleReaction = async (messageId, emoji) => {
+    if (!myId) return;
+    setReactionFor(null);
+    try {
+      const { data } = await api.toggleChatReaction(myId, messageId, emoji);
+      setMessages((prev) => prev.map((m) =>
+        m.id === messageId ? { ...m, reactions: data.reactions || [] } : m
+      ));
+    } catch (e) {
+      console.error('reaction failed', e);
+    }
+  };
 
   // Send
   const send = async () => {
@@ -294,22 +385,58 @@ export default function ChatHub({ user, fullHeight = false }) {
                   let seenStatus = conversations.find((c) => c.id === activeId)?.last_message_seen;
                   const showSeenStatus = isMine && isLastMessage && seenStatus;
 
-                  if ( isLastMessage) 
-                  console.log('last',seenStatus);
-
                 return (
-                  <div key={m.id} style={{ ...S.msgRow, justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
-                    <div>
-                      <div style={{ ...S.bubble, background: isMine ? '#4f46e5' : '#f1f5f9', color: isMine ? '#fff' : '#0f172a' }}>
-                        <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>{isMine ? '': m.sender?.name || m.sender_user_id}</div>
-                        {m.message_text && <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.message_text}</div>}
-                        {(m.attachments || []).map((a) => (
-                          <a key={a.id} href={api.chatAttachmentUrl(a.id, myId)} target="_blank" rel="noreferrer"
-                            style={{ display: 'block', fontSize: 12, marginTop: 4, color: isMine ? '#c7d2fe' : '#4f46e5' }}>
-                            📎 {a.file_name} ({Math.round(a.size_bytes / 1024)} KB)
-                          </a>
-                        ))}
+                  <div key={m.id}
+                    style={{ ...S.msgRow, justifyContent: isMine ? 'flex-end' : 'flex-start' }}
+                    onMouseEnter={() => setHoveredMessage(m.id)}
+                    onMouseLeave={() => setHoveredMessage((id) => (id === m.id ? null : id))}>
+                    <div style={{ position: 'relative', maxWidth: '82%' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, flexDirection: isMine ? 'row-reverse' : 'row' }}>
+                        <div style={{ ...S.bubble, background: isMine ? '#4f46e5' : '#f1f5f9', color: isMine ? '#fff' : '#0f172a' }}>
+                          <div style={{ fontSize: 11, opacity: 0.7, marginBottom: 2 }}>{isMine ? '': m.sender?.name || m.sender_user_id}</div>
+                          {m.message_text && <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.message_text}</div>}
+                          {(m.attachments || []).map((a) => (
+                            <a key={a.id} href={api.chatAttachmentUrl(a.id, myId)} target="_blank" rel="noreferrer"
+                              style={{ display: 'block', fontSize: 12, marginTop: 4, color: isMine ? '#c7d2fe' : '#4f46e5' }}>
+                              📎 {a.file_name} ({Math.round(a.size_bytes / 1024)} KB)
+                            </a>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          title="Add reaction"
+                          aria-label="Add reaction"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={() => setReactionFor((cur) => (cur === m.id ? null : m.id))}
+                          style={{
+                            ...S.reactTrigger,
+                            opacity: hoveredMessage === m.id || reactionFor === m.id ? 1 : 0.35,
+                          }}
+                        >☺</button>
                       </div>
+                      {reactionFor === m.id && (
+                        <div ref={reactionPickerRef}
+                          style={{ marginTop: 6, display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start' }}
+                          onClick={(e) => e.stopPropagation()}>
+                          <EmojiPicker compact onPick={(emoji) => toggleReaction(m.id, emoji)} />
+                        </div>
+                      )}
+                      {(m.reactions || []).length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4, justifyContent: isMine ? 'flex-end' : 'flex-start' }}>
+                          {m.reactions.map((r) => {
+                            const mine = (r.user_ids || []).includes(myId);
+                            return (
+                              <button key={r.emoji} type="button"
+                                onClick={() => toggleReaction(m.id, r.emoji)}
+                                title={mine ? 'Remove your reaction' : 'Add your reaction'}
+                                style={{ ...S.reactionChip, background: mine ? '#e0e7ff' : '#f8fafc', borderColor: mine ? '#a5b4fc' : '#e2e8f0' }}>
+                                <span>{r.emoji}</span>
+                                <span style={{ fontSize: 11, fontWeight: 600 }}>{r.count}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       {isMine && (
                         <div style={{ textAlign: 'right', marginTop: 2, fontSize: 11, color: '#94a3b8' }}>
                           {showSeenStatus ? `Seen ${timeAgo(m.seen_at)}` : isLastMessage ? 'Sent' : null}
@@ -330,10 +457,24 @@ export default function ChatHub({ user, fullHeight = false }) {
               </div>
             )}
             <div style={S.composer}>
+              {showEmojiPicker && (
+                <div ref={emojiPickerRef}
+                  style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 10, zIndex: 30 }}
+                  onClick={(e) => e.stopPropagation()}>
+                  <EmojiPicker onPick={insertEmoji} />
+                </div>
+              )}
               <label style={S.attachBtn}>📎<input type="file" multiple style={{ display: 'none' }} onChange={onPickFiles} /></label>
-              <input style={S.input} value={text} placeholder="Type a message…"
+              <button type="button" title="Emoji" aria-label="Emoji"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={() => setShowEmojiPicker((v) => !v)}
+                style={S.emojiToggle}>😊</button>
+              <textarea ref={inputRef} rows={1} style={S.input} value={text} placeholder="Type a message…"
                 onChange={(e) => { setText(e.target.value); sendTyping(activeId); }}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+                  if (e.key === 'Escape') setShowEmojiPicker(false);
+                }} />
               <button style={S.sendBtn} onClick={send}>Send</button>
             </div>
           </>
@@ -367,6 +508,29 @@ export default function ChatHub({ user, fullHeight = false }) {
   );
 }
 
+/** Dependency-free emoji palette used by the composer and the reaction picker. */
+function EmojiPicker({ onPick, compact = false }) {
+  return (
+    <div
+      style={{ ...S.picker, width: compact ? 248 : 304 }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div style={{ ...S.emojiGrid, gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 6 }}>
+        {QUICK_REACTIONS.map((emoji) => (
+          <button key={emoji} type="button" style={S.emojiBtn} onClick={() => onPick(emoji)}>{emoji}</button>
+        ))}
+      </div>
+      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+        <div style={{ ...S.emojiGrid, maxHeight: compact ? 128 : 176 }}>
+          {EMOJI_SET.map((emoji, i) => (
+            <button key={`${emoji}-${i}`} type="button" style={S.emojiBtn} onClick={() => onPick(emoji)}>{emoji}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Modal({ title, children, onClose }) {
   return (
     <div style={S.overlay} onClick={onClose}>
@@ -394,9 +558,15 @@ const S = {
   messages: { flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 8, },
   msgRow: { display: 'flex'},
   bubble: { minWidth: '70%', padding: '8px 12px', borderRadius: 12, fontSize: 14 },
-  composer: { display: 'flex', gap: 8, padding: 10, borderTop: '1px solid #e2e8f0', alignItems: 'center' },
-  input: { flex: 1, padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, outline: 'none' },
+  composer: { position: 'relative', display: 'flex', gap: 8, padding: 10, borderTop: '1px solid #e2e8f0', alignItems: 'center' },
+  input: { flex: 1, minHeight: 40, maxHeight: 120, padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: 8, fontSize: 14, lineHeight: 1.4, fontFamily: 'inherit', resize: 'none', outline: 'none', boxSizing: 'border-box' },
   attachBtn: { cursor: 'pointer', fontSize: 18, padding: '0 4px' },
+  emojiToggle: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '2px' },
+  picker: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,0.16)', padding: 8 },
+  emojiGrid: { display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 2, overflowY: 'auto' },
+  emojiBtn: { border: 'none', background: 'transparent', borderRadius: 6, cursor: 'pointer', fontSize: 19, lineHeight: 1.2, padding: '3px 0' },
+  reactTrigger: { flex: '0 0 auto', width: 24, height: 24, padding: 0, border: '1px solid #e2e8f0', borderRadius: 999, background: '#fff', color: '#475569', cursor: 'pointer', fontSize: 14, lineHeight: 1 },
+  reactionChip: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px', borderRadius: 999, border: '1px solid #e2e8f0', cursor: 'pointer', fontSize: 13, lineHeight: 1.6 },
   sendBtn: { padding: '10px 18px', background: '#4f46e5', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 },
   chip: { background: '#eef2ff', borderRadius: 8, padding: '2px 8px', marginRight: 6 },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },

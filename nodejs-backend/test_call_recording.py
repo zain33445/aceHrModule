@@ -1,11 +1,11 @@
 """
 Browser test for the call recording pipeline.
 
-Runs a real call between two Chromium browsers, has both sides consent to the
-recording, lets MediaRecorder capture actual audio, and then verifies that:
+Runs a real call between two Chromium browsers, lets MediaRecorder capture
+actual audio, and then verifies that:
 
-  1. The recording starts only after every participant consents.
-  2. A single decline aborts the whole recording.
+  1. The recording starts automatically when the call is answered.
+  2. No consent prompt is shown to the participants.
   3. The audio chunks are uploaded to the server.
   4. The server assembles the chunks into a playable file.
   5. The admin playback endpoint serves the assembled recording.
@@ -165,26 +165,11 @@ def main():
         call_id = sessions[0]["id"]
         check("the call is running", bool(call_id), json.dumps(sessions[0])[:120])
 
-        # ── 2. One decline aborts the recording ────────────
-        print("\n2. A decline aborts the recording")
-        host.get_by_role("button", name="Record this call").click()
-        callee.wait_for_selector("text=Record this call?", timeout=10000)
-        check("the other participant is asked for consent", True)
+        # ── 2. Recording starts automatically ─────────────
+        print("\n2. Recording starts when the call is answered")
 
-        callee.get_by_role("button", name="Decline").click()
-        host.wait_for_timeout(1500)
-        check(
-            "the host is told the recording was aborted",
-            host.get_by_text("The recording was declined by a participant.").count() > 0,
-        )
-
-        # ── 3. Everybody agrees ────────────────────────────
-        print("\n3. Everybody agrees to record")
-        host.get_by_role("button", name="Record this call").click()
-        callee.wait_for_selector("text=Record this call?", timeout=10000)
-        callee.get_by_role("button", name="Agree to record").click()
-
-        host.wait_for_timeout(2500)
+        host.get_by_title("Stop recording").wait_for(timeout=15000)
+        callee.get_by_title("Stop recording").wait_for(timeout=15000)
         check(
             "the host sees the recording indicator",
             host.get_by_title("Stop recording").count() > 0,
@@ -193,23 +178,27 @@ def main():
             "the callee sees the recording indicator",
             callee.get_by_title("Stop recording").count() > 0,
         )
+        check(
+            "no consent prompt is shown",
+            callee.get_by_text("Record this call?").count() == 0,
+        )
 
         # Let MediaRecorder capture a few seconds of real audio.
         print("   capturing 4 seconds of audio…")
         time.sleep(4)
 
-        # ── 4. Stop and upload ─────────────────────────────
-        print("\n4. Stopping the recording")
+        # ── 3. Stop and upload ─────────────────────────────
+        print("\n3. Stopping the recording")
         host.get_by_role("button", name="Stop recording").click()
         host.wait_for_timeout(4000)
 
-        # ── 5. End the call so the server assembles ───────
-        print("\n5. Ending the call (the server assembles the recording)")
+        # ── 4. End the call so the server assembles ───────
+        print("\n4. Ending the call (the server assembles the recording)")
         host.get_by_role("button", name="End call").click()
         host.wait_for_timeout(6000)
 
-        # ── 6. Verify the recording on the server ─────────
-        print("\n6. Verifying the assembled recording")
+        # ── 5. Verify the recording on the server ─────────
+        print("\n5. Verifying the assembled recording")
         recordings = api_json("GET", f"/call/recordings/call/{call_id}", host_token)
         check("the server has a recording for the call", len(recordings) > 0, json.dumps(recordings)[:200])
 
@@ -255,8 +244,8 @@ def main():
             except urllib.error.HTTPError as e:
                 check("a non-admin cannot read the recording", e.code == 403, f"status={e.code}")
 
-        # ── 7. The call history shows the call ────────────
-        print("\n7. Call history")
+        # ── 6. The call history shows the call ────────────
+        print("\n6. Call history")
         history = api_json("GET", "/call/history?limit=20", host_token)
         entry = [h for h in history if h["call_id"] == call_id]
         check("the call is in the history", len(entry) == 1)

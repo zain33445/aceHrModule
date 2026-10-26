@@ -255,6 +255,27 @@ export interface AttachmentMeta {
   storage_path: string; // already written to disk by the caller (route)
 }
 
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  user_ids: string[];
+}
+
+/** Collapse raw reaction rows into `{ emoji, count, user_ids }`, preserving first-seen order. */
+export function summarizeReactions(rows: { emoji: string; user_id: string }[]): ReactionSummary[] {
+  const byEmoji = new Map<string, string[]>();
+  for (const row of rows) {
+    const users = byEmoji.get(row.emoji);
+    if (users) users.push(row.user_id);
+    else byEmoji.set(row.emoji, [row.user_id]);
+  }
+  return [...byEmoji.entries()].map(([emoji, user_ids]) => ({
+    emoji,
+    count: user_ids.length,
+    user_ids,
+  }));
+}
+
 /** Persist a message plus any already-saved attachments in one write; bumps the inbox sort key. */
 export async function postMessage(
   senderId: string,
@@ -283,7 +304,48 @@ export async function postMessage(
     data: { last_message_at: message.created_at },
   });
 
-  return { ...message, seen: false };
+  return { ...message, reactions: [] as ReactionSummary[], seen: false };
+}
+
+/**
+ * Toggle one emoji reaction from `userId` on a message.
+ * Returns the refreshed summary plus the participants to broadcast to.
+ */
+export async function toggleMessageReaction(userId: string, messageId: string, emoji: string) {
+  const clean = (emoji ?? '').trim();
+  if (!clean || clean.length > 32 || /\s/.test(clean)) {
+    throw new ChatError(400, 'Invalid emoji');
+  }
+
+  const message = await prisma.chatMessage.findFirst({
+    where: { id: messageId, deleted_at: null },
+    select: { id: true, conversation_id: true },
+  });
+  if (!message) throw new ChatError(404, 'Message not found');
+
+  const participantIds = await assertMemberAndGetParticipants(message.conversation_id, userId);
+
+  const where = { message_id_user_id_emoji: { message_id: messageId, user_id: userId, emoji: clean } };
+  const existing = await prisma.chatMessageReaction.findUnique({ where });
+  if (existing) {
+    await prisma.chatMessageReaction.delete({ where });
+  } else {
+    await prisma.chatMessageReaction.create({
+      data: { message_id: messageId, user_id: userId, emoji: clean },
+    });
+  }
+
+  const reactions = await loadReactionSummaries(messageId);
+  return { conversationId: message.conversation_id, messageId, reactions, participantIds };
+}
+
+async function loadReactionSummaries(messageId: string): Promise<ReactionSummary[]> {
+  const rows = await prisma.chatMessageReaction.findMany({
+    where: { message_id: messageId },
+    select: { emoji: true, user_id: true },
+    orderBy: { created_at: 'asc' },
+  });
+  return summarizeReactions(rows);
 }
 
 /** Inbox: conversations the user is in, newest first, with unread counts. */
@@ -367,13 +429,24 @@ export async function getMessages(conversationId: string, userId: string, before
     },
     orderBy: { created_at: 'desc' },
     take: Math.min(limit, 100),
-    include: { attachments: true, sender: { select: { id: true, name: true } } },
+    include: {
+      attachments: true,
+      sender: { select: { id: true, name: true } },
+      reactions: {
+        select: { emoji: true, user_id: true },
+        orderBy: { created_at: 'asc' },
+      },
+    },
   });
 
-  return messages.reverse().map((m) => ({
-    ...m,
-    seen: m.sender_user_id !== userId && m.created_at <= latestReadAt,
-  }));
+  return messages.reverse().map((m) => {
+    const { reactions, ...rest } = m;
+    return {
+      ...rest,
+      reactions: summarizeReactions(reactions),
+      seen: m.sender_user_id !== userId && m.created_at <= latestReadAt,
+    };
+  });
 }
 
 export async function markRead(conversationId: string, userId: string) {

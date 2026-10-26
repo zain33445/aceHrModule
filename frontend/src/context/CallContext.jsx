@@ -38,10 +38,8 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
   const [error, setError] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [isHost, setIsHost] = useState(false);
-  /** 'idle' | 'requesting' | 'recording' */
+  /** 'idle' | 'recording' */
   const [recording, setRecording] = useState('idle');
-  /** Set while another participant is asking for recording consent. */
-  const [consentPrompt, setConsentPrompt] = useState(null);
 
   const meshRef = useRef(null);
   const pendingJoinRef = useRef(null);
@@ -97,6 +95,9 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
       },
       onRemoteStream: (peerId, stream) => {
         upsertPeer({ peerId, userId: '', name: 'Participant' }, stream);
+        // Audio tracks can arrive after the recording was started (or after
+        // the call connected). Mix them in so no participant is left out.
+        recorderRef.current?.addRemoteStream(stream);
       },
       onPeerGone: (peerId) => {
         setPeers((prev) => prev.filter((p) => p.peerId !== peerId));
@@ -162,8 +163,20 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     return null;
   }, []);
 
-  const startLocalRecording = useCallback(async () => {    const id = callIdRef.current;
+  const startLocalRecording = useCallback(async () => {
+    const id = callIdRef.current;
     if (!id || recorderRef.current?.active) return;
+
+    // The recording is started as soon as the call connects, which may race
+    // with microphone acquisition. Wait for the shared stream instead of
+    // starting with no local audio.
+    if (meshRef.current && !localStreamRef.current) {
+      try {
+        await meshRef.current.ensureLocalStream();
+      } catch (err) {
+        console.error('[Call] no local microphone for the recording:', err);
+      }
+    }
 
     const recorder = new CallAudioRecorder({
       uploadChunk: async (chunkIndex, buffer) => {
@@ -178,6 +191,12 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     try {
       await recorder.start(localStreamRef.current, remoteStreams);
       recorderRef.current = recorder;
+      // Pick up anything that connected while the recorder was starting.
+      if (meshRef.current) {
+        for (const stream of meshRef.current.getRemoteStreams().values()) {
+          recorder.addRemoteStream(stream);
+        }
+      }
       setRecording('recording');
     } catch (err) {
       console.error('[Call] could not start recording:', err);
@@ -330,22 +349,8 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
           break;
 
         // ── Recording ────────────────────────────────────
-        case 'CALL_RECORD_CONSENT_REQUEST':
-          // Another participant wants to record — everyone must agree.
-          setConsentPrompt({ requestedBy: msg.requestedBy });
-          break;
-
         case 'CALL_RECORD_START':
           startLocalRecording();
-          break;
-
-        case 'CALL_RECORD_ABORT':
-          stopLocalRecording();
-          setRecording('idle');
-          setConsentPrompt(null);
-          if (msg.reason === 'declined') {
-            setError('The recording was declined by a participant.');
-          }
           break;
 
         case 'CALL_RECORD_STOP':
@@ -416,7 +421,6 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     setCamOn(false);
     setElapsed(0);
     setRecording('idle');
-    setConsentPrompt(null);
   }, [stopLocalRecording]);
 
   // Elapsed call timer.
@@ -624,12 +628,11 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
 
   const clearError = useCallback(() => setError(null), []);
 
-  /** Asks every participant for consent to record the call. */
+  /** Starts recording again after the host stopped it. */
   const startRecording = useCallback(() => {
     const id = callIdRef.current;
     if (!id) return;
     sendRef.current({ type: 'CALL_RECORD_REQUEST' });
-    setRecording('requesting');
   }, []);
 
   /** Stops the recording for everyone. */
@@ -640,14 +643,6 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     sendRef.current({ type: 'CALL_RECORD_STOP' });
     setRecording('idle');
   }, [stopLocalRecording]);
-
-  /** Answers a consent request from another participant. */
-  const respondConsent = useCallback((consent) => {
-    const id = callIdRef.current;
-    if (id) sendRef.current({ type: 'CALL_RECORD_CONSENT', consent: !!consent });
-    setConsentPrompt(null);
-    if (!consent) setRecording('idle');
-  }, []);
 
   // Accept / Decline chosen from the native OS notification (Electron agent).
   useEffect(() => {
@@ -682,7 +677,6 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
       connected,
       connecting,
       recording,
-      consentPrompt,
       enabled,
       startCall,
       acceptCall,
@@ -695,15 +689,14 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
       reconnect,
       startRecording,
       stopRecording,
-      respondConsent,
     }),
     [
       status, callId, selfPeerId, peers, localStream, previewStream, micOn, camOn, sharingScreen,
       incomingCall, error, elapsed, isHost, connected, connecting,
-      recording, consentPrompt, enabled,
+      recording, enabled,
       startCall, acceptCall, declineCall, hangUp, toggleMic, toggleCam,
       toggleScreenShare, clearError, reconnect,
-      startRecording, stopRecording, respondConsent,
+      startRecording, stopRecording,
     ]
   );
 
