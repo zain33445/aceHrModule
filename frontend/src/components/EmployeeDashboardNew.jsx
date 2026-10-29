@@ -287,7 +287,15 @@ function EmployeeDashboard({ user, onLogout }) {
                   ? "Leave Approved"
                   : n.type === "leave_rejected"
                     ? "Leave Rejected"
-                    : "Notification",
+                    : n.type === "call_incoming"
+                      ? "Incoming Call"
+                      : n.type === "call_declined"
+                        ? "Call Declined"
+                        : n.type === "call_missed"
+                          ? "Missed Call"
+                          : n.type === "call_ended"
+                            ? "Call Ended"
+                            : "Notification",
           message: n.message,
           read: n.is_read,
           created_at: n.created_at,
@@ -310,6 +318,10 @@ function EmployeeDashboard({ user, onLogout }) {
     const off = window.electronAPI.onNotificationNavigate((link) => {
       if (!link) return;
       const route = String(link).split('?')[0];
+      if (route === '/calls' || route.startsWith('/calls/')) {
+        setActiveTab('calls');
+        return;
+      }
       const map = {
         '/disputes': 'disputes',
         '/leaves': 'leaves',
@@ -317,6 +329,7 @@ function EmployeeDashboard({ user, onLogout }) {
         '/salary': 'salary',
         '/overtime': 'overtime',
         '/chat': 'chat',
+        '/calls': 'calls',
       };
       const tab = map[route];
       if (tab) setActiveTab(tab);
@@ -345,6 +358,8 @@ function EmployeeDashboard({ user, onLogout }) {
       notif.type === "leave_rejected"
     ) {
       setActiveTab("attendance"); // Or a separate 'leaves' tab if one exists
+    } else if (notif.type?.startsWith("call_")) {
+      setActiveTab("calls");
     }
   };
 

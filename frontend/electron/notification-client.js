@@ -37,12 +37,14 @@ function _showNotification(title, body, link) {
   if (!Notification.isSupported()) return;
   const iconDir = app.isPackaged ? 'dist' : 'public';
   const iconPath = path.join(__dirname, '..', iconDir, 'aceLogo.png');
-  const n = new Notification({ title, body, icon: iconPath });
+  const n = new Notification({ title, body, icon: iconPath, silent: true });
   n.on('click', () => {
     // Emit a custom event so main.js can focus the window
     process.emit('notification-click', link);
   });
   n.show();
+  // Play the in-app chime from the renderer so it matches the other sounds.
+  process.emit('notification-sound');
 }
 
 function _connect() {
@@ -92,6 +94,10 @@ function _handleMessage(msg) {
       break;
     case 'NOTIFICATION': {
       const n = msg.notification;
+      // Incoming calls have their own native notification with Accept /
+      // Decline buttons, raised by the renderer (which knows the callId).
+      // Showing the generic notification too would duplicate it.
+      if (n.type === 'call_incoming') break;
       _showNotification(n.title, n.message, n.link);
       break;
     }

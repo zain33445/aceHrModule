@@ -13,6 +13,7 @@ export const CALL_STATUS = {
   IDLE: 'idle',
   INCOMING: 'incoming',
   OUTGOING: 'outgoing',
+  RINGING: 'ringing',
   CONNECTING: 'connecting',
   ACTIVE: 'active',
   ENDED: 'ended',

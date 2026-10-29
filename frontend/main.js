@@ -28,6 +28,11 @@ import { initNotificationClient, setNotificationUserId, shutdownNotificationClie
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Ringtones and notification chimes are played by the renderer with the Web
+// Audio API. Without this switch Chromium keeps the audio context suspended
+// until the page has been clicked, so an incoming call could ring silently.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 // ─────────────────────────────────────────
 // 0. Single Instance Lock
 // ─────────────────────────────────────────
@@ -241,6 +246,21 @@ function sendCallAction(action, callId) {
 }
 
 /**
+ * Ask the renderer(s) to play the notification chime. The sound is synthesised
+ * in the renderer, so it works for notifications raised by the main process
+ * (notification WS, attendance monitor) as well as by the UI itself.
+ */
+function sendNotificationSound() {
+  // Play the chime in exactly one renderer. Both the main window and the
+  // floating chat window can be open, and playing it in both would double it.
+  const target =
+    mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow
+      : BrowserWindow.getAllWindows().find((win) => !win.isDestroyed());
+  if (target) target.webContents.send('notification:sound');
+}
+
+/**
  * Places a call requested from the floating chat window in the main window.
  * The request is kept until the main renderer consumes it, in case the main
  * window was still loading — otherwise the click would be silently lost.
@@ -270,10 +290,21 @@ function delegateCallStart(payload) {
 /**
  * Raise a native OS notification for an incoming call.
  * Electron notification actions are honoured on Windows and macOS; on Linux
- * the notification is still shown and clicking it accepts the call.
+ * the notification is still shown and clicking it focuses the app.
  */
 function showIncomingCallNotification({ callId, fromName }) {
   if (!Notification.isSupported()) return;
+
+  // When the app is already in front of the user the in-app dialog is the
+  // better prompt — a second OS popup would just be noise.
+  if (
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    mainWindow.isVisible() &&
+    mainWindow.isFocused()
+  ) {
+    return;
+  }
 
   if (activeCallNotification) {
     try { activeCallNotification.close(); } catch { /* already gone */ }
@@ -287,6 +318,8 @@ function showIncomingCallNotification({ callId, fromName }) {
     body: `${fromName || 'Someone'} is calling you`,
     icon: iconPath,
     timeoutType: 'never',
+    // The renderer plays the ringtone; a second OS sound would double it.
+    silent: true,
     actions: [
       { type: 'button', text: 'Decline' },
       { type: 'button', text: 'Accept' },
@@ -295,15 +328,17 @@ function showIncomingCallNotification({ callId, fromName }) {
 
   n.on('action', (_event, index) => {
     const action = index === 0 ? 'decline' : 'accept';
-    if (action === 'accept') showMainWindow(null);
+    showMainWindow(null);
     sendCallAction(action, callId);
     try { n.close(); } catch { /* already gone */ }
     activeCallNotification = null;
   });
 
+  // Clicking the notification opens the app and shows the Accept / Decline
+  // dialog. It deliberately does not answer the call on the user's behalf.
   n.on('click', () => {
     showMainWindow(null);
-    sendCallAction('accept', callId);
+    sendCallAction('prompt', callId);
     try { n.close(); } catch { /* already gone */ }
     activeCallNotification = null;
   });
@@ -312,11 +347,6 @@ function showIncomingCallNotification({ callId, fromName }) {
 
   n.show();
   activeCallNotification = n;
-
-  // Bring the app forward so the in-app incoming-call dialog is visible too.
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-    mainWindow.showInactive();
-  }
 }
 
 function showBubble() {
@@ -572,9 +602,11 @@ app.whenReady().then(() => {
   ipcMain.on('notification:show', (_event, title, body, link) => {
     if (!Notification.isSupported()) return;
     const iconPath = path.join(__dirname, app.isPackaged ? 'dist' : 'public', 'aceLogo.png');
-    const n = new Notification({ title, body, icon: iconPath });
+    const n = new Notification({ title, body, icon: iconPath, silent: true });
     n.on('click', () => showMainWindow(link));
     n.show();
+    // The renderer synthesises the chime so it matches every other sound.
+    sendNotificationSound();
   });
 
   // ── Voice & video calls ───────────────────────────────────
@@ -627,6 +659,10 @@ app.whenReady().then(() => {
 
   // Open window when notification-client fires a click
   process.on('notification-click', (link) => showMainWindow(link));
+
+  // A notification arrived while the app was minimised/hidden: let the
+  // renderer play the chime (it keeps running in the background).
+  process.on('notification-sound', () => sendNotificationSound());
 
   logger.info('All systems initialized');
 });

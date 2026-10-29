@@ -122,7 +122,7 @@ function VideoTile({ stream, name, isLocal, muted, camOn, micOn, className = '' 
 
       <div className="absolute bottom-2 left-3 flex items-center gap-2 z-10">
         <span className="text-white text-xs font-medium bg-black/50 rounded px-2 py-1">
-          {isLocal ? 'You' : name}
+          {isLocal ? 'You' : name || 'Participant'}
         </span>
         {!micOn && (
           <span className="p-1 rounded-full bg-error/90 text-white" title="Muted">
@@ -139,14 +139,14 @@ function VideoTile({ stream, name, isLocal, muted, camOn, micOn, className = '' 
       {needsGesture && (
         <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 bg-warning/90 text-white text-[11px] font-medium px-2 py-1 rounded">
           <VolumeX size={12} />
-          Click to hear {name}
+          Click to hear {name || 'the participant'}
         </div>
       )}
 
       {videoStalled && (
         <div className="absolute top-2 left-2 z-10 flex items-center gap-1.5 bg-neutral-800/90 text-neutral-300 text-[11px] font-medium px-2 py-1 rounded">
           <VideoOff size={12} />
-          No video from {name}
+          No video from {name || 'the participant'}
         </div>
       )}
     </div>
@@ -185,6 +185,7 @@ export default function CallOverlay() {
     camOn,
     sharingScreen,
     incomingCall,
+    outgoingTargets,
     error,
     elapsed,
     isHost,
@@ -209,9 +210,25 @@ export default function CallOverlay() {
   const inCall =
     status === CALL_STATUS.ACTIVE ||
     status === CALL_STATUS.CONNECTING ||
+    status === CALL_STATUS.RINGING ||
     status === CALL_STATUS.OUTGOING;
 
   const ringing = status === CALL_STATUS.INCOMING && incomingCall;
+
+  const targetNames = outgoingTargets
+    .map((target) => target.name)
+    .filter(Boolean);
+  const targetLabel =
+    targetNames.length > 0 ? targetNames.join(', ') : 'the other person';
+
+  // Caller ID: the people actually in the call, or the ones being called.
+  const peerNames = peers.map((p) => p.name).filter(Boolean);
+  const callName = (peerNames.length > 0 ? peerNames : targetNames).join(', ');
+
+  const statusText =
+    status === CALL_STATUS.RINGING
+      ? `Ringing ${targetLabel}…`
+      : `Connecting to ${targetLabel}…`;
 
   // Reset the remote-mute flag when the call ends (adjust state during render
   // rather than in an effect, so it does not trigger a cascading render).
@@ -307,11 +324,19 @@ export default function CallOverlay() {
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-neutral-800/80">
-              <div className="flex items-center gap-2 text-white text-sm">
-                <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
-                <span className="font-medium">{formatDuration(elapsed)}</span>
-                <span className="text-neutral-400">
-                  · {peers.length + 1} {peers.length === 0 ? 'person' : 'people'}
+              <div className="flex items-center gap-2 text-white text-sm min-w-0">
+                <span className="w-2 h-2 rounded-full bg-success animate-pulse shrink-0" />
+                {callName && (
+                  <span className="font-medium truncate" title={callName}>
+                    {callName}
+                  </span>
+                )}
+                <span className="text-neutral-400 shrink-0">
+                  {status === CALL_STATUS.ACTIVE
+                    ? formatDuration(elapsed)
+                    : status === CALL_STATUS.RINGING
+                      ? 'Ringing…'
+                      : 'Connecting…'}
                 </span>
                 {isHost && (
                   <span className="text-[10px] uppercase tracking-wide bg-primary-500/20 text-primary-300 px-1.5 py-0.5 rounded">
@@ -358,7 +383,9 @@ export default function CallOverlay() {
                   <ul className="px-4 py-2 space-y-1.5 text-sm">
                     <li className="flex items-center justify-between text-neutral-200">
                       <span>You</span>
-                      <span className="text-neutral-400 text-xs">host</span>
+                      <span className="text-neutral-400 text-xs">
+                        {isHost ? 'host' : 'you'}
+                      </span>
                     </li>
                     {peers.map((p) => (
                       <li
@@ -385,11 +412,11 @@ export default function CallOverlay() {
             >
               {peers.length === 0 ? (
                 <div className="aspect-video rounded-xl bg-neutral-800 flex flex-col items-center justify-center gap-2">
-                  <span className="text-neutral-300 text-sm">
-                    {status === CALL_STATUS.OUTGOING ? 'Calling…' : 'Connecting…'}
-                  </span>
+                  <span className="text-neutral-300 text-sm">{statusText}</span>
                   <span className="text-neutral-500 text-xs">
-                    Waiting for someone to join
+                    {status === CALL_STATUS.RINGING
+                      ? 'Waiting for an answer'
+                      : 'Waiting for someone to come online'}
                   </span>
                 </div>
               ) : (

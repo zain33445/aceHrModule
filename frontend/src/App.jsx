@@ -12,6 +12,7 @@ import EmployeeDashboardNew from './components/EmployeeDashboardNew';
 import AdminDashboardNew from './components/AdminDashboardNew';
 import { CallProvider } from './context/CallContext';
 import CallOverlay from './components/calls/CallOverlay';
+import NotificationSoundBridge from './components/notifications/NotificationSoundBridge';
 
 function App() {
   // Read the stored session once. A session saved before signed tokens were
@@ -138,6 +139,8 @@ function App() {
   // over every tab, and <CallOverlay> renders the call UI above them.
   return (
     <CallProvider user={auth}>
+      <NotificationSoundBridge userId={auth.user_id} />
+
       {auth.role === 'employee' && (
         <EmployeeDashboardNew user={auth} onLogout={handleLogout} />
       )}

@@ -141,8 +141,11 @@ async function pollCycle() {
           new Notification({
             title: 'Attendance Logged',
             body: `Monitoring started for ${appName}. Your attendance has been recorded.`,
-            icon: path.join(__dirname, '..', app.isPackaged ? 'dist' : 'public', 'aceLogo.png')
+            icon: path.join(__dirname, '..', app.isPackaged ? 'dist' : 'public', 'aceLogo.png'),
+            silent: true,
           }).show();
+          // Let the renderer play the same chime as every other notification.
+          process.emit('notification-sound');
         }
         
         // Initial screenshot + Check-in event

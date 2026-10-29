@@ -32,6 +32,7 @@ import {
   listCallLogs,
   listCallsForUser,
   markLogOutcome,
+  markParticipantLeft,
   MAX_CALL_PARTICIPANTS,
 } from '../services/call.service';
 import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
@@ -146,10 +147,20 @@ router.post('/sessions', requireUser, async (req: Request, res: Response) => {
 
   // Ring the callees on the call gateway (live UI) and raise a notification
   // (notification centre + native OS notification on the Electron agent).
+  // `ringCall` tells us which callees were actually reachable, so the caller
+  // can show "Ringing…" when someone is online and keep "Connecting…" while
+  // every callee is offline.
   const gateway = getCallGateway();
-  if (gateway) {
-    gateway.ringCall(created.id, { userId: user.userId, name: user.name }, created.targetUserIds);
-  }
+  const ring = gateway
+    ? gateway.ringCall(created.id, { userId: user.userId, name: user.name }, created.targetUserIds)
+    : { onlineUserIds: [], offlineUserIds: created.targetUserIds };
+
+  // Names are resolved here so the caller can display the person they are
+  // calling instead of a generic label.
+  const targetUsers = await prisma.user.findMany({
+    where: { id: { in: created.targetUserIds } },
+    select: { id: true, name: true },
+  });
 
   for (const targetId of created.targetUserIds) {
     await createAndDeliver({
@@ -166,6 +177,9 @@ router.post('/sessions', requireUser, async (req: Request, res: Response) => {
     status: 'ringing',
     started_by: user.userId,
     target_user_ids: created.targetUserIds,
+    target_users: targetUsers,
+    online_user_ids: ring.onlineUserIds,
+    offline_user_ids: ring.offlineUserIds,
     conversation_id: created.conversationId,
     started_at: created.createdAt,
   });
@@ -220,6 +234,9 @@ router.post('/sessions/:id/decline', requireUser, async (req: Request, res: Resp
   }
 
   await markLogOutcome(session.id, user.userId, 'declined');
+  // Mark the participant as gone, otherwise a reconnect would replay the
+  // invite while the session is still ringing for the other callees.
+  await markParticipantLeft(session.id, user.userId);
 
   const gateway = getCallGateway();
   if (gateway) {

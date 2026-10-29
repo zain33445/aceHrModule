@@ -158,7 +158,15 @@ function AdminDashboardNew({
                       ? "Leave Approved"
                       : n.type === "leave_rejected"
                         ? "Leave Rejected"
-                        : "Notification",
+                        : n.type === "call_incoming"
+                          ? "Incoming Call"
+                          : n.type === "call_declined"
+                            ? "Call Declined"
+                            : n.type === "call_missed"
+                              ? "Missed Call"
+                              : n.type === "call_ended"
+                                ? "Call Ended"
+                                : "Notification",
           message: n.message,
           read: n.is_read,
           created_at: n.created_at,
@@ -181,6 +189,10 @@ function AdminDashboardNew({
     const off = window.electronAPI.onNotificationNavigate((link) => {
       if (!link) return;
       const route = String(link).split('?')[0];
+      if (route === '/calls' || route.startsWith('/calls/')) {
+        setActiveTab('calls');
+        return;
+      }
       const map = {
         '/disputes': 'disputes',
         '/leaves': 'leaves',
@@ -189,6 +201,7 @@ function AdminDashboardNew({
         '/overtime': 'overtime',
         '/chat': 'chat',
         '/calendar': 'holidays',
+        '/calls': 'calls',
       };
       const tab = map[route];
       if (tab) setActiveTab(tab);
@@ -218,6 +231,8 @@ function AdminDashboardNew({
       notif.type === "leave_rejected"
     ) {
       setActiveTab("leaves");
+    } else if (notif.type?.startsWith("call_")) {
+      setActiveTab("calls");
     }
   };
 

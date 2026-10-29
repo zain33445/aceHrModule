@@ -31,6 +31,10 @@ const NOTIFICATION_EVENT_TYPES = [
   { id: 'holiday_created', label: 'Holiday Announcements', desc: 'When a new holiday is created' },
   { id: 'salary_generated', label: 'Salary Processed', desc: 'When your salary is generated' },
   { id: 'new_message', label: 'New Chat Message', desc: 'When you receive a chat message' },
+  { id: 'call_incoming', label: 'Incoming Calls', desc: 'When someone calls you' },
+  { id: 'call_declined', label: 'Call Declined', desc: 'When someone declines your call' },
+  { id: 'call_missed', label: 'Missed Calls', desc: 'When a call is not answered' },
+  { id: 'call_ended', label: 'Call Ended', desc: 'When a call ends' },
 ];
 
 export const SettingsTab = ({ user }) => {

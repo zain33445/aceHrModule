@@ -30,6 +30,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('notification:navigate', handler);
   },
 
+  // Notification sounds. The main process raises notifications for the
+  // notification WS and the attendance monitor; it asks the renderer to play
+  // the chime so every notification sounds the same.
+  notifications: {
+    onSound: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on('notification:sound', handler);
+      return () => ipcRenderer.removeListener('notification:sound', handler);
+    },
+  },
+
   // Voice & video calls.
   // The renderer owns the call state; the main process only raises the native
   // OS notification (with Accept / Decline actions) and relays the choice back.

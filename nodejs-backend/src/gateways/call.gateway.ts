@@ -65,6 +65,19 @@ interface ActiveCall {
   peers: Map<string, CallPeer>;
   createdAt: number;
   /**
+   * Everyone invited to the call (host + callees). Used to close the invite on
+   * the callee's device when nobody answers or the caller drops — a callee
+   * that never joined has no peer entry, so `broadcastToCall` alone cannot
+   * reach them and their ringtone would never stop.
+   */
+  invitedUserIds: Set<string>;
+  /**
+   * When a callee was first reachable and started ringing. `null` means every
+   * callee is still offline, so the caller stays on "Connecting…" instead of
+   * being timed out after the ring window.
+   */
+  ringingStartedAt: number | null;
+  /**
    * Recording state. Recording starts automatically when the call is
    * answered, and participants can see it through the in-call indicator.
    * `started` keeps the auto-start from re-arming after a manual stop.
@@ -333,7 +346,13 @@ export class CallGateway {
 
     const session = await prisma.callSession.findUnique({
       where: { id: callId },
-      select: { id: true, status: true, started_by: true, max_participants: true },
+      select: {
+        id: true,
+        status: true,
+        started_by: true,
+        max_participants: true,
+        participants: { select: { user_id: true } },
+      },
     });
 
     if (!session || session.status === 'ended') {
@@ -352,17 +371,13 @@ export class CallGateway {
       await this.handleLeave(ws, state, state.callId);
     }
 
-    let call = this.calls.get(callId);
-    if (!call) {
-      call = {
-        callId,
-        startedBy: session.started_by,
-        status: session.status,
-        peers: new Map(),
-        createdAt: Date.now(),
-        recording: { active: false, started: false },
-      };
-      this.calls.set(callId, call);
+    const call = this.ensureCall(
+      callId,
+      session.started_by,
+      session.status === 'active' ? 'active' : 'ringing'
+    );
+    for (const participant of session.participants) {
+      call.invitedUserIds.add(participant.user_id);
     }
 
     // The peer id identifies the *participant*, not the connection. When the
@@ -540,7 +555,7 @@ export class CallGateway {
     await markParticipantLeft(callId, state.userId);
 
     if (call && call.peers.size === 0) {
-      await this.finalizeCall(callId);
+      await this.finalizeCall(callId, 'ended');
     }
   }
 
@@ -562,8 +577,7 @@ export class CallGateway {
       return;
     }
 
-    this.broadcastToCall(call, { type: 'CALL_ENDED', callId, reason: 'ended_by_host' });
-    await this.finalizeCall(callId);
+    await this.finalizeCall(callId, 'ended_by_host');
   }
 
   // ── Public API (used by the REST routes) ─────────────────
@@ -597,6 +611,20 @@ export class CallGateway {
           callId: call.id,
           from: { userId: call.started_by_user.id, name: call.started_by_user.name },
         });
+
+        // The callee just came online, so the invite is now actually ringing.
+        // Tell the caller (who may have been showing "Connecting…") and start
+        // the ring timeout from this moment.
+        const live = this.ensureCall(call.id, call.started_by_user.id, 'ringing');
+        live.invitedUserIds.add(call.started_by_user.id);
+        live.invitedUserIds.add(userId);
+        if (!live.ringingStartedAt) live.ringingStartedAt = Date.now();
+        this.sendToUser(call.started_by_user.id, {
+          type: 'CALL_RINGING',
+          callId: call.id,
+          onlineUserIds: [userId],
+          offlineUserIds: [],
+        });
       }
     } catch (err) {
       console.error('[Call WS] could not list pending incoming calls:', err);
@@ -604,21 +632,81 @@ export class CallGateway {
   }
 
   /**
-   * Pushes an incoming-call notice to every live socket of the callee.
+   * Pushes an incoming-call notice to every *reachable* callee.
+   *
+   * Returns which callees are online and which are not, so the caller can show
+   * "Ringing…" when somebody is actually being rung and keep showing
+   * "Connecting…" while every callee is offline.
    */
-  ringCall(callId: string, from: { userId: string; name: string }, targetUserIds: string[]): void {
+  ringCall(
+    callId: string,
+    from: { userId: string; name: string },
+    targetUserIds: string[]
+  ): { onlineUserIds: string[]; offlineUserIds: string[] } {
+    const onlineUserIds: string[] = [];
+    const offlineUserIds: string[] = [];
+
     for (const userId of targetUserIds) {
-      this.sendToUser(userId, {
-        type: 'CALL_INCOMING',
-        callId,
-        from: { userId: from.userId, name: from.name },
-      });
+      if (this.isUserConnected(userId)) {
+        onlineUserIds.push(userId);
+        this.sendToUser(userId, {
+          type: 'CALL_INCOMING',
+          callId,
+          from: { userId: from.userId, name: from.name },
+        });
+      } else {
+        offlineUserIds.push(userId);
+      }
     }
+
+    if (onlineUserIds.length > 0) {
+      const call = this.ensureCall(callId, from.userId, 'ringing');
+      call.invitedUserIds.add(from.userId);
+      for (const userId of targetUserIds) call.invitedUserIds.add(userId);
+      if (!call.ringingStartedAt) call.ringingStartedAt = Date.now();
+    }
+
+    this.sendToUser(from.userId, {
+      type: 'CALL_RINGING',
+      callId,
+      onlineUserIds,
+      offlineUserIds,
+    });
+
+    return { onlineUserIds, offlineUserIds };
   }
 
   /** Tells the caller that their invite was declined. */
   notifyDeclined(callId: string, calleeUserId: string, hostUserId: string): void {
     this.sendToUser(hostUserId, { type: 'CALL_DECLINED', callId, calleeUserId });
+
+    const call = this.calls.get(callId);
+    if (!call) return;
+
+    // The callee is out; it no longer needs the end-of-call notice.
+    call.invitedUserIds.delete(calleeUserId);
+    this.revertToConnectingIfUnreachable(call);
+  }
+
+  /**
+   * In a ringing call, if no remaining callee is online (they declined or
+   * dropped off the network), stop the ring timeout and put the caller back
+   * on "Connecting…" until somebody comes online or they cancel.
+   */
+  private revertToConnectingIfUnreachable(call: ActiveCall): void {
+    if (call.status !== 'ringing') return;
+    const remaining = Array.from(call.invitedUserIds).filter(
+      (id) => id !== call.startedBy
+    );
+    if (remaining.some((id) => this.isUserConnected(id))) return;
+
+    call.ringingStartedAt = null;
+    this.sendToUser(call.startedBy, {
+      type: 'CALL_RINGING',
+      callId: call.callId,
+      onlineUserIds: [],
+      offlineUserIds: remaining,
+    });
   }
 
   /**
@@ -629,8 +717,7 @@ export class CallGateway {
     const call = this.calls.get(callId);
     if (!call) return;
 
-    this.broadcastToCall(call, { type: 'CALL_ENDED', callId, reason: 'ended_by_host' });
-    await this.finalizeCall(callId);
+    await this.finalizeCall(callId, 'ended_by_host');
   }
 
   /** Tells the callee that the caller hung up before they answered. */
@@ -728,10 +815,40 @@ export class CallGateway {
 
   // ── Internals ────────────────────────────────────────────
 
-  private async finalizeCall(callId: string): Promise<void> {
+  private ensureCall(
+    callId: string,
+    startedBy: string,
+    status: 'ringing' | 'active' | 'ended' = 'ringing'
+  ): ActiveCall {
+    let call = this.calls.get(callId);
+    if (!call) {
+      call = {
+        callId,
+        startedBy,
+        status,
+        peers: new Map(),
+        createdAt: Date.now(),
+        invitedUserIds: new Set(),
+        ringingStartedAt: null,
+        recording: { active: false, started: false },
+      };
+      this.calls.set(callId, call);
+    }
+    return call;
+  }
+
+  private async finalizeCall(callId: string, reason = 'ended'): Promise<void> {
     const call = this.calls.get(callId);
     if (call) {
       call.status = 'ended';
+      // Notify everyone who was invited, not only the peers that joined. A
+      // callee still ringing has no peer entry, and without this its ringtone
+      // would never stop when the caller hangs up or the invite expires.
+      const targets = new Set<string>(call.invitedUserIds);
+      for (const peer of call.peers.values()) targets.add(peer.userId);
+      for (const userId of targets) {
+        this.sendToUser(userId, { type: 'CALL_ENDED', callId, reason });
+      }
       this.calls.delete(callId);
     }
     try {
@@ -762,7 +879,15 @@ export class CallGateway {
     const set = this.clients.get(state.userId);
     if (set) {
       set.delete(ws);
-      if (set.size === 0) this.clients.delete(state.userId);
+      if (set.size === 0) {
+        this.clients.delete(state.userId);
+        // A callee that went offline while being rung is no longer reachable.
+        for (const call of this.calls.values()) {
+          if (call.startedBy !== state.userId && call.invitedUserIds.has(state.userId)) {
+            this.revertToConnectingIfUnreachable(call);
+          }
+        }
+      }
     }
 
     if (state.callId && state.peerId) {
@@ -783,7 +908,7 @@ export class CallGateway {
           });
           markParticipantLeft(state.callId, state.userId).catch(() => {});
           if (call.peers.size === 0) {
-            this.finalizeCall(state.callId).catch(() => {});
+            this.finalizeCall(state.callId, 'ended').catch(() => {});
           }
         }
       }
@@ -805,16 +930,29 @@ export class CallGateway {
   /**
    * Ends calls that have been ringing for too long without anybody accepting.
    * The call-log rows are already `missed` by default, so this only has to
-   * close the session and tell the remaining peers.
+   * close the session and tell everyone who was invited.
+   *
+   * Calls whose callees have all been offline never started ringing, so they
+   * are not timed out — the caller keeps seeing "Connecting…" until they
+   * cancel. If the caller has also gone away, the live entry is cleaned up.
    */
   private sweepRingingCalls(): void {
     const now = Date.now();
     for (const [callId, call] of Array.from(this.calls)) {
       if (call.status !== 'ringing') continue;
-      if (now - call.createdAt < RING_TIMEOUT_MS) continue;
 
-      this.broadcastToCall(call, { type: 'CALL_ENDED', callId, reason: 'no_answer' });
-      this.finalizeCall(callId).catch((err) =>
+      if (!call.ringingStartedAt) {
+        if (call.peers.size === 0 && now - call.createdAt > RING_TIMEOUT_MS) {
+          this.finalizeCall(callId, 'no_answer').catch((err) =>
+            console.error('[Call WS] failed to expire unanswered call:', err)
+          );
+        }
+        continue;
+      }
+
+      if (now - call.ringingStartedAt < RING_TIMEOUT_MS) continue;
+
+      this.finalizeCall(callId, 'no_answer').catch((err) =>
         console.error('[Call WS] failed to expire ringing call:', err)
       );
     }

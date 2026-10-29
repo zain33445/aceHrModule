@@ -3,6 +3,14 @@ import api from '../services/api';
 import useCallSocket from '../hooks/useCallSocket';
 import CallMesh from '../lib/callMesh';
 import { CallAudioRecorder } from '../lib/audioRecorder';
+import {
+  startIncomingRing,
+  startRingback,
+  stopAllSounds,
+  stopIncomingRing,
+  stopRingback,
+  unlockSounds,
+} from '../lib/sounds';
 import { CallContext, CALL_STATUS } from './call-context';
 
 /**
@@ -38,6 +46,8 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
   const [error, setError] = useState(null);
   const [elapsed, setElapsed] = useState(0);
   const [isHost, setIsHost] = useState(false);
+  /** People this user is calling, so the overlay can show their names. */
+  const [outgoingTargets, setOutgoingTargets] = useState([]);
   /** 'idle' | 'recording' */
   const [recording, setRecording] = useState('idle');
 
@@ -51,6 +61,10 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
   const incomingRef = useRef(null);
   const localStreamRef = useRef(null);
   const recorderRef = useRef(null);
+  const statusRef = useRef(CALL_STATUS.IDLE);
+  const connectedRef = useRef(false);
+  const outgoingTargetIdsRef = useRef([]);
+  const targetNamesRef = useRef({});
   /** Prevents a delegated start request from being handled twice. */
   const delegatedStartRef = useRef(false);
 
@@ -67,7 +81,13 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     setPeers((prev) => {
       const idx = prev.findIndex((p) => p.peerId === peer.peerId);
       const base = idx >= 0 ? prev[idx] : { mic: true, cam: true, stream: null };
-      const merged = { ...base, ...peer };
+      const merged = { ...base };
+      // Only overwrite fields that were actually provided. The remote stream
+      // arrives before (or after) the peer announcement and must never blank
+      // out the real name with a generic label.
+      for (const [key, value] of Object.entries(peer)) {
+        if (value !== undefined && value !== null && value !== '') merged[key] = value;
+      }
       if (stream) merged.stream = stream;
       if (idx >= 0) {
         const next = [...prev];
@@ -94,7 +114,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
         });
       },
       onRemoteStream: (peerId, stream) => {
-        upsertPeer({ peerId, userId: '', name: 'Participant' }, stream);
+        upsertPeer({ peerId }, stream);
         // Audio tracks can arrive after the recording was started (or after
         // the call connected). Mix them in so no participant is left out.
         recorderRef.current?.addRemoteStream(stream);
@@ -234,6 +254,22 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
         }
 
         case 'CALL_INCOMING': {
+          // Already in a call (or already showing another incoming call):
+          // decline the new invite instead of tearing down the live one. A
+          // reconnect replays the *same* invite, so that one must not be
+          // declined.
+          if (
+            statusRef.current !== CALL_STATUS.IDLE &&
+            incomingRef.current?.callId !== msg.callId
+          ) {
+            api.declineCall(msg.callId).catch(() => {});
+            break;
+          }
+          // A reconnect replays the invite that is already ringing. Raising
+          // the native notification again would make it flicker.
+          if (incomingRef.current?.callId === msg.callId) break;
+
+          statusRef.current = CALL_STATUS.INCOMING;
           incomingRef.current = { callId: msg.callId, from: msg.from };
           setIncomingCall({ callId: msg.callId, from: msg.from });
           setStatus(CALL_STATUS.INCOMING);
@@ -250,13 +286,34 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
           break;
         }
 
+        case 'CALL_RINGING': {
+          // The server tells us whether at least one callee is actually
+          // reachable. Online -> "Ringing…"; all offline -> stay on
+          // "Connecting…" until somebody comes online.
+          // The first notice can arrive before the REST call returns the id.
+          if (callIdRef.current && msg.callId !== callIdRef.current) break;
+          const online = Array.isArray(msg.onlineUserIds) ? msg.onlineUserIds : [];
+          if (online.length > 0) {
+            setStatus((prev) =>
+              prev === CALL_STATUS.ACTIVE ? prev : CALL_STATUS.RINGING
+            );
+          } else {
+            setStatus((prev) =>
+              prev === CALL_STATUS.RINGING ? CALL_STATUS.OUTGOING : prev
+            );
+          }
+          break;
+        }
+
         case 'CALL_JOINED': {
           setCallId(msg.callId);
           callIdRef.current = msg.callId;
           setSelfPeerId(msg.selfPeerId);
           joinSentRef.current = null;
           setStatus((prev) =>
-            prev === CALL_STATUS.ACTIVE ? prev : CALL_STATUS.CONNECTING
+            prev === CALL_STATUS.ACTIVE || prev === CALL_STATUS.RINGING
+              ? prev
+              : CALL_STATUS.CONNECTING
           );
 
           const mesh = ensureMesh();
@@ -311,6 +368,10 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
             userId: peer.userId,
             name: peer.name,
           });
+          // Somebody answered: the ringing is over, now we establish media.
+          setStatus((prev) =>
+            prev === CALL_STATUS.ACTIVE ? prev : CALL_STATUS.CONNECTING
+          );
           ensureMesh().createPeer(peer.peerId).catch((err) =>
             console.error('[Call] could not open peer connection:', err)
           );
@@ -334,12 +395,28 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
           );
           break;
 
-        case 'CALL_DECLINED':
-          setError('The call was declined.');
+        case 'CALL_DECLINED': {
+          const calleeId = msg.calleeUserId;
+          const name = targetNamesRef.current[calleeId] || 'The person';
+          if (calleeId) {
+            outgoingTargetIdsRef.current = outgoingTargetIdsRef.current.filter(
+              (id) => id !== calleeId
+            );
+          }
+          setError(`${name} declined the call.`);
+          // In a 1:1 call there is nobody left to ring.
+          if (outgoingTargetIdsRef.current.length === 0) {
+            resetCall();
+          }
           break;
+        }
 
         case 'CALL_CANCELLED':
+          resetCall();
+          break;
+
         case 'CALL_ENDED':
+          if (msg.reason === 'no_answer') setError('No answer.');
           resetCall();
           break;
 
@@ -384,6 +461,31 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     sendNowRef.current = sendNow;
   }, [send, sendNow]);
 
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
+
+  // Keep the status ref in sync and drive the ringtones from it. A ringtone
+  // must play only while the state is really ringing, and stop immediately on
+  // answer, decline, cancel or drop.
+  useEffect(() => {
+    statusRef.current = status;
+
+    if (status === CALL_STATUS.RINGING && connected) {
+      startRingback();
+    } else {
+      stopRingback();
+    }
+
+    if (status === CALL_STATUS.INCOMING && connected) {
+      startIncomingRing();
+    } else {
+      stopIncomingRing();
+    }
+  }, [status, connected]);
+
+  useEffect(() => () => stopAllSounds(), []);
+
   // ── Lifecycle ────────────────────────────────────────────
 
   const resetCall = useCallback(() => {
@@ -391,6 +493,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     if (id) sendRef.current({ type: 'CALL_LEAVE', callId: id });
 
     stopLocalRecording().catch(() => {});
+    stopAllSounds();
 
     meshRef.current?.close();
     meshRef.current = null;
@@ -400,6 +503,9 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     startedAtRef.current = null;
     incomingRef.current = null;
     localStreamRef.current = null;
+    statusRef.current = CALL_STATUS.IDLE;
+    outgoingTargetIdsRef.current = [];
+    targetNamesRef.current = {};
 
     // Clear any native incoming-call notification.
     try {
@@ -415,6 +521,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     setLocalStream(null);
     setPreviewStream(null);
     setIncomingCall(null);
+    setOutgoingTargets([]);
     setIsHost(false);
     setSharingScreen(false);
     setMicOn(true);
@@ -464,6 +571,19 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
       }
       if (!targetUserIds || targetUserIds.length === 0) return null;
 
+      // A call cannot be placed without a signalling socket, and the caller
+      // must be told that plainly instead of watching "Connecting…" forever.
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        setError("Can't make the call — you are offline.");
+        return null;
+      }
+      if (!connectedRef.current) {
+        setError(
+          "Can't make the call — the call service is not connected. Check your connection and try again."
+        );
+        return null;
+      }
+
       // A call without a microphone is pointless, and the browser will not
       // even expose the capture APIs on an insecure origin. Say so up front
       // instead of connecting silently.
@@ -473,24 +593,57 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
         return null;
       }
 
+      unlockSounds();
       setError(null);
+      setOutgoingTargets([]);
+      statusRef.current = CALL_STATUS.OUTGOING;
       setStatus(CALL_STATUS.OUTGOING);
 
       try {
         const res = await api.startCall(userId, targetUserIds, conversationId);
-        const id = res?.data?.id;
+        const data = res?.data || {};
+        const id = data.id;
         if (!id) throw new Error('The call could not be created.');
+
+        const names = {};
+        for (const target of data.target_users || []) {
+          if (target?.id) names[target.id] = target.name;
+        }
+        targetNamesRef.current = names;
+        outgoingTargetIdsRef.current = [...targetUserIds];
+        setOutgoingTargets(
+          targetUserIds.map((targetId) => ({
+            id: targetId,
+            name: names[targetId] || '',
+          }))
+        );
 
         callIdRef.current = id;
         setCallId(id);
         setIsHost(true);
         pendingJoinRef.current = id;
         sendJoin();
+
+        // The server reports which callees are actually connected. Only then
+        // does the caller see "Ringing…"; otherwise they stay on "Connecting…".
+        if (Array.isArray(data.online_user_ids) && data.online_user_ids.length > 0) {
+          setStatus(CALL_STATUS.RINGING);
+        }
+
         return id;
       } catch (err) {
         console.error('[Call] startCall failed:', err);
+        statusRef.current = CALL_STATUS.IDLE;
         setStatus(CALL_STATUS.IDLE);
-        setError(err?.response?.data?.error || 'The call could not be started.');
+        setOutgoingTargets([]);
+        outgoingTargetIdsRef.current = [];
+        const offline =
+          typeof navigator !== 'undefined' && navigator.onLine === false;
+        setError(
+          offline
+            ? "Can't make the call — you are offline."
+            : err?.response?.data?.error || 'The call could not be started.'
+        );
         return null;
       }
     },
@@ -532,11 +685,25 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     const incoming = incomingRef.current;
     if (!incoming) return;
 
+    unlockSounds();
+    statusRef.current = CALL_STATUS.CONNECTING;
     setStatus(CALL_STATUS.CONNECTING);
     setCallId(incoming.callId);
     callIdRef.current = incoming.callId;
+    setIsHost(false);
+    // Show the caller's name while the media connects.
+    setOutgoingTargets(
+      incoming.from ? [{ id: incoming.from.userId, name: incoming.from.name }] : []
+    );
     setIncomingCall(null);
     incomingRef.current = null;
+
+    // Close the native "incoming call" notification — the call is now live.
+    try {
+      window.electronAPI?.call?.notifyEnded({});
+    } catch {
+      /* not running under Electron */
+    }
 
     try {
       await api.acceptCall(incoming.callId);
@@ -552,6 +719,13 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     const incoming = incomingRef.current;
     if (!incoming) return;
 
+    // Close the native notification immediately, even if the API call fails.
+    try {
+      window.electronAPI?.call?.notifyEnded({});
+    } catch {
+      /* not running under Electron */
+    }
+
     try {
       await api.declineCall(incoming.callId);
     } catch (err) {
@@ -560,6 +734,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
 
     incomingRef.current = null;
     setIncomingCall(null);
+    statusRef.current = CALL_STATUS.IDLE;
     setStatus(CALL_STATUS.IDLE);
   }, []);
 
@@ -651,11 +826,19 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
 
     return api.onAction((payload) => {
       if (!payload) return;
+
+      // A stale notification must never answer a different call.
+      if (payload.callId && incomingRef.current?.callId !== payload.callId) {
+        return;
+      }
+
       if (payload.action === 'accept') {
         acceptCall();
       } else if (payload.action === 'decline') {
         declineCall();
       }
+      // 'prompt' means the window was focused and the in-app dialog is
+      // already visible — no action needed.
     });
   }, [acceptCall, declineCall]);
 
@@ -671,6 +854,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
       camOn,
       sharingScreen,
       incomingCall,
+      outgoingTargets,
       error,
       elapsed,
       isHost,
@@ -692,7 +876,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     }),
     [
       status, callId, selfPeerId, peers, localStream, previewStream, micOn, camOn, sharingScreen,
-      incomingCall, error, elapsed, isHost, connected, connecting,
+      incomingCall, outgoingTargets, error, elapsed, isHost, connected, connecting,
       recording, enabled,
       startCall, acceptCall, declineCall, hangUp, toggleMic, toggleCam,
       toggleScreenShare, clearError, reconnect,
