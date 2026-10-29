@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../prisma';
 import { AbsenceService } from '../services/absence.service';
+import { isLateHalfdayExempt } from '../constants/attendance.constants';
 
 const router = Router();
 
@@ -75,7 +76,12 @@ router.post('/screenshot', async (req: Request, res: Response) => {
 
           if (shift) {
               const shiftType = AbsenceService.determineShiftType(timeStr, shift);
-              status = AbsenceService.determineAttendanceStatus(timeStr, shift, shiftType);
+              status = AbsenceService.determineAttendanceStatus(
+                timeStr,
+                shift,
+                shiftType,
+                isLateHalfdayExempt(finalUserId)
+              );
               isLate = status === 'late';
               isHalfday = status === 'halfday';
           }

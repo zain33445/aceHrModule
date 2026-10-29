@@ -9,3 +9,13 @@ __pycache__/
 
 # Local dev server logs
 server.log
+*.log
+
+# Fetcher runtime state
+last_sync_time.txt
+
+# Local backups and database dumps — never commit
+nodejs-backend.backup/
+db_backups/
+*_backup_*.sql
+*.sql

@@ -41,6 +41,10 @@ import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
 import { HolidayService } from './services/holiday.service';
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] Unhandled promise rejection (server kept alive):', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -260,12 +264,20 @@ server.listen(PORT, () => {
 
   // Process outbox events every 10 seconds
   setInterval(async () => {
-    await processOutboxEvents();
+    try {
+      await processOutboxEvents();
+    } catch (err) {
+      console.error('[OutboxCron] Processing failed:', err);
+    }
   }, 10000);
 
   // Recover stuck outbox events every 5 minutes
   setInterval(async () => {
-    await recoverStuckEvents();
+    try {
+      await recoverStuckEvents();
+    } catch (err) {
+      console.error('[OutboxCron] Stuck-event recovery failed:', err);
+    }
   }, 5 * 60 * 1000);
 
   // ── Monthly accrual cron (runs every hour, fires on 1st of month in Karachi TZ) ──

@@ -1,422 +1,340 @@
-import time
-import requests
-import datetime
 import os
-import sqlite3
-import threading
-from flask import Flask, request, jsonify
+import sys
+import time
+import datetime
+import logging
+import traceback
+import requests
+
 from zk import ZK
 
-app = Flask(__name__)
+# =========================================================
+# CONFIGURATION
+# =========================================================
 
-DEVICE_IP = os.environ.get('DEVICE_IP', '192.168.18.101')
-DEVICE_PORT = int(os.environ.get('DEVICE_PORT', 4370))
-COMM_KEY = int(os.environ.get('COMM_KEY', 11))
+DEVICE_IP = "192.168.18.101"
+DEVICE_PORT = 4370
+COMM_KEY = 11
 
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'http://localhost:5000/api/webhooks/attendance')
-WEBHOOK_URL_USER = os.environ.get('WEBHOOK_URL_USER', 'http://localhost:5000/api/webhooks/users')
+WEBHOOK_URL = "http://localhost:5000/api/webhooks/attendance"
 
-INITIAL_SYNC_DATE = datetime.datetime(2026, 5, 1)
+SYNC_FILE = "last_sync_time.txt"
+LOG_FILE = "biometric_fetcher.log"
 
-SYNC_INTERVAL_SEC = 300
-OVERLAP_SECONDS = 60
-MAX_BATCH_SIZE = 500
-DB_PATH = os.path.join(os.path.dirname(__file__), 'sync_queue.db')
+SYNC_INTERVAL = 300          # 5 minutes
+MAX_CONNECT_ATTEMPTS = 5
+RETRY_DELAY = 10             # Seconds between connection attempts
+DEVICE_TIMEOUT = 30
+HTTP_TIMEOUT = (5, 30)       # HTTP connect and read timeouts
 
-start_time = datetime.datetime.now()
-consecutive_failures = 0
-last_sync_time = None
-state_lock = threading.Lock()
+START_DATE = datetime.datetime(2026, 6, 1, 0, 0, 0)
 
+# IMPORTANT:
+# Device clock is correct. Do not adjust attendance timestamps.
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS watermark (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            last_sync_time TEXT NOT NULL
-        );
+# =========================================================
+# LOGGING
+# =========================================================
 
-        CREATE TABLE IF NOT EXISTS queue (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            status INTEGER NOT NULL,
-            punch INTEGER NOT NULL DEFAULT 0,
-            fetched_at TEXT NOT NULL,
-            sync_status TEXT NOT NULL DEFAULT 'pending',
-            retry_count INTEGER NOT NULL DEFAULT 0,
-            last_error TEXT,
-            UNIQUE(user_id, timestamp, status)
-        );
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-        CREATE INDEX IF NOT EXISTS idx_queue_sync_status ON queue(sync_status);
+SYNC_FILE = os.path.join(BASE_DIR, SYNC_FILE)
+LOG_FILE = os.path.join(BASE_DIR, LOG_FILE)
 
-        CREATE TABLE IF NOT EXISTS sync_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_type TEXT NOT NULL,
-            message TEXT,
-            created_at TEXT NOT NULL
-        );
-    """)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+    ],
+    force=True,
+)
 
-    row = conn.execute("SELECT last_sync_time FROM watermark WHERE id = 1").fetchone()
-    if row is None:
-        conn.execute("INSERT INTO watermark (id, last_sync_time) VALUES (1, ?)",
-                     (INITIAL_SYNC_DATE.isoformat(),))
+# =========================================================
+# CHECKPOINT MANAGEMENT
+# =========================================================
 
-    conn.commit()
-    conn.close()
-
-
-def get_watermark():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    row = conn.execute("SELECT last_sync_time FROM watermark WHERE id = 1").fetchone()
-    conn.close()
-    if row and row[0]:
-        return datetime.datetime.fromisoformat(row[0])
-    return INITIAL_SYNC_DATE
-
-
-def set_watermark(dt):
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("UPDATE watermark SET last_sync_time = ? WHERE id = 1", (dt.isoformat(),))
-    conn.commit()
-    conn.close()
-
-
-def add_to_queue(records):
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    now_str = datetime.datetime.now().isoformat()
-    before = conn.total_changes
-    for r in records:
+def get_last_sync_time():
+    if os.path.exists(SYNC_FILE):
         try:
-            conn.execute("""
-                INSERT OR IGNORE INTO queue (user_id, timestamp, status, punch, fetched_at, sync_status)
-                VALUES (?, ?, ?, ?, ?, 'pending')
-            """, (r['user_id'], r['timestamp'], r['status'], r.get('punch', 0), now_str))
+            with open(SYNC_FILE, "r", encoding="utf-8") as file:
+                value = file.read().strip()
+
+            if value:
+                return datetime.datetime.fromisoformat(value)
+
+        except (OSError, ValueError):
+            logging.exception("Could not read last sync time")
+
+    # First run: process records starting from START_DATE.
+    set_last_sync_time(START_DATE)
+    return START_DATE
+
+
+def set_last_sync_time(sync_time):
+    temp_file = SYNC_FILE + ".tmp"
+
+    try:
+        with open(temp_file, "w", encoding="utf-8") as file:
+            file.write(sync_time.isoformat())
+            file.flush()
+            os.fsync(file.fileno())
+
+        os.replace(temp_file, SYNC_FILE)
+
+    except OSError:
+        logging.exception("Could not save last sync time")
+
+
+# =========================================================
+# BIOMETRIC DEVICE CONNECTION
+# =========================================================
+
+def connect_device():
+    zk = ZK(
+        DEVICE_IP,
+        port=DEVICE_PORT,
+        timeout=DEVICE_TIMEOUT,
+        password=COMM_KEY,
+        force_udp=True,
+    )
+
+    for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+        try:
+            logging.info(
+                "Connecting to device %s (attempt %d/%d)",
+                DEVICE_IP,
+                attempt,
+                MAX_CONNECT_ATTEMPTS,
+            )
+
+            conn = zk.connect()
+
+            if conn:
+                logging.info("Connected to biometric device successfully")
+                return conn
+
         except Exception:
-            pass
-    conn.commit()
-    inserted = conn.total_changes - before
-    conn.close()
-    return inserted
+            logging.exception(
+                "Device connection attempt %d failed",
+                attempt,
+            )
+
+        if attempt < MAX_CONNECT_ATTEMPTS:
+            logging.info("Retrying connection in %d seconds", RETRY_DELAY)
+            time.sleep(RETRY_DELAY)
+
+    logging.error(
+        "Device unavailable after %d attempts. "
+        "Will retry during the next sync cycle.",
+        MAX_CONNECT_ATTEMPTS,
+    )
+
+    return None
 
 
-def flush_queue():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+# =========================================================
+# FETCH AND POST ATTENDANCE
+# =========================================================
 
-    rows = conn.execute("""
-        SELECT id, user_id, timestamp, status, punch
-        FROM queue
-        WHERE sync_status IN ('pending', 'failed') AND retry_count < 10
-        ORDER BY timestamp ASC
-        LIMIT ?
-    """, (MAX_BATCH_SIZE,)).fetchall()
-
-    if not rows:
-        conn.close()
-        return 0, 0, None
-
-    payload = []
-    ids = []
-    max_ts = None
-    for row in rows:
-        payload.append({
-            'user_id': row[1],
-            'timestamp': row[2],
-            'status': row[3],
-            'punch': row[4]
-        })
-        ids.append(row[0])
-        ts = datetime.datetime.fromisoformat(row[2])
-        if max_ts is None or ts > max_ts:
-            max_ts = ts
-
-    try:
-        resp = requests.post(WEBHOOK_URL, json=payload, timeout=30)
-        if resp.status_code == 200:
-            conn.executemany("UPDATE queue SET sync_status = 'sent' WHERE id = ?",
-                           [(i,) for i in ids])
-            conn.commit()
-            conn.close()
-            return len(ids), 0, max_ts
-        else:
-            error_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
-            conn.executemany("""
-                UPDATE queue SET sync_status = 'failed', retry_count = retry_count + 1, last_error = ?
-                WHERE id = ?
-            """, [(error_msg, i) for i in ids])
-            conn.commit()
-            conn.close()
-            return 0, len(ids), None
-    except requests.exceptions.RequestException as e:
-        error_msg = str(e)
-        conn.executemany("""
-            UPDATE queue SET sync_status = 'failed', retry_count = retry_count + 1, last_error = ?
-            WHERE id = ?
-        """, [(error_msg, i) for i in ids])
-        conn.commit()
-        conn.close()
-        return 0, len(ids), None
-
-
-def get_queue_stats():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    pending = conn.execute("SELECT COUNT(*) FROM queue WHERE sync_status = 'pending'").fetchone()[0]
-    failed = conn.execute("SELECT COUNT(*) FROM queue WHERE sync_status = 'failed'").fetchone()[0]
-    sent = conn.execute("SELECT COUNT(*) FROM queue WHERE sync_status = 'sent'").fetchone()[0]
-    conn.close()
-    return pending, failed, sent
-
-
-def log_event(event_type, message):
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("INSERT INTO sync_log (event_type, message, created_at) VALUES (?, ?, ?)",
-                (event_type, message, datetime.datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-
-
-def cleanup_logs(retention_days=7):
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cutoff = (datetime.datetime.now() - datetime.timedelta(days=retention_days)).isoformat()
-    conn.execute("DELETE FROM sync_log WHERE created_at < ?", (cutoff,))
-    conn.commit()
-    conn.close()
-
-
-def get_connection():
-    zk = ZK(DEVICE_IP, port=DEVICE_PORT, timeout=10, password=COMM_KEY, force_udp=True)
-    conn = zk.connect()
-    conn.disable_device()
-    return conn
-
-
-def sync_attendance():
-    global consecutive_failures, last_sync_time
-
-    zk = ZK(DEVICE_IP, port=DEVICE_PORT, timeout=10, password=COMM_KEY, force_udp=True)
+def fetch_and_post_logs():
     conn = None
-    try:
-        print(f"[{datetime.datetime.now()}] Connecting to ZK device...")
-        for attempt in range(3):
-            try:
-                conn = zk.connect()
-                break
-            except Exception as e:
-                print(f"[{datetime.datetime.now()}] Connection attempt {attempt+1} failed: {e}")
-                time.sleep(5)
+    device_disabled = False
 
-        if not conn:
-            print("Failed to connect after 3 attempts.")
-            with state_lock:
-                consecutive_failures += 1
+    try:
+        conn = connect_device()
+
+        if conn is None:
             return
 
-        conn.disable_device()
-
-        watermark = get_watermark()
-        fetch_start = watermark - datetime.timedelta(seconds=OVERLAP_SECONDS)
-
-        print(f"[{datetime.datetime.now()}] Watermark: {watermark.isoformat()}, "
-              f"Fetching records since {fetch_start.isoformat()}")
-
-        attendance = conn.get_attendance()
-        print(f"[{datetime.datetime.now()}] Device returned {len(attendance)} total records")
-
-        new_records = []
-        for log in attendance:
-            if log.timestamp > fetch_start:
-                new_records.append({
-                    'user_id': str(log.user_id),
-                    'timestamp': log.timestamp.isoformat(),
-                    'status': log.status,
-                    'punch': log.punch
-                })
-
-        if new_records:
-            inserted = add_to_queue(new_records)
-            print(f"[{datetime.datetime.now()}] Queued {inserted} new records "
-                  f"({len(new_records) - inserted} duplicates skipped)")
-        else:
-            print(f"[{datetime.datetime.now()}] No new records to queue")
-
-        total_sent = 0
-        total_failed = 0
-        max_sent_ts = None
-
-        while True:
-            sent, failed, batch_max_ts = flush_queue()
-            total_sent += sent
-            total_failed += failed
-
-            if batch_max_ts and (max_sent_ts is None or batch_max_ts > max_sent_ts):
-                max_sent_ts = batch_max_ts
-
-            if sent == 0 and failed == 0:
-                break
-            if failed > 0:
-                break
-
-        if max_sent_ts:
-            set_watermark(max_sent_ts)
-            print(f"[{datetime.datetime.now()}] Watermark updated to {max_sent_ts.isoformat()}")
-            with state_lock:
-                last_sync_time = datetime.datetime.now()
-                consecutive_failures = 0
-
-        conn.enable_device()
-        log_event("sync_completed", f"sent={total_sent}, failed={total_failed}, queued={len(new_records)}")
-
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] Error syncing device: {e}")
-        log_event("sync_error", str(e))
-        with state_lock:
-            consecutive_failures += 1
-    finally:
-        if conn:
-            conn.disconnect()
-
-
-# =========================
-# FLASK ROUTES
-# =========================
-
-@app.route('/create-user', methods=['POST'])
-def create_user():
-    data = request.json
-    try:
-        conn = get_connection()
-        uid = int(data['employee_id'])
-        name = data['name']
-        users = conn.get_users()
-        for u in users:
-            if str(u.user_id) == str(uid):
-                conn.enable_device()
-                conn.disconnect()
-                return jsonify({"message": "User already exists"}), 200
-        conn.set_user(
-            uid=uid, name=name, privilege=0,
-            password='', group_id='', card=0
-        )
-        conn.enable_device()
-        conn.disconnect()
-        return jsonify({"message": "User created on device"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/sync-users', methods=['GET'])
-def sync_users():
-    try:
-        conn = get_connection()
-        users = conn.get_users()
-        payload = [{'user_id': str(u.user_id), 'name': u.name} for u in users]
-        conn.enable_device()
-        conn.disconnect()
-        requests.post(WEBHOOK_URL_USER, json=payload)
-        return jsonify({"users": len(payload)})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    pending, failed, sent = get_queue_stats()
-    with state_lock:
-        failures = consecutive_failures
-        last = last_sync_time
-
-    status = 'healthy'
-    if failures >= 5:
-        status = 'down'
-    elif failures >= 3:
-        status = 'degraded'
-
-    uptime = str(datetime.datetime.now() - start_time).split('.')[0]
-
-    return jsonify({
-        'status': status,
-        'last_sync_time': last.isoformat() if last else None,
-        'watermark': get_watermark().isoformat(),
-        'queue': {
-            'pending': pending,
-            'failed': failed,
-            'sent': sent,
-            'total': pending + failed + sent
-        },
-        'consecutive_failures': failures,
-        'uptime': uptime,
-        'device_ip': DEVICE_IP,
-        'sync_interval_sec': SYNC_INTERVAL_SEC
-    })
-
-
-@app.route('/queue/retry', methods=['POST'])
-def retry_failed():
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    conn.execute("""
-        UPDATE queue
-        SET sync_status = 'pending', retry_count = 0, last_error = NULL
-        WHERE sync_status = 'failed'
-    """)
-    affected = conn.total_changes
-    conn.commit()
-    conn.close()
-    return jsonify({'reset': affected})
-
-
-@app.route('/queue/stats', methods=['GET'])
-def queue_stats():
-    pending, failed, sent = get_queue_stats()
-    return jsonify({
-        'pending': pending,
-        'failed': failed,
-        'sent': sent,
-        'total': pending + failed + sent
-    })
-
-
-# =========================
-# BACKGROUND SYNC LOOP
-# =========================
-
-def background_loop():
-    while True:
         try:
-            flush_queue()
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] Pre-fetch flush error: {e}")
+            conn.disable_device()
+            device_disabled = True
 
-        sync_attendance()
+            last_sync = get_last_sync_time()
+            now = datetime.datetime.now()
 
-        cleanup_logs()
+            logging.info("Last successful sync: %s", last_sync)
 
-        for _ in range(SYNC_INTERVAL_SEC // 30):
-            time.sleep(30)
+            attendance = conn.get_attendance()
+
+            logging.info(
+                "Retrieved %d records from biometric device",
+                len(attendance),
+            )
+
+            logs_payload = []
+            latest_timestamp = last_sync
+
+            for log in attendance:
+                try:
+                    # Keep original device timestamp. No clock correction.
+                    device_time = log.timestamp
+
+                    if device_time <= START_DATE:
+                        continue
+
+                    if device_time <= last_sync:
+                        continue
+
+                    if device_time > now:
+                        logging.warning(
+                            "Skipping future-dated attendance record: %s",
+                            device_time,
+                        )
+                        continue
+
+                    logs_payload.append({
+                        "user_id": str(log.user_id),
+                        "timestamp": device_time.isoformat(),
+                        "status": log.punch,
+                        "punch": log.punch,
+                    })
+
+                    if device_time > latest_timestamp:
+                        latest_timestamp = device_time
+
+                except (AttributeError, TypeError, ValueError):
+                    logging.exception(
+                        "Skipping invalid attendance record"
+                    )
+
+            if not logs_payload:
+                logging.info("No new attendance records found")
+                return
+
+            # Keep records in chronological order.
+            logs_payload.sort(key=lambda item: item["timestamp"])
+
+            logging.info(
+                "Sending %d attendance records to Node.js",
+                len(logs_payload),
+            )
+
+            response = requests.post(
+                WEBHOOK_URL,
+                json=logs_payload,
+                timeout=HTTP_TIMEOUT,
+            )
+
+            response.raise_for_status()
+
             try:
-                flush_queue()
-            except Exception as e:
-                print(f"[{datetime.datetime.now()}] Mid-cycle flush error: {e}")
+                result = response.json()
+            except ValueError:
+                result = {}
+
+            logging.info(
+                "Webhook succeeded. HTTP %s; inserted: %s",
+                response.status_code,
+                result.get("inserted", "not reported"),
+            )
+
+            # Advance the checkpoint only after successful HTTP delivery.
+            set_last_sync_time(latest_timestamp)
+
+            logging.info(
+                "Last sync checkpoint updated to %s",
+                latest_timestamp,
+            )
+
+        finally:
+            # Re-enable the device even if fetching or posting fails.
+            if device_disabled:
+                try:
+                    conn.enable_device()
+                    logging.info("Biometric device re-enabled")
+                except Exception:
+                    logging.exception(
+                        "WARNING: Could not re-enable biometric device"
+                    )
+
+    except requests.RequestException:
+        logging.exception(
+            "Webhook/network request failed; records will be retried"
+        )
+
+    except Exception:
+        logging.error(
+            "Unexpected error during attendance sync:\n%s",
+            traceback.format_exc(),
+        )
+
+    finally:
+        if conn is not None:
+            try:
+                conn.disconnect()
+                logging.info("Disconnected from biometric device")
+            except Exception:
+                logging.exception("Error disconnecting device")
 
 
-if __name__ == '__main__':
-    print("=" * 60)
-    print("ZKTeco Biometric Sync Service (Robust Mode)")
-    print(f"Device: {DEVICE_IP}:{DEVICE_PORT}")
-    print(f"Webhook: {WEBHOOK_URL}")
-    print(f"Initial Sync: {INITIAL_SYNC_DATE.isoformat()}")
-    print(f"Interval: {SYNC_INTERVAL_SEC}s | Overlap: {OVERLAP_SECONDS}s")
-    print("=" * 60)
+# =========================================================
+# MAIN LOOP
+# =========================================================
 
-    init_db()
+def main():
+    logging.info("=" * 60)
+    logging.info("BIOMETRIC FETCHER SERVICE STARTED")
+    logging.info("Device IP: %s", DEVICE_IP)
+    logging.info("Device port: %s", DEVICE_PORT)
+    logging.info("Sync interval: %s seconds", SYNC_INTERVAL)
+    logging.info("Device timestamps will remain unchanged")
+    logging.info("=" * 60)
 
-    t = threading.Thread(target=background_loop, daemon=True)
-    t.start()
+    while True:
+        cycle_start = time.monotonic()
 
-    log_event("service_started", f"watermark={get_watermark().isoformat()}")
+        try:
+            fetch_and_post_logs()
 
-    app.run(host='0.0.0.0', port=8000, threaded=True)
+        except KeyboardInterrupt:
+            raise
+
+        except Exception:
+            logging.error(
+                "Unexpected sync-cycle failure:\n%s",
+                traceback.format_exc(),
+            )
+
+        elapsed = time.monotonic() - cycle_start
+        wait_time = max(1, SYNC_INTERVAL - elapsed)
+
+        logging.info(
+            "Sync cycle completed. Next sync in %.0f seconds",
+            wait_time,
+        )
+
+        try:
+            time.sleep(wait_time)
+        except KeyboardInterrupt:
+            raise
+
+
+# =========================================================
+# START SERVICE
+# =========================================================
+
+if __name__ == "__main__":
+    try:
+        main()
+
+    except KeyboardInterrupt:
+        logging.info("Service stopped manually by user")
+
+    except BaseException:
+        logging.critical(
+            "FATAL ERROR:\n%s",
+            traceback.format_exc(),
+        )
+
+    finally:
+        logging.info("Biometric fetcher stopped")
+
+        # Keep the console open if launched by double-clicking on Windows.
+        if os.name == "nt":
+            try:
+                input("Press Enter to close this window...")
+            except (EOFError, KeyboardInterrupt):
+                pass

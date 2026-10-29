@@ -1,5 +1,6 @@
 import prisma from '../prisma';
 import { DisputeService } from './dispute.service';
+import { isLateHalfdayExempt } from '../constants/attendance.constants';
 
 export class AbsenceService {
   private static getUtcDateKey(date: Date): string {
@@ -219,6 +220,7 @@ export class AbsenceService {
   private static async calculateAndRecordAttendance(userId: string, targetDateRaw: Date, attendanceLogs: any[], monthlySalary: number, userShift?: any) {
     try {
       const date = this.getCanonicalUtcDate(targetDateRaw);
+      const exemptFromLateHalfday = isLateHalfdayExempt(userId);
 
       // Use provided shift or fallback to first shift
       const shift = userShift || await prisma.shift.findFirst();
@@ -289,7 +291,7 @@ export class AbsenceService {
       } else if (checkInTime) {
         // Rule 3: Has check-in
         shiftType = this.determineShiftType(checkInTime, shift);
-        status = this.determineAttendanceStatus(checkInTime, shift, shiftType);
+        status = this.determineAttendanceStatus(checkInTime, shift, shiftType, exemptFromLateHalfday);
       } else if (checkOutTime) {
         // Only check-out exists
         status = 'present';
@@ -320,7 +322,7 @@ export class AbsenceService {
         let finalStatus = status;
         if (finalCheckIn && !isWeekend) {
           const currentShiftType = this.determineShiftType(finalCheckIn, shift);
-          finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType);
+          finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType, exemptFromLateHalfday);
         }
 
         isLate = finalStatus === 'late';
@@ -462,8 +464,14 @@ export class AbsenceService {
     return minutes;
   }
 
-  public static determineAttendanceStatus(checkInTime: string | null, shift: any, shiftType: 'day' | 'night'): string {
+  public static determineAttendanceStatus(
+    checkInTime: string | null,
+    shift: any,
+    shiftType: 'day' | 'night',
+    exemptFromLateHalfday = false
+  ): string {
     if (!checkInTime) return 'present'; // Fallback for punch anomalies
+    if (exemptFromLateHalfday) return 'present';
 
     const checkInMins = this.getAdjustedMinutes(checkInTime, shiftType);
     const halfdayMins = this.getAdjustedMinutes(shift.halfday, shiftType);
