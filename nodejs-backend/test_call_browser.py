@@ -375,10 +375,18 @@ def main():
             "the callee can turn the camera back off",
             callee.get_by_role("button", name="Turn camera on").count() > 0,
         )
-        # The audio element must stay attached even with the camera off.
+        # The audio element must stay attached even with the camera off. Your
+        # own tile is only shown while your camera or screen share is on, so
+        # only the remote tile is left.
         check(
             "the audio element survives the camera being turned off",
-            video_report(callee)["count"] == 2,
+            len(video_report(callee)["remote"]) == 1
+            and video_report(callee)["remote"][0]["audioTracks"] > 0,
+            json.dumps(video_report(callee)),
+        )
+        check(
+            "your own tile is hidden with the camera off",
+            len(video_report(callee)["local"]) == 0,
             json.dumps(video_report(callee)),
         )
 

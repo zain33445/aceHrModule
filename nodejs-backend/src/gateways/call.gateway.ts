@@ -550,6 +550,7 @@ export class CallGateway {
         callId,
         peerId: state.peerId,
         userId: state.userId,
+        reason: 'left',
       });
     }
 
@@ -911,6 +912,8 @@ export class CallGateway {
             callId: state.callId,
             peerId: state.peerId,
             userId: state.userId,
+            // Lost connection, not a hang-up: the others wait for a rejoin.
+            reason: 'dropped',
           });
           markParticipantLeft(state.callId, state.userId).catch(() => {});
           if (call.peers.size === 0) {

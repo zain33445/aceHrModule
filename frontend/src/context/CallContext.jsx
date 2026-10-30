@@ -62,6 +62,7 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
   const localStreamRef = useRef(null);
   const recorderRef = useRef(null);
   const statusRef = useRef(CALL_STATUS.IDLE);
+  const hangUpRef = useRef(null);
   const connectedRef = useRef(false);
   const outgoingTargetIdsRef = useRef([]);
   const targetNamesRef = useRef({});
@@ -378,10 +379,26 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
           break;
         }
 
-        case 'CALL_PEER_LEFT':
+        case 'CALL_PEER_LEFT': {
           setPeers((prev) => prev.filter((p) => p.peerId !== msg.peerId));
           meshRef.current?.removePeer(msg.peerId);
+          // The last other person hung up an answered call: it is over for us
+          // too. Done here as well as on the server so it works against a
+          // server that does not end the call itself. A dropped connection
+          // ('dropped') is given time to reconnect by the server instead.
+          const answered =
+            statusRef.current === CALL_STATUS.ACTIVE ||
+            statusRef.current === CALL_STATUS.CONNECTING;
+          if (
+            msg.reason !== 'dropped' &&
+            answered &&
+            msg.callId === callIdRef.current &&
+            (meshRef.current?.peers.size ?? 0) === 0
+          ) {
+            hangUpRef.current?.();
+          }
           break;
+        }
 
         case 'CALL_SIGNAL':
           meshRef.current?.handleSignal(msg.fromPeerId, msg.signalType, msg.payload);
@@ -757,6 +774,12 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
     }
     resetCall();
   }, [isHost, resetCall, stopLocalRecording]);
+
+  // The socket handler is created once; it reaches the latest hangUp (which
+  // depends on isHost) through this ref.
+  useEffect(() => {
+    hangUpRef.current = hangUp;
+  }, [hangUp]);
 
   const toggleMic = useCallback(() => {
     const mesh = meshRef.current;
