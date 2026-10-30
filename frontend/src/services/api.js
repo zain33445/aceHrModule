@@ -22,6 +22,64 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 
+/**
+ * Session tokens are short-lived. A request refused with TOKEN_EXPIRED gets
+ * one refresh and one retry; concurrent failures share a single refresh. If
+ * the refresh itself is refused the session was logged out (here or on the
+ * server), so the app is told to sign out via the `auth:expired` event.
+ */
+let refreshing = null;
+
+function refreshSession(token) {
+  if (!refreshing) {
+    refreshing = axios
+      .post(`${API_BASE}/auth/refresh`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+        _skipRefresh: true,
+      })
+      .then((res) => {
+        const auth = JSON.parse(localStorage.getItem('bio_auth') || 'null');
+        // Signed out while the refresh was in flight: do not resurrect it.
+        if (!auth) throw new Error('signed out');
+        auth.token = res.data.token;
+        localStorage.setItem('bio_auth', JSON.stringify(auth));
+        return res.data.token;
+      })
+      .finally(() => {
+        refreshing = null;
+      });
+  }
+  return refreshing;
+}
+
+axios.interceptors.response.use(undefined, async (error) => {
+  const { config, response } = error;
+  const sent = config?.headers?.Authorization;
+  if (
+    response?.status !== 401 ||
+    response.data?.code !== 'TOKEN_EXPIRED' ||
+    !config ||
+    config._skipRefresh ||
+    config._retried ||
+    !sent
+  ) {
+    throw error;
+  }
+
+  try {
+    await refreshSession(String(sent).replace(/^Bearer /, ''));
+  } catch (refreshError) {
+    if (refreshError?.response?.status === 401) {
+      window.dispatchEvent(new Event('auth:expired'));
+    }
+    throw error;
+  }
+
+  // The request interceptor attaches the refreshed token from storage.
+  config._retried = true;
+  return axios(config);
+});
+
 const api = {
   // Existing methods...
   getEmployees: () => axios.get(`${API_BASE}/employees`),
@@ -57,6 +115,12 @@ const api = {
   createEmployee: (data) => axios.post(`${API_BASE}/employees`, data),
   deleteEmployee: (userId) => axios.delete(`${API_BASE}/employees/${userId}`),
   login: (username, password) => axios.post(`${API_BASE}/auth/login`, { username, password }),
+  /** Revokes the session on the server; the token passed is the one to kill. */
+  logout: (token) =>
+    axios.post(`${API_BASE}/auth/logout`, {}, {
+      headers: { Authorization: `Bearer ${token}` },
+      _skipRefresh: true,
+    }),
   updatePassword: (userId, newPassword) =>
     axios.post(`${API_BASE}/auth/update-password`, {
       user_id: userId,

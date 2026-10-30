@@ -92,6 +92,7 @@ model User {
   chat_participants          ChatParticipant[]
   chat_messages_sent         ChatMessage[]         @relation("ChatMessageSender")
   chat_reactions             ChatMessageReaction[]
+  auth_sessions              UserSession[]
   notification_preferences   UserNotificationPreference[]
   calls_started              CallSession[]         @relation("CallStarter")
   call_participations        CallParticipant[]
@@ -580,6 +581,20 @@ model ChatAttachment {
   message ChatMessage @relation(fields: [message_id], references: [id], onDelete: Cascade)
 
   @@map("chat_attachments")
+}
+
+/// One signed-in device. Tokens carry the session id; revoking the row (logout)
+/// invalidates every token of that session immediately.
+model UserSession {
+  id         String    @id @default(uuid())
+  user_id    String
+  created_at DateTime  @default(now())
+  revoked_at DateTime?
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@map("user_sessions")
 }
 
 model ChatMessageReaction {

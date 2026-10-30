@@ -153,14 +153,16 @@ export class CallGateway {
   // ── Identity ─────────────────────────────────────────────
 
   /**
-   * Accepts a call ticket, a session token, or an agent token.
+   * Accepts a call ticket or an agent token. Session tokens are refused: the
+   * gateway cannot see a logout, whereas a ticket is only minted (via
+   * requireUser) for a live session and expires within 5 minutes.
    * Returns the identity or null when the token is invalid/expired.
    */
   private resolveIdentity(
     token: string
   ): { userId: string; name: string; role: string } | null {
     const userToken = verifyUserToken(token);
-    if (userToken) {
+    if (userToken?.typ === 'call') {
       return {
         userId: userToken.userId,
         name: userToken.name || userToken.userId,

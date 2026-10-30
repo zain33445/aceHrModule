@@ -93,7 +93,10 @@ function actingUser(req: Request): { userId: string; name: string; role: string 
  */
 router.post('/ws-token', requireUser, (req: Request, res: Response) => {
   const user = actingUser(req);
-  const token = signCallToken({ id: user.userId, name: user.name, role: user.role });
+  const token = signCallToken(
+    { id: user.userId, name: user.name, role: user.role },
+    (req as any).user?.sessionId
+  );
   res.json({ token, expiresIn: 300 });
 });
 

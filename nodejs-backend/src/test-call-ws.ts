@@ -25,7 +25,8 @@ import WebSocket from 'ws';
 import { initGateway } from './gateways/recording.gateway';
 import { initChatGateway } from './gateways/chat.gateway';
 import { initCallGateway } from './gateways/call.gateway';
-import { signCallToken, verifyUserToken } from './middleware/requireUser';
+import jwt from 'jsonwebtoken';
+import { signCallToken, signSessionToken, verifyUserToken } from './middleware/requireUser';
 import { getIceServers, isTurnConfigured } from './services/turn.service';
 
 const PORT = 5099;
@@ -121,6 +122,21 @@ async function main() {
   check('call token is typed as a call ticket', decoded?.typ === 'call');
   check('garbage token is rejected', verifyUserToken('not-a-jwt') === null);
 
+  const sessionToken = signSessionToken({ id: '42', name: 'Test User', role: 'employee' }, 'sid-1');
+  check('session token carries its session id', verifyUserToken(sessionToken)?.sessionId === 'sid-1');
+
+  // An expired session token is refused by normal verification but can still
+  // be presented to /auth/refresh and /auth/logout (which check the session).
+  const expired = jwt.sign(
+    { sub: '42', typ: 'session', sid: 'sid-1', exp: Math.floor(Date.now() / 1000) - 60 },
+    process.env.JWT_SECRET || 'ace-hrm-secret-development-key-2026'
+  );
+  check('expired session token is refused', verifyUserToken(expired) === null);
+  check(
+    'expired session token is readable for refresh',
+    verifyUserToken(expired, { ignoreExpiration: true })?.sessionId === 'sid-1'
+  );
+
   // ── TURN configuration ─────────────────────────────────────
   console.log('\nICE / TURN configuration');
   const ice = getIceServers();
@@ -169,6 +185,17 @@ async function main() {
     '/call-ws rejects an invalid ticket',
     !rejected.ok && rejected.status === 401,
     JSON.stringify(rejected)
+  );
+
+  // A session token cannot open the socket: the gateway cannot see a logout,
+  // so only short-lived tickets minted for a live session are accepted.
+  const bySession = await firstMessage(
+    `${BASE}/call-ws?token=${encodeURIComponent(sessionToken)}`
+  );
+  check(
+    '/call-ws refuses a session token',
+    !bySession.ok && bySession.status === 401,
+    JSON.stringify(bySession)
   );
 
   // 3. The agent path must still work — the yield did not break it.

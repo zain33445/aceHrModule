@@ -61,7 +61,7 @@ app.use('/api/call/recordings/chunk', express.raw({ type: 'application/octet-str
 app.use(async (req, res, next) => {
   res.on('finish', async () => {
     if (['POST', 'PUT', 'DELETE'].includes(req.method) && res.statusCode >= 200 && res.statusCode < 300) {
-      if (!req.path.includes('/auth/login') && !req.path.includes('/webhooks')) {
+      if (!req.path.includes('/auth/login') && !req.path.includes('/auth/refresh') && !req.path.includes('/webhooks')) {
         try {
           await prisma.auditLog.create({
             data: {

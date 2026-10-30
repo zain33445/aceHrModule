@@ -86,10 +86,29 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
+    // Revoke the session server-side so its token dies now, not at expiry.
+    // The stored token is the freshest one (refreshes update storage).
+    try {
+      const token = JSON.parse(localStorage.getItem('bio_auth') || 'null')?.token;
+      if (token) api.logout(token).catch(() => {});
+    } catch {
+      /* nothing stored */
+    }
     setAuth(null);
     localStorage.removeItem('bio_auth');
-  };
+  }, []);
+
+  // The session was revoked or refused (e.g. logged out elsewhere, or a token
+  // from before sessions existed): drop to the login screen.
+  useEffect(() => {
+    const onExpired = () => {
+      setAuth(null);
+      localStorage.removeItem('bio_auth');
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
 
   const handleUpdateSetting = async (userId, value, key) => {
     try {

@@ -12,9 +12,15 @@
  *
  *   POST /api/auth/login  ->  { token, user_id, name, role, is_lead }
  *
- * The token is signed with JWT_SECRET and carries { sub, typ, name, role }.
+ * The token is signed with JWT_SECRET and carries { sub, typ, sid, name, role }.
  * A short-lived 'call' ticket (5 min) is also accepted, so the WebSocket
  * gateway and the REST routes can share a single verification path.
+ *
+ * Every login creates a `user_sessions` row and the token carries its id
+ * (`sid`). Session tokens are short-lived; the client trades an expired one
+ * for a fresh one at POST /api/auth/refresh for as long as the session is not
+ * revoked. Logout revokes the row, which kills every token of that session
+ * at once — the check below runs on every request.
  *
  * No `X-User-Id` fallback exists here on purpose.
  */
@@ -25,7 +31,7 @@ import prisma from '../prisma';
 
 const SESSION_SECRET = process.env.JWT_SECRET || 'ace-hrm-secret-development-key-2026';
 
-export const SESSION_TOKEN_TTL = '8h';
+export const SESSION_TOKEN_TTL = '1h';
 export const CALL_TOKEN_TTL = '5m';
 
 export interface UserTokenPayload {
@@ -33,7 +39,11 @@ export interface UserTokenPayload {
   name?: string;
   role?: string;
   typ: 'session' | 'call' | 'agent';
+  sessionId?: string;
 }
+
+/** Sent with every 401 caused by the token, so the client knows to refresh. */
+export const TOKEN_EXPIRED_CODE = 'TOKEN_EXPIRED';
 
 /**
  * Signs a long-lived session token for a logged-in user.
@@ -42,9 +52,9 @@ export function signSessionToken(user: {
   id: string;
   name: string;
   role: string;
-}): string {
+}, sessionId: string): string {
   return jwt.sign(
-    { sub: user.id, typ: 'session', name: user.name, role: user.role },
+    { sub: user.id, typ: 'session', sid: sessionId, name: user.name, role: user.role },
     SESSION_SECRET,
     { expiresIn: SESSION_TOKEN_TTL }
   );
@@ -59,9 +69,9 @@ export function signCallToken(user: {
   id: string;
   name: string;
   role: string;
-}): string {
+}, sessionId?: string): string {
   return jwt.sign(
-    { sub: user.id, typ: 'call', name: user.name, role: user.role },
+    { sub: user.id, typ: 'call', sid: sessionId, name: user.name, role: user.role },
     SESSION_SECRET,
     { expiresIn: CALL_TOKEN_TTL }
   );
@@ -69,11 +79,15 @@ export function signCallToken(user: {
 
 /**
  * Verifies a token issued by this module. Returns null for anything invalid,
- * expired, or signed with the wrong secret.
+ * expired, or signed with the wrong secret. `ignoreExpiration` is only for
+ * refresh/logout, which then check the session row themselves.
  */
-export function verifyUserToken(token: string): UserTokenPayload | null {
+export function verifyUserToken(
+  token: string,
+  { ignoreExpiration = false } = {}
+): UserTokenPayload | null {
   try {
-    const decoded = jwt.verify(token, SESSION_SECRET) as any;
+    const decoded = jwt.verify(token, SESSION_SECRET, { ignoreExpiration }) as any;
     if (decoded.typ !== 'session' && decoded.typ !== 'call') return null;
     if (!decoded.sub) return null;
     return {
@@ -81,6 +95,7 @@ export function verifyUserToken(token: string): UserTokenPayload | null {
       name: decoded.name,
       role: decoded.role,
       typ: decoded.typ,
+      sessionId: decoded.sid ? String(decoded.sid) : undefined,
     };
   } catch {
     return null;
@@ -107,19 +122,17 @@ export async function requireUser(
 
   const payload = verifyUserToken(authHeader.substring(7));
 
-  if (!payload) {
-    res.status(401).json({ error: 'Invalid or expired token.' });
+  // Tokens from before sessions existed carry no sid and cannot be revoked.
+  if (!payload?.sessionId) {
+    res.status(401).json({ error: 'Invalid or expired token.', code: TOKEN_EXPIRED_CODE });
     return;
   }
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: { id: true, name: true, role: true, status: true },
-    });
+    const user = await findSessionUser(payload.sessionId, payload.userId);
 
     if (!user) {
-      res.status(401).json({ error: 'User not found.' });
+      res.status(401).json({ error: 'Session has ended.', code: TOKEN_EXPIRED_CODE });
       return;
     }
 
@@ -132,6 +145,8 @@ export async function requireUser(
       userId: user.id,
       name: user.name,
       role: user.role,
+      typ: payload.typ,
+      sessionId: payload.sessionId,
     } as UserTokenPayload;
 
     next();
@@ -139,4 +154,21 @@ export async function requireUser(
     console.error('[Auth] requireUser lookup failed:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+}
+
+/**
+ * The user behind a live (not revoked) session, or null. The session must
+ * belong to the user named in the token.
+ */
+export async function findSessionUser(sessionId: string, userId: string) {
+  const session = await prisma.userSession.findUnique({
+    where: { id: sessionId },
+    select: {
+      user_id: true,
+      revoked_at: true,
+      user: { select: { id: true, name: true, role: true, status: true } },
+    },
+  });
+  if (!session || session.revoked_at || session.user_id !== userId) return null;
+  return session.user;
 }
