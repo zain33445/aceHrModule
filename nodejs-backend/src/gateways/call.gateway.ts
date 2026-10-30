@@ -49,6 +49,8 @@ const AUTH_TIMEOUT_MS = 10_000;
 /** How often ringing calls are checked for timeouts. */
 const RING_SWEEP_INTERVAL_MS = 15_000;
 /** How long a call may ring before it is considered missed. */
+/** How long a dropped participant has to reconnect before the call ends. */
+const DROP_GRACE_MS = 30_000;
 const RING_TIMEOUT_MS = 30_000;
 
 export interface CallPeer {
@@ -556,7 +558,9 @@ export class CallGateway {
 
     await markParticipantLeft(callId, state.userId);
 
-    if (call && call.peers.size === 0) {
+    // Once answered, a call is over when nobody is left to talk to. Without
+    // this, the callee hanging up left the caller alone in a live call.
+    if (call && (call.peers.size === 0 || (call.status === 'active' && call.peers.size === 1))) {
       await this.finalizeCall(callId, 'ended');
     }
   }
@@ -911,6 +915,15 @@ export class CallGateway {
           markParticipantLeft(state.callId, state.userId).catch(() => {});
           if (call.peers.size === 0) {
             this.finalizeCall(state.callId, 'ended').catch(() => {});
+          } else if (call.status === 'active' && call.peers.size === 1) {
+            // The other side dropped off the network. Give it time to
+            // reconnect and rejoin before ending the call for the one left.
+            const callId = state.callId;
+            setTimeout(() => {
+              if (this.calls.get(callId) === call && call.peers.size <= 1) {
+                this.finalizeCall(callId, 'ended').catch(() => {});
+              }
+            }, DROP_GRACE_MS);
           }
         }
       }

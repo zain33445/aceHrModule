@@ -412,13 +412,15 @@ export function CallProvider({ user, children, enabled = true }) {  const userId
         }
 
         case 'CALL_CANCELLED':
-          resetCall();
-          break;
-
-        case 'CALL_ENDED':
+        case 'CALL_ENDED': {
+          // Only end the call this notice is about. A late notice for a call
+          // already left must not tear down the next one.
+          const current = callIdRef.current || incomingRef.current?.callId;
+          if (msg.callId && msg.callId !== current) break;
           if (msg.reason === 'no_answer') setError('No answer.');
           resetCall();
           break;
+        }
 
         case 'CALL_ERROR':
           setError(msg.message || 'The call could not be started.');
