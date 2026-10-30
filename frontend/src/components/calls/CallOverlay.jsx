@@ -433,7 +433,9 @@ export default function CallOverlay() {
                 ))
               )}
 
-              {(previewStream || localStream) && (
+              {/* Your own tile only appears when there is something to see:
+                  your camera or your screen share. */}
+              {(previewStream || localStream) && (camOn || sharingScreen) && (
                 <VideoTile
                   stream={previewStream || localStream}
                   name="You"
