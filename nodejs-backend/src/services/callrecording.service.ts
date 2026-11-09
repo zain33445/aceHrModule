@@ -24,7 +24,10 @@ import { spawn } from 'child_process';
 import prisma from '../prisma';
 
 const CALL_RECORDINGS_DIR =
-  process.env.CALL_RECORDINGS_DIR || path.join(process.cwd(), 'uploads', 'calls');
+  process.env.CALL_RECORDINGS_DIR ||
+  (process.platform === 'win32'
+    ? 'I:\\hrApp_data\\recordings\\calls'
+    : path.join(process.cwd(), 'uploads', 'calls'));
 
 /** Recordings older than this are deleted by the retention sweep. */
 export const RECORDING_RETENTION_DAYS = 90;

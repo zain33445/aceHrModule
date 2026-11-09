@@ -1,9 +1,10 @@
+
 import os
 import sys
 import time
-import datetime
 import logging
 import traceback
+import datetime
 import requests
 
 from zk import ZK
@@ -18,19 +19,19 @@ COMM_KEY = 11
 
 WEBHOOK_URL = "http://localhost:5000/api/webhooks/attendance"
 
-SYNC_FILE = "last_sync_time.txt"
 LOG_FILE = "biometric_fetcher.log"
 
 SYNC_INTERVAL = 300          # 5 minutes
 MAX_CONNECT_ATTEMPTS = 5
-RETRY_DELAY = 10             # Seconds between connection attempts
+RETRY_DELAY = 10
 DEVICE_TIMEOUT = 30
-HTTP_TIMEOUT = (5, 30)       # HTTP connect and read timeouts
 
-START_DATE = datetime.datetime(2026, 6, 1, 0, 0, 0)
+HTTP_TIMEOUT = (10, 120)
 
-# IMPORTANT:
-# Device clock is correct. Do not adjust attendance timestamps.
+BATCH_SIZE = 500
+
+# Fetch today's records and previous 14 calendar days.
+FETCH_DAYS = 15
 
 # =========================================================
 # LOGGING
@@ -38,7 +39,6 @@ START_DATE = datetime.datetime(2026, 6, 1, 0, 0, 0)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-SYNC_FILE = os.path.join(BASE_DIR, SYNC_FILE)
 LOG_FILE = os.path.join(BASE_DIR, LOG_FILE)
 
 logging.basicConfig(
@@ -52,46 +52,11 @@ logging.basicConfig(
 )
 
 # =========================================================
-# CHECKPOINT MANAGEMENT
-# =========================================================
-
-def get_last_sync_time():
-    if os.path.exists(SYNC_FILE):
-        try:
-            with open(SYNC_FILE, "r", encoding="utf-8") as file:
-                value = file.read().strip()
-
-            if value:
-                return datetime.datetime.fromisoformat(value)
-
-        except (OSError, ValueError):
-            logging.exception("Could not read last sync time")
-
-    # First run: process records starting from START_DATE.
-    set_last_sync_time(START_DATE)
-    return START_DATE
-
-
-def set_last_sync_time(sync_time):
-    temp_file = SYNC_FILE + ".tmp"
-
-    try:
-        with open(temp_file, "w", encoding="utf-8") as file:
-            file.write(sync_time.isoformat())
-            file.flush()
-            os.fsync(file.fileno())
-
-        os.replace(temp_file, SYNC_FILE)
-
-    except OSError:
-        logging.exception("Could not save last sync time")
-
-
-# =========================================================
 # BIOMETRIC DEVICE CONNECTION
 # =========================================================
 
 def connect_device():
+
     zk = ZK(
         DEVICE_IP,
         port=DEVICE_PORT,
@@ -101,7 +66,9 @@ def connect_device():
     )
 
     for attempt in range(1, MAX_CONNECT_ATTEMPTS + 1):
+
         try:
+
             logging.info(
                 "Connecting to device %s (attempt %d/%d)",
                 DEVICE_IP,
@@ -112,22 +79,31 @@ def connect_device():
             conn = zk.connect()
 
             if conn:
-                logging.info("Connected to biometric device successfully")
+
+                logging.info(
+                    "Connected to biometric device successfully"
+                )
+
                 return conn
 
         except Exception:
+
             logging.exception(
                 "Device connection attempt %d failed",
                 attempt,
             )
 
         if attempt < MAX_CONNECT_ATTEMPTS:
-            logging.info("Retrying connection in %d seconds", RETRY_DELAY)
+
+            logging.info(
+                "Retrying connection in %d seconds",
+                RETRY_DELAY,
+            )
+
             time.sleep(RETRY_DELAY)
 
     logging.error(
-        "Device unavailable after %d attempts. "
-        "Will retry during the next sync cycle.",
+        "Device unavailable after %d attempts.",
         MAX_CONNECT_ATTEMPTS,
     )
 
@@ -135,139 +111,227 @@ def connect_device():
 
 
 # =========================================================
-# FETCH AND POST ATTENDANCE
+# FETCH AND POST LAST 15 DAYS OF ATTENDANCE
 # =========================================================
 
 def fetch_and_post_logs():
+
     conn = None
     device_disabled = False
 
     try:
+
         conn = connect_device()
 
         if conn is None:
             return
 
         try:
+
             conn.disable_device()
             device_disabled = True
 
-            last_sync = get_last_sync_time()
+            # Calculate rolling 15-day window.
             now = datetime.datetime.now()
 
-            logging.info("Last successful sync: %s", last_sync)
+            start_date = (
+                now - datetime.timedelta(days=FETCH_DAYS - 1)
+            ).replace(
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+
+            end_date = now
+
+            logging.info(
+                "Fetching attendance from %s to %s",
+                start_date,
+                end_date,
+            )
 
             attendance = conn.get_attendance()
 
             logging.info(
-                "Retrieved %d records from biometric device",
+                "Retrieved %d total records from biometric device",
                 len(attendance),
             )
 
             logs_payload = []
-            latest_timestamp = last_sync
 
             for log in attendance:
+
                 try:
-                    # Keep original device timestamp. No clock correction.
+
+                    # Preserve original device timestamp.
                     device_time = log.timestamp
 
-                    if device_time <= START_DATE:
-                        continue
-
-                    if device_time <= last_sync:
-                        continue
-
-                    if device_time > now:
-                        logging.warning(
-                            "Skipping future-dated attendance record: %s",
-                            device_time,
-                        )
+                    # Only include records within the date range.
+                    if not (
+                        start_date <= device_time <= end_date
+                    ):
                         continue
 
                     logs_payload.append({
+
                         "user_id": str(log.user_id),
+
                         "timestamp": device_time.isoformat(),
+
                         "status": log.punch,
+
                         "punch": log.punch,
+
                     })
 
-                    if device_time > latest_timestamp:
-                        latest_timestamp = device_time
+                except (
+                    AttributeError,
+                    TypeError,
+                    ValueError
+                ):
 
-                except (AttributeError, TypeError, ValueError):
                     logging.exception(
                         "Skipping invalid attendance record"
                     )
 
             if not logs_payload:
-                logging.info("No new attendance records found")
+
+                logging.info(
+                    "No attendance records found within the last 15 days"
+                )
+
                 return
 
-            # Keep records in chronological order.
-            logs_payload.sort(key=lambda item: item["timestamp"])
-
-            logging.info(
-                "Sending %d attendance records to Node.js",
-                len(logs_payload),
+            # Sort records chronologically.
+            logs_payload.sort(
+                key=lambda item: item["timestamp"]
             )
 
-            response = requests.post(
-                WEBHOOK_URL,
-                json=logs_payload,
-                timeout=HTTP_TIMEOUT,
-            )
+            total_records = len(logs_payload)
 
-            response.raise_for_status()
-
-            try:
-                result = response.json()
-            except ValueError:
-                result = {}
+            total_batches = (
+                total_records + BATCH_SIZE - 1
+            ) // BATCH_SIZE
 
             logging.info(
-                "Webhook succeeded. HTTP %s; inserted: %s",
-                response.status_code,
-                result.get("inserted", "not reported"),
+                "Found %d attendance records within the last 15 days",
+                total_records,
             )
 
-            # Advance the checkpoint only after successful HTTP delivery.
-            set_last_sync_time(latest_timestamp)
+            # =================================================
+            # SEND RECORDS IN BATCHES
+            # =================================================
+
+            total_inserted = 0
+
+            for i in range(0, total_records, BATCH_SIZE):
+
+                batch = logs_payload[i:i + BATCH_SIZE]
+
+                batch_number = (
+                    i // BATCH_SIZE
+                ) + 1
+
+                logging.info(
+                    "Sending batch %d/%d (%d records)",
+                    batch_number,
+                    total_batches,
+                    len(batch),
+                )
+
+                response = requests.post(
+                    WEBHOOK_URL,
+                    json=batch,
+                    timeout=HTTP_TIMEOUT,
+                )
+
+                response.raise_for_status()
+
+                try:
+
+                    result = response.json()
+
+                except ValueError:
+
+                    result = {}
+
+                inserted = result.get("inserted", 0)
+
+                if isinstance(inserted, int):
+                    total_inserted += inserted
+
+                logging.info(
+                    "Batch %d/%d successful. HTTP %s; inserted: %s",
+                    batch_number,
+                    total_batches,
+                    response.status_code,
+                    inserted,
+                )
 
             logging.info(
-                "Last sync checkpoint updated to %s",
-                latest_timestamp,
+                "Attendance sync completed successfully."
+            )
+
+            logging.info(
+                "Total records submitted: %d",
+                total_records,
+            )
+
+            logging.info(
+                "Total inserted (reported by API): %d",
+                total_inserted,
             )
 
         finally:
-            # Re-enable the device even if fetching or posting fails.
+
+            # Re-enable biometric device.
             if device_disabled:
+
                 try:
+
                     conn.enable_device()
-                    logging.info("Biometric device re-enabled")
+
+                    logging.info(
+                        "Biometric device re-enabled"
+                    )
+
                 except Exception:
+
                     logging.exception(
-                        "WARNING: Could not re-enable biometric device"
+                        "Could not re-enable biometric device"
                     )
 
     except requests.RequestException:
+
         logging.exception(
-            "Webhook/network request failed; records will be retried"
+            "Webhook/network request failed"
         )
 
     except Exception:
+
         logging.error(
             "Unexpected error during attendance sync:\n%s",
             traceback.format_exc(),
         )
 
     finally:
+
         if conn is not None:
+
             try:
+
                 conn.disconnect()
-                logging.info("Disconnected from biometric device")
+
+                logging.info(
+                    "Disconnected from biometric device"
+                )
+
             except Exception:
-                logging.exception("Error disconnecting device")
+
+                logging.exception(
+                    "Error disconnecting device"
+                )
 
 
 # =========================================================
@@ -275,31 +339,73 @@ def fetch_and_post_logs():
 # =========================================================
 
 def main():
+
     logging.info("=" * 60)
-    logging.info("BIOMETRIC FETCHER SERVICE STARTED")
-    logging.info("Device IP: %s", DEVICE_IP)
-    logging.info("Device port: %s", DEVICE_PORT)
-    logging.info("Sync interval: %s seconds", SYNC_INTERVAL)
-    logging.info("Device timestamps will remain unchanged")
+
+    logging.info(
+        "BIOMETRIC FETCHER SERVICE STARTED"
+    )
+
+    logging.info(
+        "Device IP: %s",
+        DEVICE_IP
+    )
+
+    logging.info(
+        "Device port: %s",
+        DEVICE_PORT
+    )
+
+    logging.info(
+        "Sync interval: %s seconds",
+        SYNC_INTERVAL
+    )
+
+    logging.info(
+        "Attendance fetch period: Last %d days including today",
+        FETCH_DAYS
+    )
+
+    logging.info(
+        "Batch size: %d",
+        BATCH_SIZE
+    )
+
+    logging.info(
+        "No last sync checkpoint"
+    )
+
+    logging.info(
+        "Original device timestamps will remain unchanged"
+    )
+
     logging.info("=" * 60)
 
     while True:
+
         cycle_start = time.monotonic()
 
         try:
+
             fetch_and_post_logs()
 
         except KeyboardInterrupt:
+
             raise
 
         except Exception:
+
             logging.error(
                 "Unexpected sync-cycle failure:\n%s",
                 traceback.format_exc(),
             )
 
         elapsed = time.monotonic() - cycle_start
-        wait_time = max(1, SYNC_INTERVAL - elapsed)
+
+        wait_time = max(
+            1,
+            SYNC_INTERVAL - elapsed
+        )
 
         logging.info(
             "Sync cycle completed. Next sync in %.0f seconds",
@@ -307,8 +413,11 @@ def main():
         )
 
         try:
+
             time.sleep(wait_time)
+
         except KeyboardInterrupt:
+
             raise
 
 
@@ -317,24 +426,41 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     try:
+
         main()
 
     except KeyboardInterrupt:
-        logging.info("Service stopped manually by user")
+
+        logging.info(
+            "Service stopped manually by user"
+        )
 
     except BaseException:
+
         logging.critical(
             "FATAL ERROR:\n%s",
             traceback.format_exc(),
         )
 
     finally:
-        logging.info("Biometric fetcher stopped")
 
-        # Keep the console open if launched by double-clicking on Windows.
+        logging.info(
+            "Biometric fetcher stopped"
+        )
+
         if os.name == "nt":
+
             try:
-                input("Press Enter to close this window...")
-            except (EOFError, KeyboardInterrupt):
+
+                input(
+                    "Press Enter to close this window..."
+                )
+
+            except (
+                EOFError,
+                KeyboardInterrupt
+            ):
+
                 pass

@@ -26,11 +26,11 @@ export const recordingEmitter = new EventEmitter();
 // ─────────────────────────────────────────
 
 // Base directory for recording files — outside web root.
-// Override via RECORDINGS_DIR env var; defaults to G:\recordings on Windows (production).
+// Override via RECORDINGS_DIR env var; defaults to I:\hrApp_data\recordings on Windows (production).
 const RECORDINGS_DIR = process.env.RECORDINGS_DIR
   ? path.resolve(process.env.RECORDINGS_DIR)
   : process.platform === 'win32'
-    ? 'G:\\recordings'
+    ? 'I:\\hrApp_data\\recordings'
     : path.join(process.cwd(), 'uploads', 'recordings');
 
 /** Derive a human-readable folder name from session metadata */
