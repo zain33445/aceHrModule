@@ -2,6 +2,21 @@ import prisma from '../prisma';
 import { DisputeService } from './dispute.service';
 import { isLateHalfdayExempt } from '../constants/attendance.constants';
 
+/** Converts "HH:MM" (24h) or "h:mm am/pm" to minutes since midnight. NaN if unparsable. */
+export function timeToMinutes(timeStr: string): number {
+  if (!timeStr) return 0;
+  const normalized = timeStr.toLowerCase().replace(/\s+/g, '');
+  const isPM = normalized.includes('pm');
+  const isAM = normalized.includes('am');
+  const timeOnly = normalized.replace(/[ap]m/g, '');
+  const [hoursStr, minutesStr] = timeOnly.split(':');
+  let hours = parseInt(hoursStr, 10);
+  const minutes = parseInt(minutesStr, 10) || 0;
+  if (isPM && hours < 12) hours += 12;
+  if (isAM && hours === 12) hours = 0;
+  return hours * 60 + minutes;
+}
+
 export class AbsenceService {
   private static getUtcDateKey(date: Date): string {
     return date.toISOString().split('T')[0];
@@ -32,26 +47,7 @@ export class AbsenceService {
    * Helper function to convert time HH:MM to comparable format
    */
   public static timeToMinutes(timeStr: string): number {
-    if (!timeStr) return 0;
-
-    // Normalize string: lowercase and remove extra spaces
-    const normalized = timeStr.toLowerCase().replace(/\s+/g, '');
-
-    // Check for am/pm
-    const isPM = normalized.includes('pm');
-    const isAM = normalized.includes('am');
-
-    // Strip am/pm for parsing
-    const timeOnly = normalized.replace(/[ap]m/g, '');
-    const [hoursStr, minutesStr] = timeOnly.split(':');
-
-    let hours = parseInt(hoursStr, 10);
-    const minutes = parseInt(minutesStr, 10) || 0;
-
-    if (isPM && hours < 12) hours += 12;
-    if (isAM && hours === 12) hours = 0;
-
-    return hours * 60 + minutes;
+    return timeToMinutes(timeStr);
   }
 
   /**

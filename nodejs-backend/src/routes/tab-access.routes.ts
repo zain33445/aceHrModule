@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../prisma';
+import { requireAdmin } from '../middleware/requireAdmin';
 
 const router = Router();
 
@@ -60,7 +61,7 @@ router.get('/hr-employees', async (req, res) => {
 });
 
 // POST /api/tab-access/toggle — Grant or revoke a tab for a user
-router.post('/toggle', async (req, res) => {
+router.post('/toggle', requireAdmin, async (req, res) => {
   const { user_id, tab_key, granted } = req.body;
 
   if (!user_id || !tab_key) {

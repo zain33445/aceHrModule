@@ -70,9 +70,12 @@ No CI workflows, no tests (root `npm test` is stub).
 
 ## New system: Screen Recording & Monitoring
 
-- Electron agent (frontend) connects via WebSocket gateway (`nodejs-backend/src/gateways/recording.gateway.ts`).
-- Admin starts/stop sessions via REST; agent streams chunks as raw binary (`Content-Type: application/octet-stream`).
-- Session assembly produces WebM files on server disk.
+- **Spec and agent↔server contract: `docs/recording-v2.md`.** Hard rule: a recorded chunk is never lost, refused or overwritten.
+- v2 (agent ≥ 1.12, WS `protocol: 2`): recording is always-on and agent-driven. One session per user per *shift-based* recording day (`recording-day.ts`), segments = MediaRecorder runs, chunks `(segment_id, seq)` with sha256. Final file = generations (`recording-g<N>.webm`), chunks purged only after a verified generation commit.
+- v1 (agents ≤ 1.11.x): legacy `POST /api/recording/chunk` + START/STOP flow, still supported; legacy sessions have `recording_date = NULL`.
+- **Schema**: `ensureRecordingSchema()` runs the idempotent, additive `prisma/migrations/20261110000000_recording_v2/migration.sql` at backend start (never `db push`). Deploys must ship that file and run `npx prisma generate` before building. `.gitignore` ignores `*.sql` except migrations.
+- Access: `requireRecordingAccess` = admin/superadmin or a `user_tab_access` grant for `recording`. Agent tokens via `/recording/agent-auth` need the user's session token.
+- Local agent spool: `<userData>/recordings/v2/<userId>/<segmentId>/` (15 days / 30 GB cap, unsynced data never deleted).
 - Desktop monitoring logs app names + optional screenshots (3-day retention).
 
 ## New system: Voice & Video Calling
@@ -100,8 +103,11 @@ No CI workflows, no tests (root `npm test` is stub).
 | `npm run test-call-ws` | `nodejs-backend/` | Test call gateway upgrade routing (no DB needed) |
 | `npm run test-call-e2e` | `nodejs-backend/` | Live call test against a running server + DB (66 checks) |
 | `npm run test-recording-assembly` | `nodejs-backend/` | Recording assembly (run splitting + ffmpeg join), no DB needed |
-| `npm run test-recording-e2e` | `nodejs-backend/` | Live screen-recording test against a running server + DB (41 checks). Start the server with `RECORDINGS_DIR` set to a scratch folder |
+| `npm run test-recording-e2e` | `nodejs-backend/` | Live screen-recording test against a running server + DB (45 checks). Start the server with `RECORDINGS_DIR` set to a scratch folder |
+| `npm run test-recording-v2-e2e` | `nodejs-backend/` | Live recording v2 test (131 checks); run with the server's `RECORDINGS_DIR` |
+| `npm run test-recording-day` | `nodejs-backend/` | Shift-based recording-day rule, no DB needed |
 | `node electron/local-retention.check.mjs` | `frontend/` | Local chunk retention never deletes un-uploaded chunks |
+| `node electron/recording-day.check.mjs` / `spool-v2.check.mjs` | `frontend/` | Agent day rule, spool and v2 retention checks |
 | `python test_call_browser.py` | `nodejs-backend/` | Two-browser WebRTC call test (needs the Playwright venv + vite) |
 | `python test_call_recording.py` | `nodejs-backend/` | Browser test for the recording pipeline |
 | `python test_electron_call.py` | `nodejs-backend/` | Electron agent test (needs Electron started with `--remote-debugging-port=9222`) |

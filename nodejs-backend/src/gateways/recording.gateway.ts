@@ -19,6 +19,7 @@ import { Socket } from 'net';
 import jwt from 'jsonwebtoken';
 import { verifyAgentToken } from '../middleware/requireAgentToken';
 import prisma from '../prisma';
+import { ruleForUser } from '../services/recording-day';
 
 const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
 
@@ -63,6 +64,9 @@ export interface ScheduleEntry {
 // Gateway Class
 // ─────────────────────────────────────────
 
+/** Close code sent to an agent socket replaced by a newer one of the same user. */
+export const AGENT_REPLACED_CLOSE_CODE = 4002;
+
 export class RecordingGateway {
   private wss: WebSocketServer;
   // Map<userId, WebSocket>
@@ -71,6 +75,10 @@ export class RecordingGateway {
   private admins: Map<string, WebSocket> = new Map();
   // Latest agent error per userId (for status API / admin UI)
   private agentErrors: Map<string, { code: string; message: string; sessionId?: string; at: string }> = new Map();
+  // Protocol of the currently connected agent per user (1 = legacy, 2 = agent-driven v2)
+  private agentMeta: Map<string, { protocol: number; deviceId?: string; version?: string }> = new Map();
+  // Latest v2 STATUS per user (kept after disconnect so the UI can show "last seen")
+  private v2Status: Map<string, { status: Record<string, unknown>; lastStatusAt: string }> = new Map();
 
   constructor(server: Server) {
     this.wss = new WebSocketServer({ noServer: true });
@@ -160,7 +168,11 @@ export class RecordingGateway {
           this.pendingAgents.delete(ws);
           ws.removeListener('message', onMessage);
           // Promote to authenticated agent
-          this.onConnection(ws, agentInfo.userId);
+          const protocol = msg.protocol === 2 ? 2 : 1;
+          this.onConnection(ws, agentInfo.userId, protocol, {
+            deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 100) : undefined,
+            version: typeof msg.version === 'string' ? msg.version.slice(0, 40) : undefined,
+          });
         } else {
           ws.close(4001, 'First message must be AUTH');
         }
@@ -181,36 +193,48 @@ export class RecordingGateway {
   // Connection Lifecycle
   // ─────────────────────────────────────────
 
-  private onConnection(ws: WebSocket, userId: string): void {
-    console.log(`[WS Gateway] Agent connected: ${userId}`);
+  private onConnection(ws: WebSocket, userId: string, protocol = 1, info: { deviceId?: string; version?: string } = {}): void {
+    console.log(`[WS Gateway] Agent connected: ${userId} (protocol ${protocol}${info.version ? `, v${info.version}` : ''})`);
 
-    // Replace any stale connection for this user
+    // Replace any stale connection for this user. 4002 tells a 1.11.5+ agent it
+    // was replaced by another agent of the same user (e.g. signed in on a second
+    // PC) so it backs off for minutes instead of reconnecting in 5s and
+    // replacing that agent back (endless ping-pong).
+    // ponytail: one control socket per user; key agents by device in Phase 1.
     const existing = this.agents.get(userId);
     if (existing && existing.readyState === WebSocket.OPEN) {
-      existing.close(1000, 'Replaced by new connection');
+      console.warn(`[WS Gateway] Agent ${userId} connected again — replacing the previous connection (another device signed in as the same user?)`);
+      existing.close(AGENT_REPLACED_CLOSE_CODE, 'Replaced by another agent of the same user');
     }
     this.agents.set(userId, ws);
+    this.agentMeta.set(userId, { protocol, ...info });
 
     // Update last_seen in DB (fire-and-forget)
     prisma.agentToken
       .updateMany({ where: { user_id: userId }, data: { last_seen: new Date() } })
       .catch(() => {});
 
-    // Send acknowledgement
-    this.send(ws, { type: 'CONNECTED', userId });
-
-    // Push current schedules to agent
-    this.pushSchedules(ws, userId);
-
-    // Session reconciliation: the agent sends STATUS {state, sessionId} right after
-    // CONNECTED. Reconcile on the first STATUS; fall back to 'idle' after 5s.
     const conn = { reconciled: false, timer: undefined as NodeJS.Timeout | undefined };
-    conn.timer = setTimeout(() => {
-      if (conn.reconciled) return;
+    if (protocol === 2) {
+      // v2: agent-driven. No schedules, no reconcile/adopt, no START/STOP — just the CONNECTED payload.
       conn.reconciled = true;
-      console.log(`[WS Gateway] No STATUS from ${userId} within 5s — reconciling as idle`);
-      this.reconcile(userId, 'idle', undefined);
-    }, 5000);
+      this.sendConnectedV2(ws, userId);
+    } else {
+      // Send acknowledgement
+      this.send(ws, { type: 'CONNECTED', userId });
+
+      // Push current schedules to agent
+      this.pushSchedules(ws, userId);
+
+      // Session reconciliation: the agent sends STATUS {state, sessionId} right after
+      // CONNECTED. Reconcile on the first STATUS; fall back to 'idle' after 5s.
+      conn.timer = setTimeout(() => {
+        if (conn.reconciled) return;
+        conn.reconciled = true;
+        console.log(`[WS Gateway] No STATUS from ${userId} within 5s — reconciling as idle`);
+        this.reconcile(userId, 'idle', undefined);
+      }, 5000);
+    }
 
     // Heartbeat — ping every 30s, auto-disconnect on missed pong
     let missedPongs = 0;
@@ -235,7 +259,10 @@ export class RecordingGateway {
         if (msg.type === 'PONG') {
           missedPongs = 0; // reset on valid pong
         } else {
-          if (msg.type === 'STATUS') this.onAgentStatus(userId, conn, msg);
+          if (msg.type === 'STATUS') {
+            if (protocol === 2) this.storeV2Status(userId, msg);
+            else this.onAgentStatus(userId, conn, msg);
+          }
           this.handleAgentMessage(userId, msg);
         }
       } catch (err) {
@@ -250,6 +277,7 @@ export class RecordingGateway {
       const currentWs = this.agents.get(userId);
       if (currentWs === ws) {
         this.agents.delete(userId);
+        this.agentMeta.delete(userId);
       } else {
         // A new connection has replaced this one
         console.log(`[WS Gateway] Old agent connection closed for ${userId}, but a new one is active. Skipping stop.`);
@@ -257,6 +285,9 @@ export class RecordingGateway {
       }
       
       console.log(`[WS Gateway] Agent disconnected: ${userId} (${code})`);
+
+      // v2 sessions live on the agent's segments, not on the socket: a disconnect stops nothing.
+      if (protocol === 2) return;
 
       // Give the agent a few seconds to reconnect before we close the session
       setTimeout(() => {
@@ -277,6 +308,63 @@ export class RecordingGateway {
 
     ws.on('error', (err) => {
       console.error(`[WS Gateway] Agent ${userId} socket error:`, err.message);
+    });
+  }
+
+  // ─────────────────────────────────────────
+  // Protocol 2
+  // ─────────────────────────────────────────
+
+  private async sendConnectedV2(ws: WebSocket, userId: string): Promise<void> {
+    try {
+      const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+      const rule = await ruleForUser(userId);
+      this.send(ws, {
+        type: 'CONNECTED',
+        userId,
+        protocol: 2,
+        record: !!user && user.role !== 'admin' && user.role !== 'superadmin',
+        recordingDay: rule,
+        serverTime: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error(`[WS Gateway] CONNECTED lookup failed for ${userId}:`, err.message);
+      if (ws.readyState === WebSocket.OPEN) ws.close(1011, 'Lookup failed'); // agent reconnects with backoff
+    }
+  }
+
+  private storeV2Status(userId: string, msg: any): void {
+    const str = (v: unknown, n = 100) => (typeof v === 'string' ? v.slice(0, n) : null);
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    this.v2Status.set(userId, {
+      status: {
+        state: str(msg.state, 40),
+        segmentId: str(msg.segmentId, 64),
+        sessionId: str(msg.sessionId, 64),
+        loggedIn: typeof msg.loggedIn === 'boolean' ? msg.loggedIn : null,
+        backlogChunks: num(msg.backlogChunks),
+        backlogBytes: num(msg.backlogBytes),
+        diskFreeBytes: num(msg.diskFreeBytes),
+        version: str(msg.version, 40),
+      },
+      lastStatusAt: new Date().toISOString(),
+    });
+  }
+
+  /** Every agent seen since boot: connection, protocol and the latest v2 STATUS (flat). */
+  getAgentsStatus(): Record<string, unknown>[] {
+    const ids = new Set<string>([...this.agents.keys(), ...this.v2Status.keys()]);
+    return [...ids].map((userId) => {
+      const meta = this.agentMeta.get(userId);
+      const st = this.v2Status.get(userId);
+      return {
+        userId,
+        connected: this.isConnected(userId),
+        protocol: meta?.protocol ?? (st ? 2 : null),
+        deviceId: meta?.deviceId ?? null,
+        ...(st?.status ?? {}),
+        lastStatusAt: st?.lastStatusAt ?? null,
+      };
     });
   }
 
@@ -484,6 +572,10 @@ export class RecordingGateway {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn(`[WS Gateway] Cannot broadcast to ${userId} — not connected`);
       return false;
+    }
+    if (this.agentMeta.get(userId)?.protocol === 2 && (message.type === 'START_RECORDING' || message.type === 'STOP_RECORDING')) {
+      console.log(`[WS Gateway] Not sending ${message.type} to protocol-2 agent ${userId} (agent-driven)`);
+      return true;
     }
     this.send(ws, message);
     console.log(`[WS Gateway] → ${userId}: ${message.type}`);

@@ -86,3 +86,24 @@ export const CHUNK_RETRY_CONFIG = {
   maxRetries: 5,
   baseDelayMs: 2000,
 };
+
+// ─────────────────────────────────────────
+// Recording v2 (docs/recording-v2.md)
+// ─────────────────────────────────────────
+
+export const RECORDING_V2_SEGMENTS_ENDPOINT = `${API_BASE}/recording/v2/segments`;
+export const recordingV2SegmentUrl = (segmentId, suffix = '') =>
+  `${RECORDING_V2_SEGMENTS_ENDPOINT}/${encodeURIComponent(segmentId)}${suffix}`;
+
+export const RECORDING_PROTOCOL = 2;
+export const RECORDING_FPS = 5;                       // max capture frame rate
+export const RECORDING_VIDEO_BPS = 600_000;           // VP8 target
+export const RECORDING_TIMESLICE_MS = 10_000;         // one chunk per timeslice
+export const RECORDING_MAX_WIDTH = 1280;
+export const RECORDING_MAX_HEIGHT = 720;
+export const RECORDING_SEGMENT_MAX_MS = 60 * 60 * 1000; // rotate segment hourly
+export const RECORDING_WATCHDOG_MS = 3 * RECORDING_TIMESLICE_MS; // no chunk for 3 slices → restart
+export const RECORDING_RESTART_BACKOFF_CAP_MS = 5 * 60 * 1000;
+export const RECORDING_DISK_LOW_BYTES = 2 * 1024 ** 3;      // pause recording below this
+export const RECORDING_DISK_RESUME_BYTES = 2.5 * 1024 ** 3; // resume above this (hysteresis)
+export const RECORDING_STATUS_INTERVAL_MS = 60_000;

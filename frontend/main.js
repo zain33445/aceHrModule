@@ -20,7 +20,7 @@ import { startMonitor, stopMonitor, setUserId } from './electron/monitor.js';
 import { logger } from './electron/logger.js';
 
 // Recording system modules (NEW)
-import { initRecorderMain, getRecordingState, flushAndStop } from './electron/recorder-main.js';
+import { initRecorderMain, getRecordingState, flushAndStop, setLoggedIn } from './electron/recorder-main.js';
 import { initWsClient, setWsUserId, setSessionToken, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
 import { stopScheduler } from './electron/scheduler.js';
 import { initNotificationClient, setNotificationUserId, shutdownNotificationClient } from './electron/notification-client.js';
@@ -585,9 +585,13 @@ app.whenReady().then(() => {
   ipcMain.on('set-user-id', (event, userId) => {
     setUserId(userId);
     setWsUserId(userId); // Also update the recording WS client
+    setLoggedIn(true); // a user is signed in: chunks are no longer flagged loggedOut
     setNotificationUserId(userId); // Connect notification WS
     logger.info(`Main process received userId from frontend: ${userId}`);
   });
+
+  // Logout from the renderer: chunks recorded from now on are flagged loggedOut
+  ipcMain.on('set-logged-in', (_event, loggedIn) => setLoggedIn(!!loggedIn));
 
   // Web session JWT from the renderer: used to mint the recording agent token
   ipcMain.on('set-session-token', (_event, token) => {

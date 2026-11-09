@@ -11,8 +11,10 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { WS_ENDPOINT, AGENT_AUTH_ENDPOINT, AGENT_TOKEN_FILE } from './config.js';
-import { startRecording, stopRecording, getRecordingState, handleWebRtcMessage } from './recorder-main.js';
+import { randomUUID } from 'crypto';
+import { WS_ENDPOINT, AGENT_AUTH_ENDPOINT, AGENT_TOKEN_FILE, RECORDING_PROTOCOL, RECORDING_STATUS_INTERVAL_MS } from './config.js';
+import { handleWebRtcMessage, setRecordPolicy, getRecorderStatus, addStatusListener } from './recorder-main.js';
+import { setSyncEnabled } from './sync-v2.js';
 import { applySchedules } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +35,12 @@ let _lastMessageAt = 0;
 let _livenessTimer = null;
 const LIVENESS_TIMEOUT_MS = 75_000; // server PINGs every 30s
 const AGENT_AUTH_TIMEOUT_MS = 15_000;
+const REPLACED_BACKOFF_MS = 5 * 60_000; // after close 4002 (replaced by another agent of this user)
+const CLOCK_SKEW_WARN_MS = 60_000;
+let _statusTimer = null;
+let _statusHooked = false;
+let _warnedOldServer = false;
+let _deviceId = null;
 
 // ─── Token Storage ────────────────────────
 function _tokenPath() {
@@ -42,6 +50,9 @@ function _tokenPath() {
 // One agent token per user who has signed in on this PC, so chunks recorded
 // for a previous user still upload under that user's identity.
 let _tokens = {}; // { [userId]: token }
+// Recording policy per user, from the last protocol-2 CONNECTED, so recording
+// can start at boot even when the server is unreachable.
+let _policies = {}; // { [userId]: { record: boolean, recordingDay: {boundaryMinutes, shiftStartMinutes} } }
 
 /** Loads every cached token. Returns the userId that was current when saved. */
 function _loadTokens() {
@@ -53,6 +64,7 @@ function _loadTokens() {
     _tokens = data?.tokens && typeof data.tokens === 'object'
       ? { ...data.tokens }
       : (data?.token && lastUser ? { [lastUser]: data.token } : {}); // pre-map format
+    _policies = data?.policies && typeof data.policies === 'object' ? { ...data.policies } : {};
     return lastUser;
   } catch { /* ignore */ }
   return null;
@@ -62,6 +74,7 @@ function _saveTokens() {
   try {
     fs.writeFileSync(_tokenPath(), JSON.stringify({
       tokens: _tokens,
+      policies: _policies,
       // Current pair kept at top level so an older agent build can still read it.
       token: _agentToken,
       userId: _agentTokenUserId,
@@ -75,6 +88,27 @@ function _clearToken() {
   _agentToken = null;
   _agentTokenUserId = null;
   _saveTokens();
+}
+
+/** Stable per-install id, persisted once in userData/device-id. */
+export function getDeviceId() {
+  if (_deviceId) return _deviceId;
+  const p = path.join(app.getPath('userData'), 'device-id');
+  try { _deviceId = fs.readFileSync(p, 'utf8').trim(); } catch { /* first run */ }
+  if (!_deviceId) {
+    _deviceId = randomUUID();
+    try { fs.writeFileSync(p, _deviceId, { flag: 'wx' }); }
+    catch { try { _deviceId = fs.readFileSync(p, 'utf8').trim() || _deviceId; } catch { /* keep generated */ } }
+  }
+  return _deviceId;
+}
+
+/** Tell the recorder who records (cached policy of the current agent user). */
+function _applyPolicy() {
+  const u = _agentTokenUserId;
+  if (!u) return; // token lost (4001): keep recording as-is rather than stopping
+  const p = _policies[u];
+  setRecordPolicy({ userId: u, record: !!p?.record, recordingDay: p?.recordingDay });
 }
 
 /** Returns the current agent JWT (injected into recorder-main) */
@@ -157,6 +191,8 @@ export async function initWsClient(userId) {
   const lastUser = _loadTokens();
   const actAs = userId != null ? String(userId) : lastUser;
   if (actAs && _tokens[actAs]) { _agentToken = _tokens[actAs]; _agentTokenUserId = actAs; }
+  if (!_statusHooked) { _statusHooked = true; addStatusListener(() => _sendStatus()); }
+  _applyPolicy(); // records from boot using the cached flag, even offline
   if (!_agentToken && userId) {
     logger.info('[WS Client] No cached token — fetching from backend...');
     if (!(await refreshAgentToken())) {
@@ -195,24 +231,21 @@ export function setWsUserId(userId) {
 }
 
 /**
- * A different user now owns this agent. The running recording belongs to the
- * previous user's session, so stop it (its final chunk is flushed and later
- * uploaded with that user's token); the server then starts a session for the
- * new user when we report 'idle'/'stopping' on reconnect.
+ * A different user now owns this agent. The recorder rotates to a new segment
+ * owned by the new user (the old segment keeps its owner and uploads with that
+ * user's token); a user the server has never seen has no cached policy, so it is
+ * not recorded until its first CONNECTED.
  */
 function _onUserSwitch(prevUser) {
-  const { state, sessionId } = getRecordingState();
-  logger.info(`[WS Client] User switched ${prevUser} → ${_agentTokenUserId}`);
-  if (state === 'recording' || state === 'starting') {
-    logger.info(`[WS Client] Stopping session ${sessionId} of previous user ${prevUser}`);
-    stopRecording();
-  }
+  logger.info(`[WS Client] User switched ${prevUser} -> ${_agentTokenUserId}`);
+  _applyPolicy();
 }
 
 export function shutdownWsClient() {
   _isShuttingDown = true;
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_livenessTimer) { clearInterval(_livenessTimer); _livenessTimer = null; }
+  if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
   const old = _ws;
   _ws = null; // detach first so the socket's own listeners ignore the close
   if (old) { try { old.close(); } catch { /* ignore */ } }
@@ -242,8 +275,10 @@ function _connect() {
       _reconnectDelay = 5000; // reset backoff
       _lastMessageAt = Date.now();
 
-      if (_agentToken) {
-        sendWsMessage({ type: 'AUTH', token: _agentToken });
+      if (_agentToken) _sendAuth();
+      if (!_statusTimer) {
+        _statusTimer = setInterval(() => _sendStatus(), RECORDING_STATUS_INTERVAL_MS);
+        if (typeof _statusTimer.unref === 'function') _statusTimer.unref();
       }
     });
 
@@ -262,6 +297,14 @@ function _connect() {
       if (_ws !== sock) return; // a replaced socket closing must not touch current state
       _ws = null;
       if (_isShuttingDown) return;
+      if (event.code === 4002) {
+        // Another agent of the same user (e.g. a second PC) replaced us. Coming
+        // straight back would replace it in turn, forever. Recording and uploads
+        // carry on meanwhile — only the control socket waits.
+        logger.warn(`[WS Client] Replaced by another agent signed in as this user — reconnecting in ${REPLACED_BACKOFF_MS / 60000} min`);
+        _scheduleReconnect(REPLACED_BACKOFF_MS);
+        return;
+      }
       logger.warn(`[WS Client] Disconnected (${event.code}). Reconnecting in ${_reconnectDelay / 1000}s...`);
       if (event.code === 4001) {
         // Auth rejected: drop the cached agent token and try to mint a new one.
@@ -297,13 +340,14 @@ function _ensureLivenessTimer() {
   if (typeof _livenessTimer.unref === 'function') _livenessTimer.unref();
 }
 
-function _scheduleReconnect() {
+function _scheduleReconnect(delayOverride) {
   if (_reconnectTimer || _isShuttingDown) return;
+  const delay = typeof delayOverride === 'number' ? delayOverride : _reconnectDelay;
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
-    _reconnectDelay = Math.min(_reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    if (typeof delayOverride !== 'number') _reconnectDelay = Math.min(_reconnectDelay * 2, MAX_RECONNECT_DELAY);
     _connect();
-  }, _reconnectDelay);
+  }, delay);
 }
 
 function _reconnect() {
@@ -321,14 +365,9 @@ function _handleMessage(msg) {
 
   switch (msg.type) {
     case 'START_RECORDING':
-      // Whatever the outcome, report the agent's REAL state so the server can
-      // adopt the session we actually record into.
-      startRecording(msg.sessionId, msg.quality || '720p').then(() => _sendStatus());
-      break;
-
     case 'STOP_RECORDING':
-      stopRecording();
-      _sendStatus('stopping');
+      // Recording v2 is agent-driven: the server no longer starts/stops it.
+      logger.info(`[WS Client] Ignoring ${msg.type} - recording is agent-driven (protocol 2)`);
       break;
 
     case 'SCHEDULE':
@@ -353,19 +392,17 @@ function _handleMessage(msg) {
       break;
 
     case 'CONNECTED':
-      logger.info('[WS Client] Gateway acknowledged connection');
-      // Now that we're authenticated, send initial status
-      _sendStatus();
+      _onConnected(msg);
       break;
 
     case 'AUTH_REQUIRED':
       logger.info('[WS Client] Gateway requires authentication');
       if (_agentToken) {
-        sendWsMessage({ type: 'AUTH', token: _agentToken });
+        _sendAuth();
       } else if (_currentUserId) {
         refreshAgentToken().then((ok) => {
           if (ok) {
-            sendWsMessage({ type: 'AUTH', token: _agentToken });
+            _sendAuth();
           } else {
             logger.error('[WS Client] Cannot authenticate — no agent token');
           }
@@ -379,13 +416,48 @@ function _handleMessage(msg) {
 }
 
 // ─── Outbound Messages ────────────────────
-function _sendStatus(overrideState) {
-  const { state, sessionId } = getRecordingState();
+function _sendAuth() {
+  sendWsMessage({
+    type: 'AUTH',
+    token: _agentToken,
+    protocol: RECORDING_PROTOCOL,
+    deviceId: getDeviceId(),
+    version: app.getVersion(),
+  });
+}
+
+/** CONNECTED {protocol:2, userId, record, recordingDay, serverTime} (docs/recording-v2.md section 5). */
+function _onConnected(msg) {
+  logger.info('[WS Client] Gateway acknowledged connection');
+  if (msg.protocol === RECORDING_PROTOCOL) {
+    setSyncEnabled(true);
+    const t = typeof msg.serverTime === 'number' ? msg.serverTime : Date.parse(msg.serverTime);
+    if (Number.isFinite(t)) {
+      const skew = Date.now() - t;
+      const line = `[WS Client] Clock skew vs server: ${(skew / 1000).toFixed(1)}s`;
+      if (Math.abs(skew) > CLOCK_SKEW_WARN_MS) logger.warn(line); else logger.info(line);
+    }
+    const uid = String(msg.userId ?? _agentTokenUserId ?? '');
+    if (uid) {
+      _policies[uid] = { record: !!msg.record, recordingDay: msg.recordingDay ?? null };
+      _saveTokens();
+      if (uid === _agentTokenUserId) _applyPolicy();
+    }
+  } else if (!_warnedOldServer) {
+    // Old server: keep recording locally into the v2 spool, upload nothing
+    // (sync idles). New recordings never fall back to the v1 protocol.
+    _warnedOldServer = true;
+    logger.warn('[WS Client] Server did not answer with protocol 2 - recording locally, v2 upload disabled until the server is upgraded');
+  }
+  _sendStatus();
+}
+
+function _sendStatus() {
   sendWsMessage({
     type: 'STATUS',
-    state: overrideState ?? state,
-    sessionId: sessionId ?? undefined,
+    ...getRecorderStatus(),
     userId: _currentUserId,
+    version: app.getVersion(),
   });
 }
 

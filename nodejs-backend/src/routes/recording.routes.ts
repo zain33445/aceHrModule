@@ -20,11 +20,13 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import jwt from 'jsonwebtoken';
 import { requireAdmin } from '../middleware/requireAdmin';
+import { requireRecordingAccess } from '../middleware/requireRecordingAccess';
 import { requireAgentToken } from '../middleware/requireAgentToken';
 import { verifyUserToken, findSessionUser, TOKEN_EXPIRED_CODE } from '../middleware/requireUser';
 import { getGateway } from '../gateways/recording.gateway';
 import * as RecordingService from '../services/recording.service';
 import { recordingEmitter, HttpError, isValidSessionId, startsWithEbml } from '../services/recording.service';
+import { assembleOnDemand, getRetentionDays, setRetentionDays, RETENTION_VALUES } from '../services/recording-v2.service';
 import prisma from '../prisma';
 
 const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
@@ -152,7 +154,7 @@ router.post('/session/stop', requireAdmin, async (req: Request, res: Response) =
  * GET /api/recording/sessions?userId=<optional>
  * Returns up to 100 most recent sessions.
  */
-router.get('/sessions', requireAdmin, async (req: Request, res: Response) => {
+router.get('/sessions', requireRecordingAccess, async (req: Request, res: Response) => {
   const { userId } = req.query;
   try {
     const sessions = await RecordingService.listSessions(userId as string | undefined);
@@ -166,7 +168,7 @@ router.get('/sessions', requireAdmin, async (req: Request, res: Response) => {
  * GET /api/recording/sessions/:id
  * Returns session detail including chunk list.
  */
-router.get('/sessions/:id', requireAdmin, async (req: Request, res: Response) => {
+router.get('/sessions/:id', requireRecordingAccess, async (req: Request, res: Response) => {
   try {
     const session = await RecordingService.getSession(String(req.params.id));
     if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -180,12 +182,18 @@ router.get('/sessions/:id', requireAdmin, async (req: Request, res: Response) =>
  * GET /api/recording/sessions/:id/file
  * Streams the assembled WebM recording (supports HTTP Range).
  */
-router.get('/sessions/:id/file', requireAdmin, async (req: Request, res: Response) => {
+router.get('/sessions/:id/file', requireRecordingAccess, async (req: Request, res: Response) => {
   try {
     const session = await RecordingService.getSession(String(req.params.id));
     if (!session) return res.status(404).json({ error: 'Session not found' });
 
-    if (session.status !== 'assembled' || !session.file_path) {
+    if (session.recording_date) {
+      // v2: kick off assembly of unassembled data in the background, serve the last good generation.
+      const assembling = await assembleOnDemand(session.id);
+      if (!session.file_path) {
+        return res.status(409).json({ error: 'Recording not yet assembled', status: session.status, assembling });
+      }
+    } else if (session.status !== 'assembled' || !session.file_path) {
       return res.status(409).json({
         error: 'Recording not yet assembled',
         status: session.status,
@@ -201,7 +209,8 @@ router.get('/sessions/:id/file', requireAdmin, async (req: Request, res: Respons
     }
 
     const employeeName = (session.employee?.name ?? 'unknown').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
-    const filename = `recording-${employeeName}-${session.id.substring(0, 8)}.webm`.replace(/[^A-Za-z0-9._-]/g, '-');
+    const dayPart = session.recording_date ? `${session.recording_date.toISOString().slice(0, 10)}-` : '';
+    const filename = `recording-${employeeName}-${dayPart}${session.id.substring(0, 8)}.webm`.replace(/[^A-Za-z0-9._-]/g, '-');
 
     res.setHeader('Content-Type', 'video/webm');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -258,7 +267,7 @@ const waitDrain = (res: Response) =>
  * GET /api/recording/sessions/:sessionId/stream
  * Live HTTP fallback: streams the chunks of the LAST WebM run, then new chunks.
  */
-router.get('/sessions/:sessionId/stream', requireAdmin, async (req: Request, res: Response) => {
+router.get('/sessions/:sessionId/stream', requireRecordingAccess, async (req: Request, res: Response) => {
   const sessionId = String(req.params.sessionId);
   let closed = false;
   let ready = false;
@@ -295,11 +304,15 @@ router.get('/sessions/:sessionId/stream', requireAdmin, async (req: Request, res
 
     const session = await prisma.recordingSession.findUnique({
       where: { id: sessionId },
-      select: { status: true },
+      select: { status: true, recording_date: true },
     });
     if (!session) {
       cleanup();
       return res.status(404).send('Session not found');
+    }
+    if (session.recording_date) {
+      cleanup();
+      return res.status(409).send('Live HTTP stream is not available for v2 sessions');
     }
     const chunks = await prisma.recordingChunk.findMany({
       where: { session_id: sessionId },
@@ -326,7 +339,7 @@ router.get('/sessions/:sessionId/stream', requireAdmin, async (req: Request, res
       if (closed) return;
       try {
         for await (const buf of fs.createReadStream(c.file_path)) await write(buf as Buffer);
-        sent.add(c.chunk_index);
+        sent.add(c.chunk_index!);
       } catch { /* missing file — skip */ }
     }
 
@@ -437,7 +450,7 @@ router.post('/chunks/check', requireAgentToken, async (req: Request, res: Respon
  * GET /api/recording/status/:userId
  * Returns whether the agent is connected and any active session.
  */
-router.get('/status/:userId', requireAdmin, async (req: Request, res: Response) => {
+router.get('/status/:userId', requireRecordingAccess, async (req: Request, res: Response) => {
   const userId = String(req.params.userId);
   try {
     const liveStatus = RecordingService.getLiveStatus(userId);
@@ -462,10 +475,41 @@ router.get('/status/:userId', requireAdmin, async (req: Request, res: Response) 
  * GET /api/recording/agents
  * Returns list of currently connected agent userIds.
  */
-router.get('/agents', requireAdmin, (req: Request, res: Response) => {
+router.get('/agents', requireRecordingAccess, (req: Request, res: Response) => {
   const gateway = getGateway();
   const agents = gateway?.getConnectedAgents() ?? [];
   res.json({ connectedAgents: agents, count: agents.length });
+});
+
+/**
+ * GET /api/recording/agents-status
+ * Every agent seen since boot: connection + protocol + latest v2 STATUS fields.
+ */
+router.get('/agents-status', requireRecordingAccess, (req: Request, res: Response) => {
+  res.json(getGateway()?.getAgentsStatus() ?? []);
+});
+
+/** GET /api/recording/settings — { retentionDays } (0 = keep forever). */
+router.get('/settings', requireRecordingAccess, async (req: Request, res: Response) => {
+  try {
+    res.json({ retentionDays: await getRetentionDays() });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to read settings' });
+  }
+});
+
+/** PUT /api/recording/settings (admin) — body { retentionDays: 0|30|60|90 } */
+router.put('/settings', requireAdmin, async (req: Request, res: Response) => {
+  const days = req.body?.retentionDays;
+  if (!Number.isInteger(days) || !RETENTION_VALUES.includes(days)) {
+    return res.status(400).json({ error: 'retentionDays must be one of 0, 30, 60, 90' });
+  }
+  try {
+    await setRetentionDays(days, (req as any).adminUser.id);
+    res.json({ retentionDays: days });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
 });
 
 /**
@@ -473,7 +517,7 @@ router.get('/agents', requireAdmin, (req: Request, res: Response) => {
  * Issues a short-lived JWT for admin WebSocket authentication.
  * Headers: Authorization: Bearer <admin session token>
  */
-router.post('/admin-ws-token', requireAdmin, (req: Request, res: Response) => {
+router.post('/admin-ws-token', requireRecordingAccess, (req: Request, res: Response) => {
   const admin = (req as any).adminUser;
   const token = jwt.sign(
     { sub: admin.id, role: 'admin-ws' },

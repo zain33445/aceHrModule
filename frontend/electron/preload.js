@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Existing: send authenticated userId to main process
   setUserId: (userId) => ipcRenderer.send('set-user-id', String(userId)),
 
+  // Logged-in flag (false on logout; set-user-id means true) — recorded per chunk
+  setLoggedIn: (loggedIn) => ipcRenderer.send('set-logged-in', !!loggedIn),
+
   // Web session JWT → main process (used to obtain the recording agent token)
   setSessionToken: (token) => ipcRenderer.send('set-session-token', String(token ?? '')),
 

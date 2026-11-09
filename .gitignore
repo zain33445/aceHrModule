@@ -19,3 +19,5 @@ nodejs-backend.backup/
 db_backups/
 *_backup_*.sql
 *.sql
+# Prisma migrations are code, not dumps (the backend applies recording_v2 at start)
+!nodejs-backend/prisma/migrations/**/migration.sql

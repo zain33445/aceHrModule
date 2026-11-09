@@ -1,15 +1,16 @@
 /**
- * recorder-main.js — Recording Orchestrator (Main Process)
- * Manages the hidden BrowserWindow, chunk I/O, and chunk upload queue.
+ * recorder-main.js — Recording Orchestrator (Main Process), recording v2
  *
- * Durability rules (chunks must never be lost):
- *  - a chunk is written to `<name>.tmp`, fsynced, then renamed into place
- *    BEFORE it is queued for upload;
- *  - the queue holds file paths only (the file is read at upload time);
- *  - uploads retry forever with exponential backoff;
- *  - after a 2xx an empty `<chunk>.ok` marker is written; chunks are never
- *    deleted here (local-retention.js removes old synced ones);
- *  - on startup every chunk without a marker is re-queued.
+ * Always-on, agent-driven recording (docs/recording-v2.md §8):
+ *  - records while the current agent user's cached `record` flag is true;
+ *  - one segment = one MediaRecorder run; new segment on start, every 60 min,
+ *    at the recording-day boundary, on user switch, on watchdog restart and on
+ *    capture source change;
+ *  - every chunk is written durably (tmp → fsync → rename) into
+ *    <userData>/recordings/v2/<userId>/<segmentId>/ BEFORE anything else, and
+ *    is never overwritten or deleted until the server confirmed it (sync-v2.js);
+ *  - folders directly under <userData>/recordings/<sessionId>/ are legacy
+ *    (Phase 0 / older builds): they keep the old upload path below, untouched.
  */
 import electronPkg from 'electron';
 const { BrowserWindow, desktopCapturer, ipcMain, app } = electronPkg;
@@ -18,34 +19,65 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { RECORDING_CHUNK_ENDPOINT, RECORDING_CHUNK_CHECK_ENDPOINT, DEFAULT_QUALITY, RECORDING_CHUNK_INTERVAL_MS } from './config.js';
-import { pruneOldRecordings, RETENTION_SWEEP_INTERVAL_MS, RECORDING_RETENTION_MS } from './local-retention.js';
+import {
+  RECORDING_CHUNK_ENDPOINT, RECORDING_CHUNK_CHECK_ENDPOINT,
+  RECORDING_FPS, RECORDING_VIDEO_BPS, RECORDING_TIMESLICE_MS, RECORDING_MAX_WIDTH, RECORDING_MAX_HEIGHT,
+  RECORDING_SEGMENT_MAX_MS, RECORDING_WATCHDOG_MS, RECORDING_RESTART_BACKOFF_CAP_MS,
+  RECORDING_DISK_LOW_BYTES, RECORDING_DISK_RESUME_BYTES,
+} from './config.js';
+import { pruneOldRecordings, pruneV2Spool, RECORDING_RETENTION_MS, V2_SWEEP_INTERVAL_MS } from './local-retention.js';
+import { recordingDateFor, nextBoundaryInstant, normalizeRule } from './recording-day.js';
+import * as spool from './spool-v2.js';
+import { initSyncV2, kickSync, getBacklog } from './sync-v2.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ── legacy upload constants ──
 const UPLOAD_TIMEOUT_MS = 60_000;
 const BACKOFF_BASE_MS = 2000;
 const BACKOFF_CAP_MS = 60_000;
 const STALE_TMP_MS = 60 * 60 * 1000;
 const PARKED_RETRY_MS = 30 * 60 * 1000;
-const _parked = []; // chunks the server refused (4xx); retried every 30 min
-
-let _recorderWindow = null;
-let _windowPromise = null; // single in-flight window creation
-let _state = 'idle'; // idle | starting | recording | stopping | permission_denied
-let _sessionId = null;
+const _parked = []; // legacy chunks the server refused (4xx); retried every 30 min
 let _uploadQueue = []; // [{ sessionId, chunkIndex, filePath }]
 const _queuedPaths = new Set(); // file paths currently in _uploadQueue
-const _pendingWrites = new Set(); // in-flight chunk writes (for flushAndStop)
-const _stopWaiters = new Set();
 let _isUploading = false;
+
+// ── v2 state ──
+let _state = 'idle'; // idle | starting | recording | stopping | permission_denied | disk_low | error
+let _recorderWindow = null;
+let _windowPromise = null; // single in-flight window creation
 let _onStateChange = null;
 let _getToken = null;
 let _listenersReady = false;
 let _warmupDone = false;
-let _startRetries = 0;
-const MAX_START_RETRIES = 3;
+
+let _userId = null;       // agent user (owner of new segments)
+let _record = false;      // cached `record` flag of that user
+let _rule = null;         // cached recordingDay rule
+let _loggedIn = false;    // renderer reported a signed-in user
+let _seg = null;          // segment being recorded: { segmentId, userId, dir, startedAt, ... }
+const _known = new Map();   // segmentId → meta, until closed on disk
+const _closing = new Map(); // segmentId → meta, asked to stop (rotation)
+const _waiters = new Map(); // segmentId → [resolve] waiting for 'segment-stopped'
+const _pendingWrites = new Map(); // segmentId → Set<Promise>
+let _intentionalStop = false;
+let _quitting = false;
+let _lastChunkAt = 0;
+let _chunksInSeg = 0;
+let _rotateAt = Infinity;
+let _sourceId = null;
+let _diskLow = false;
+let _diskFree = null;
+let _statfsUnavailable = false;
+let _restartTimer = null;
+let _restartDelay = 0;
+let _tickCount = 0;
+let _ready = Promise.resolve(); // boot recovery of segments left open by a crash
+let _chain = Promise.resolve();
+let _reconcileQueued = false;
+const _statusListeners = new Set();
 
 // ─── Init ─────────────────────────────────
 export function initRecorderMain(getToken, onStateChange) {
@@ -53,6 +85,18 @@ export function initRecorderMain(getToken, onStateChange) {
   _onStateChange = onStateChange;
   if (_listenersReady) return;
   _listenersReady = true;
+
+  initSyncV2({
+    root: _v2Root(),
+    tokenFor: async (userId) => {
+      const ws = await import('./ws-client.js');
+      return ws.getAgentTokenFor(userId) || ws.getAgentToken();
+    },
+    refresh: async () => (await import('./ws-client.js')).refreshAgentToken(),
+  });
+  _ready = spool.recoverOpenSegments(_v2Root())
+    .then((n) => { if (n) logger.info(`[Recorder] Closed ${n} segment(s) left open by the previous run`); })
+    .catch((err) => logger.error(`[Recorder] Segment recovery failed: ${err.message}`));
 
   _startRetentionSweep();
   _scanBacklog().catch((err) => logger.error(`[Recorder] Backlog scan failed: ${err.message}`));
@@ -62,65 +106,38 @@ export function initRecorderMain(getToken, onStateChange) {
   }, PARKED_RETRY_MS);
   if (typeof parkedTimer.unref === 'function') parkedTimer.unref();
 
-  ipcMain.on('recording:chunk', (_e, { sessionId, chunkIndex, buffer }) => {
-    const p = _handleChunk(sessionId, chunkIndex, Buffer.from(buffer))
-      .catch((err) => logger.error(`[Recorder] Chunk write failed: ${err.message}`))
-      .finally(() => _pendingWrites.delete(p));
-    _pendingWrites.add(p);
+  const tick = setInterval(_tick, 10_000);
+  if (typeof tick.unref === 'function') tick.unref();
+
+  ipcMain.on('recording:chunk', (_e, msg) => _onChunk(msg || {}));
+
+  ipcMain.on('recording:segment-started', (_e, { segmentId, mime, width, height } = {}) => {
+    const meta = _known.get(segmentId);
+    if (!meta) return;
+    Object.assign(meta, { mime, width, height });
+    spool.updateSegment(meta.dir, { mime, width, height })
+      .catch((err) => logger.warn(`[Recorder] segment.json update failed: ${err.message}`));
+    logger.info(`[Recorder] Segment ${segmentId} recording (${mime} ${width}x${height})`);
+    if (_seg?.segmentId === segmentId) _setState('recording');
+    _emitStatus();
   });
 
-  ipcMain.on('recording:state', (_e, { state, sessionId }) => {
-    logger.info(`[Recorder] State → ${state} (session: ${sessionId})`);
-    if (state !== 'recording' && sessionId && _sessionId && sessionId !== _sessionId) {
-      // An OLD recorder finishing must not reset the state of the new session.
-      logger.info(`[Recorder] Ignoring '${state}' from previous session ${sessionId}`);
-      return;
-    }
-    if (state === 'recording') {
-      _state = 'recording';
-      _startRetries = 0; // success — reset silent retry budget
-    } else {
-      _state = 'idle';
-    }
-    if (_onStateChange) _onStateChange(state, sessionId);
-    if (state !== 'recording' && _stopWaiters.size) {
-      // Resolve flushAndStop() once the final chunk is on disk.
-      Promise.allSettled([..._pendingWrites]).then(() => {
-        for (const done of [..._stopWaiters]) done();
-      });
-    }
+  ipcMain.on('recording:segment-stopped', (_e, { segmentId, lastSeq } = {}) => {
+    _onSegmentStopped(segmentId, lastSeq).catch((err) => logger.error(`[Recorder] Segment close failed: ${err.message}`));
   });
 
-  ipcMain.on('recording:error', (_e, { code, message, sessionId }) => {
-    const sid = sessionId || _sessionId;
-    const isPermission = code === 'PERMISSION_DENIED';
-    logger.error(`[Recorder] Error [${code}]: ${message} (session: ${sid})`);
+  ipcMain.on('recording:capture-lost', (_e, { reason } = {}) => {
+    logger.warn(`[Recorder] Capture lost: ${reason}`);
+    _scheduleRestart(`capture lost (${reason})`, { graceful: true });
+  });
 
-    // Silent retry — never show UI to the end user
-    if (isPermission && sid && _startRetries < MAX_START_RETRIES) {
-      _startRetries++;
-      const delay = 2000 * _startRetries;
-      logger.warn(`[Recorder] Permission error — silent retry ${_startRetries}/${MAX_START_RETRIES} in ${delay}ms`);
-      _state = 'starting';
-      if (_onStateChange) _onStateChange('starting', sid);
-      setTimeout(() => {
-        startRecording(sid, DEFAULT_QUALITY, { retry: true }).catch((err) => {
-          logger.error(`[Recorder] Silent retry failed: ${err.message}`);
-        });
-      }, delay);
-      return;
-    }
-
-    _state = isPermission ? 'permission_denied' : 'idle';
-    if (_onStateChange) _onStateChange(isPermission ? 'permission_denied' : 'error', sid);
-
+  ipcMain.on('recording:error', (_e, { code, message, segmentId } = {}) => {
+    logger.error(`[Recorder] Error [${code}]: ${message} (segment: ${segmentId})`);
+    if (segmentId && _seg && segmentId !== _seg.segmentId) return; // an old segment's error
+    if (code === 'PERMISSION_DENIED') _setState('permission_denied');
     // Forward to backend so the admin dashboard can see it (employee never sees this)
-    _forwardErrorToGateway({
-      type: 'ERROR',
-      code: code || 'START_FAILED',
-      message: message || 'Recording failed',
-      sessionId: sid ?? undefined,
-    });
+    _forwardErrorToGateway({ type: 'ERROR', code: code || 'START_FAILED', message: message || 'Recording failed' });
+    _scheduleRestart(`${code || 'error'}: ${message}`, { graceful: true });
   });
 
   ipcMain.on('recording:warmup-result', (_e, ok) => {
@@ -134,7 +151,8 @@ export function initRecorderMain(getToken, onStateChange) {
     }).catch(err => logger.error(`[Recorder] WebRTC WS send error: ${err.message}`));
   });
 
-  logger.info('[Recorder Main] Initialized');
+  _checkDisk();
+  logger.info('[Recorder Main] Initialized (recording v2)');
 }
 
 function _forwardErrorToGateway(msg) {
@@ -143,11 +161,67 @@ function _forwardErrorToGateway(msg) {
   }).catch(err => logger.error(`[Recorder] Gateway error forward failed: ${err.message}`));
 }
 
+// ─── Policy / status API (called by ws-client / main.js) ───
+/**
+ * Who records and under which recording-day rule. Called from the cache at
+ * boot, on user switch and on every protocol-2 CONNECTED.
+ */
+export function setRecordPolicy({ userId, record, recordingDay }) {
+  _userId = userId != null ? String(userId) : null;
+  _record = !!record;
+  _rule = normalizeRule(recordingDay);
+  if (_seg) _rotateAt = _computeRotateAt(_seg);
+  _requestReconcile('policy');
+}
+
+export function setLoggedIn(loggedIn) {
+  const v = !!loggedIn;
+  if (v === _loggedIn) return;
+  _loggedIn = v;
+  logger.info(`[Recorder] Logged-in flag → ${v}`);
+  _emitStatus();
+}
+
+export function addStatusListener(fn) { _statusListeners.add(fn); }
+
+export function getRecorderStatus() {
+  const b = getBacklog();
+  return {
+    state: _state,
+    segmentId: _seg?.segmentId ?? null,
+    sessionId: _currentSessionId(),
+    loggedIn: _loggedIn,
+    backlogChunks: b.chunks,
+    backlogBytes: b.bytes,
+    diskFreeBytes: _diskFree,
+  };
+}
+
+export function getRecordingState() {
+  return { state: _state, sessionId: _currentSessionId(), segmentId: _seg?.segmentId ?? null };
+}
+
+function _currentSessionId() {
+  return _seg ? spool.readRegisteredSessionSync(_seg.dir) : null;
+}
+
+function _emitStatus() {
+  for (const fn of _statusListeners) { try { fn(); } catch { /* listener bug must not break recording */ } }
+}
+
+function _setState(s) {
+  if (_state === s) return;
+  _state = s;
+  logger.info(`[Recorder] State → ${s}`);
+  if (_onStateChange) { try { _onStateChange(s, _currentSessionId()); } catch { /* UI gone */ } }
+  _emitStatus();
+}
+
 // ─── Preflight warm-up (no UI) ────────────
 /**
  * Silently exercises desktopCapturer + a short getUserMedia capture inside
  * the hidden recorder window so any one-time OS/Chromium grant happens at
- * idle time — not during an admin-initiated live session.
+ * idle time.
  */
 export async function warmupCapture() {
   if (_warmupDone) return true;
@@ -159,7 +233,6 @@ export async function warmupCapture() {
     }
     const win = await _ensureWindow();
     win.webContents.send('recording:warmup', { sourceId: sources[0].id });
-    // Result arrives via recording:warmup-result (async)
     return true;
   } catch (err) {
     logger.warn(`[Recorder] Warm-up failed: ${err.message}`);
@@ -167,102 +240,28 @@ export async function warmupCapture() {
   }
 }
 
-// ─── Public API ───────────────────────────
-/**
- * @param {string} sessionId
- * @param {string} [quality]
- * @param {{ retry?: boolean }} [opts] retry: internal silent retry of the same
- *   session (bypasses the "already starting" guard).
- */
-export async function startRecording(sessionId, quality = DEFAULT_QUALITY, opts = {}) {
-  if (_state === 'recording') {
-    logger.warn(`[Recorder] Already recording ${_sessionId}`);
-    return false;
-  }
-  if (_state === 'starting' && _sessionId === sessionId && !opts.retry) {
-    logger.warn(`[Recorder] Start already in progress for ${sessionId}`);
-    return false;
-  }
-  try {
-    // New session id ⇒ fresh retry budget (silent retries keep the same session)
-    if (_sessionId !== sessionId) _startRetries = 0;
-    _sessionId = sessionId;
-    _state = 'starting';
-    await fs.promises.mkdir(_sessionDir(sessionId), { recursive: true });
-
-    // Remember who this session belongs to, so its chunks upload with that
-    // user's token even after someone else signs in on this PC.
-    await _writeOwner(sessionId);
-
-    // Chunk numbering continues after whatever is already on disk.
-    const startIndex = await _nextChunkIndex(sessionId);
-
-    // Ensure capture path is warm before the real start (silent, no UI)
-    if (!_warmupDone) {
-      await warmupCapture().catch(() => {});
-    }
-
-    const sources = await desktopCapturer.getSources({ types: ['screen'] });
-    if (!sources?.length) throw new Error('No screen sources found');
-
-    const win = await _ensureWindow();
-    win.webContents.send('recording:start', {
-      sessionId,
-      sourceId: sources[0].id,
-      quality,
-      chunkIntervalMs: RECORDING_CHUNK_INTERVAL_MS,
-      startIndex,
-    });
-    logger.info(`[Recorder] Start sent to renderer — session ${sessionId} (startIndex ${startIndex})`);
-    return true;
-  } catch (err) {
-    logger.error(`[Recorder] Start failed: ${err.message}`);
-    _state = 'idle';
-    _forwardErrorToGateway({
-      type: 'ERROR',
-      code: 'START_FAILED',
-      message: err.message,
-      sessionId,
-    });
-    if (_onStateChange) _onStateChange('error', sessionId);
-    return false;
-  }
-}
-
-export function stopRecording() {
-  if (_state !== 'recording' && _state !== 'starting') return false;
-  _state = 'stopping';
-  if (_recorderWindow && !_recorderWindow.isDestroyed()) {
-    _recorderWindow.webContents.send('recording:stop');
-    return true;
-  }
-  _state = 'idle';
+// ─── Legacy entry points ──────────────────
+/** Recording v2 is agent-driven: server/scheduler start requests are ignored. */
+export async function startRecording() {
+  logger.warn('[Recorder] startRecording() ignored — recording v2 is agent-driven');
   return false;
 }
 
-/**
- * Stop the recorder and wait until the renderer reports it stopped and the
- * final chunk is on disk (or the timeout elapses). Used before app quit so the
- * in-progress segment is not lost.
- */
-export function flushAndStop(timeoutMs = 4000) {
-  if (_state !== 'recording' && _state !== 'starting') {
-    return Promise.allSettled([..._pendingWrites]).then(() => {});
-  }
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      _stopWaiters.delete(done);
-      resolve();
-    };
-    const timer = setTimeout(done, timeoutMs);
-    _stopWaiters.add(done);
-    if (!stopRecording()) done();
-  });
+export function stopRecording() {
+  if (!_seg) return false;
+  _serial(() => _stopSegment('stopRecording()'));
+  return true;
 }
 
-export function getRecordingState() {
-  return { state: _state, sessionId: _sessionId };
+/**
+ * Stop the recorder and wait until the final chunk is on disk and the segment
+ * is closed (or the timeout elapses). Used before app quit.
+ */
+export function flushAndStop(timeoutMs = 4000) {
+  _quitting = true;
+  if (_restartTimer) { clearTimeout(_restartTimer); _restartTimer = null; }
+  const stop = _serial(() => _stopSegment('quit', { timeoutMs: Math.max(500, timeoutMs - 500) }));
+  return Promise.race([stop, _sleep(timeoutMs)]).then(() => Promise.allSettled(_allPending())).then(() => {});
 }
 
 export async function handleWebRtcMessage(msg) {
@@ -274,9 +273,285 @@ export async function handleWebRtcMessage(msg) {
   }
 }
 
+// ─── Control loop ─────────────────────────
+const _wantRecording = () => !_quitting && !!_userId && _record && !_diskLow;
+
+function _serial(fn) {
+  const p = _chain.then(fn).catch((err) => logger.error(`[Recorder] Control step failed: ${err.message}`));
+  _chain = p;
+  return p;
+}
+
+function _requestReconcile(reason) {
+  if (_reconcileQueued) return;
+  _reconcileQueued = true;
+  _serial(async () => {
+    _reconcileQueued = false;
+    await _ready;
+    await _reconcileNow(reason);
+  });
+}
+
+async function _reconcileNow(reason) {
+  if (_wantRecording()) {
+    if (!_seg) {
+      if (!_restartTimer && _state !== 'stopping') await _beginSegment(reason, { newCapture: true });
+    } else if (_seg.userId !== _userId) {
+      await _beginSegment('user switch'); // same capture, new segment owned by the new user
+    }
+    return;
+  }
+  if (_seg || _closing.size) await _stopSegment(reason);
+  if (!_quitting) _setState(_diskLow ? 'disk_low' : 'idle');
+}
+
+const _computeRotateAt = (seg) => {
+  const t = Date.parse(seg.startedAt);
+  return Math.min(t + RECORDING_SEGMENT_MAX_MS, nextBoundaryInstant(t, _rule));
+};
+
+/** Start a new segment. With a segment already running this is a rotation (same stream). */
+async function _beginSegment(reason, { newCapture = false } = {}) {
+  await _ready;
+  if (!_wantRecording()) return;
+  try {
+    if (!_seg) _setState('starting');
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    if (!sources?.length) throw new Error('No screen sources found');
+    const win = await _ensureWindow();
+    const { getDeviceId } = await import('./ws-client.js');
+
+    const startedAt = new Date();
+    const segmentId = crypto.randomUUID();
+    const info = {
+      segmentId,
+      userId: _userId,
+      recordingDate: recordingDateFor(startedAt, _rule),
+      startedAt: startedAt.toISOString(),
+      mime: null, width: null, height: null,
+      deviceId: getDeviceId(),
+    };
+    const dir = spool.segmentDir(_v2Root(), _userId, segmentId);
+    await spool.createSegment(dir, info);
+    const meta = { ...info, dir };
+
+    const prev = _seg;
+    _known.set(segmentId, meta);
+    if (prev) _closing.set(prev.segmentId, prev);
+    _seg = meta;
+    _chunksInSeg = 0;
+    _lastChunkAt = Date.now(); // watchdog clock restarts with the segment
+    _rotateAt = _computeRotateAt(meta);
+    _sourceId = sources[0].id;
+
+    win.webContents.send('recording:begin', {
+      segmentId,
+      sourceId: _sourceId,
+      newCapture,
+      timesliceMs: RECORDING_TIMESLICE_MS,
+      videoBitsPerSecond: RECORDING_VIDEO_BPS,
+      maxFps: RECORDING_FPS,
+      maxWidth: RECORDING_MAX_WIDTH,
+      maxHeight: RECORDING_MAX_HEIGHT,
+    });
+    logger.info(`[Recorder] New segment ${segmentId} (${reason}) user ${_userId} day ${info.recordingDate}${prev ? `, previous ${prev.segmentId} stopping` : ''}`);
+    _emitStatus();
+  } catch (err) {
+    logger.error(`[Recorder] Begin segment failed (${reason}): ${err.message}`);
+    _setState('error');
+    _scheduleRestart(`begin failed: ${err.message}`);
+  }
+}
+
+/** Ask the renderer to stop, wait for the final chunks, close the segment(s). */
+async function _stopSegment(reason, { timeoutMs = 5000 } = {}) {
+  const segs = [...(_seg ? [_seg] : []), ..._closing.values()];
+  logger.info(`[Recorder] Stopping (${reason}), ${segs.length} segment(s)`);
+  if (segs.length) _setState('stopping');
+  _intentionalStop = true;
+  try {
+    const win = _recorderWindow && !_recorderWindow.isDestroyed() ? _recorderWindow : null;
+    if (win) {
+      const waits = segs.map((s) => _waitStopped(s.segmentId, timeoutMs));
+      win.webContents.send('recording:stop', { release: true });
+      await Promise.all(waits);
+    }
+    for (const s of segs) if (_known.has(s.segmentId)) await _closeFromDisk(s); // renderer silent: close what is on disk
+  } finally {
+    _seg = null;
+    _closing.clear();
+    _rotateAt = Infinity;
+    _intentionalStop = false;
+  }
+  if (!_quitting) _setState(_diskLow ? 'disk_low' : 'idle');
+}
+
+function _waitStopped(segmentId, ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), ms);
+    const list = _waiters.get(segmentId) || [];
+    list.push(() => { clearTimeout(t); resolve(true); });
+    _waiters.set(segmentId, list);
+  });
+}
+
+async function _closeFromDisk(meta) {
+  await Promise.allSettled([...(_pendingWrites.get(meta.segmentId) || [])]);
+  try { await spool.closeSegment(meta.dir); } catch (err) { logger.error(`[Recorder] closeSegment failed: ${err.message}`); }
+  _known.delete(meta.segmentId);
+  _pendingWrites.delete(meta.segmentId);
+  kickSync();
+}
+
+async function _onSegmentStopped(segmentId, lastSeq) {
+  const meta = _known.get(segmentId);
+  if (meta) {
+    await Promise.allSettled([...(_pendingWrites.get(segmentId) || [])]); // last chunk durable first
+    try { await spool.closeSegment(meta.dir, lastSeq); } catch (err) { logger.error(`[Recorder] closeSegment failed: ${err.message}`); }
+    _known.delete(segmentId);
+    _pendingWrites.delete(segmentId);
+    logger.info(`[Recorder] Segment ${segmentId} closed (lastSeq ${lastSeq})`);
+  }
+  _closing.delete(segmentId);
+  for (const done of _waiters.get(segmentId) || []) done();
+  _waiters.delete(segmentId);
+  if (_seg?.segmentId === segmentId) {
+    _seg = null;
+    if (!_intentionalStop) _scheduleRestart('recorder stopped unexpectedly');
+  }
+  kickSync();
+}
+
+// ─── Chunk handling ───────────────────────
+function _allPending() {
+  return [..._pendingWrites.values()].flatMap((s) => [...s]);
+}
+
+/** Write durably (tmp → fsync → rename) as soon as the renderer hands it over. */
+function _onChunk({ segmentId, seq, capturedAt, durationMs, buffer }) {
+  if (!buffer || !buffer.byteLength) return;
+  _lastChunkAt = Date.now(); // liveness for the watchdog, before the write
+  if (_seg?.segmentId === segmentId) {
+    _chunksInSeg++;
+    if (_chunksInSeg >= 2) _restartDelay = 0; // healthy again
+  }
+  const meta = _known.get(segmentId);
+  let dir = meta?.dir;
+  if (!dir) {
+    dir = spool.orphanDir(_v2Root(), segmentId);
+    logger.error(`[Recorder] Chunk for unknown segment ${segmentId} — kept in ${dir}`);
+  }
+  const loggedOut = !_loggedIn;
+  const set = _pendingWrites.get(segmentId) || new Set();
+  _pendingWrites.set(segmentId, set);
+  const p = spool.writeChunk(dir, seq, Buffer.from(buffer), { capturedAt, durationMs, loggedOut })
+    .then((r) => {
+      logger.info(`[Recorder] Chunk ${segmentId.slice(0, 8)}/${r.seq} → disk (${Math.round(r.bytes / 1024)}KB)${r.moved ? ` [seq ${seq} was taken]` : ''}`);
+      kickSync();
+    })
+    .catch((err) => logger.error(`[Recorder] Chunk write failed (${segmentId}/${seq}): ${err.message}`))
+    .finally(() => set.delete(p));
+  set.add(p);
+}
+
+// ─── Watchdog / restarts ──────────────────
+function _scheduleRestart(reason, { graceful = false } = {}) {
+  if (_restartTimer || _quitting || !_wantRecording()) return;
+  const delay = _restartDelay;
+  _restartDelay = Math.min(RECORDING_RESTART_BACKOFF_CAP_MS, Math.max(10_000, delay * 2));
+  logger.warn(`[Recorder] Restart in ${Math.round(delay / 1000)}s — ${reason}`);
+  if (_state === 'recording') _setState('starting');
+  _restartTimer = setTimeout(() => {
+    _restartTimer = null;
+    _serial(() => _restartNow(reason, graceful));
+  }, delay);
+}
+
+async function _restartNow(reason, graceful) {
+  logger.warn(`[Recorder] RESTART (${reason})`);
+  if (graceful && _recorderWindow && !_recorderWindow.isDestroyed()) {
+    await _stopSegment(reason, { timeoutMs: 3000 });
+  } else {
+    // Renderer is hung or gone: close what is on disk, then rebuild the window.
+    const segs = [...(_seg ? [_seg] : []), ..._closing.values()];
+    _seg = null;
+    _closing.clear();
+    _destroyWindow();
+    for (const s of segs) if (_known.has(s.segmentId)) await _closeFromDisk(s);
+  }
+  if (_wantRecording()) await _beginSegment(reason, { newCapture: true });
+}
+
+function _tick() {
+  if (_quitting) return;
+  _tickCount++;
+  const now = Date.now();
+  if (_seg && _state !== 'stopping') {
+    if (now - _lastChunkAt > RECORDING_WATCHDOG_MS) {
+      _scheduleRestart(`no chunk for ${Math.round(RECORDING_WATCHDOG_MS / 1000)}s`);
+    } else if (now >= _rotateAt) {
+      _rotateAt = Infinity; // _beginSegment sets the next one
+      _serial(() => _beginSegment('rotate'));
+    }
+  } else if (_wantRecording() && !_seg && !_restartTimer && _state !== 'stopping') {
+    _requestReconcile('self-heal');
+  }
+  if (_tickCount % 6 === 0) {
+    _checkDisk();
+    _checkSource();
+  }
+}
+
+/** Capture source vanished (display changed): start a new segment on a fresh capture. */
+async function _checkSource() {
+  if (!_seg || _state !== 'recording' || !_sourceId) return;
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    if (sources?.length && !sources.some((s) => s.id === _sourceId)) {
+      _scheduleRestart(`capture source ${_sourceId} is gone`, { graceful: true });
+    }
+  } catch (err) {
+    logger.warn(`[Recorder] Source check failed: ${err.message}`);
+  }
+}
+
+async function _checkDisk() {
+  if (_statfsUnavailable) return;
+  try {
+    const st = await fs.promises.statfs(app.getPath('userData'));
+    const free = Number(st.bavail) * Number(st.bsize);
+    _diskFree = free;
+    if (!_diskLow && free < RECORDING_DISK_LOW_BYTES) {
+      _diskLow = true;
+      logger.warn(`[Recorder] Free disk ${Math.round(free / 1048576)} MB < 2 GB — recording paused (disk_low)`);
+      _requestReconcile('disk low');
+    } else if (_diskLow && free >= RECORDING_DISK_RESUME_BYTES) {
+      _diskLow = false;
+      logger.info('[Recorder] Disk space recovered — resuming recording');
+      _requestReconcile('disk recovered');
+    }
+  } catch (err) {
+    _statfsUnavailable = true;
+    logger.warn(`[Recorder] fs.statfs unavailable (${err.message}) — low-disk pause disabled`);
+  }
+}
+
 // ─── Hidden BrowserWindow ─────────────────
+function _windowAlive() {
+  return !!_recorderWindow && !_recorderWindow.isDestroyed();
+}
+
+function _destroyWindow() {
+  const w = _recorderWindow;
+  _recorderWindow = null;
+  if (w && !w.isDestroyed()) {
+    w._aceIntentional = true; // its 'closed' event must not trigger another restart
+    try { w.destroy(); } catch { /* already gone */ }
+  }
+}
+
 function _ensureWindow() {
-  if (_recorderWindow && !_recorderWindow.isDestroyed()) return Promise.resolve(_recorderWindow);
+  if (_windowAlive()) return Promise.resolve(_recorderWindow);
   if (_windowPromise) return _windowPromise; // concurrent callers share one creation
 
   _windowPromise = (async () => {
@@ -298,9 +573,15 @@ function _ensureWindow() {
     }
 
     win.on('closed', () => {
-      logger.warn('[Recorder] Hidden window closed unexpectedly');
       if (_recorderWindow === win) _recorderWindow = null;
-      if (_state === 'recording') { _state = 'idle'; if (_onStateChange) _onStateChange('error', _sessionId); }
+      if (win._aceIntentional) return;
+      logger.warn('[Recorder] Hidden window closed unexpectedly');
+      _scheduleRestart('recorder window closed');
+    });
+    win.webContents.on('render-process-gone', (_e, details) => {
+      logger.error(`[Recorder] Renderer process gone: ${details?.reason}`);
+      if (_recorderWindow === win) _destroyWindow(); // a dead window must not be reused
+      _scheduleRestart(`render-process-gone (${details?.reason})`);
     });
 
     _recorderWindow = win; // published only once fully loaded
@@ -311,35 +592,7 @@ function _ensureWindow() {
   return _windowPromise;
 }
 
-// ─── Chunk Handling ───────────────────────
-async function _exists(p) {
-  try { await fs.promises.access(p); return true; } catch { return false; }
-}
-
-/** Write durably (tmp → fsync → rename), THEN enqueue for upload. */
-async function _handleChunk(sessionId, chunkIndex, buffer) {
-  if (!buffer || buffer.length === 0) return;
-  await fs.promises.mkdir(_sessionDir(sessionId), { recursive: true });
-
-  // Never overwrite an existing chunk: take the next free index instead.
-  let idx = chunkIndex;
-  while (await _exists(_chunkPath(sessionId, idx))) idx++;
-  if (idx !== chunkIndex) logger.warn(`[Recorder] Chunk ${chunkIndex} already on disk — stored as ${idx}`);
-
-  const filePath = _chunkPath(sessionId, idx);
-  const tmpPath = `${filePath}.tmp`;
-  const fh = await fs.promises.open(tmpPath, 'w');
-  try {
-    await fh.writeFile(buffer);
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
-  await fs.promises.rename(tmpPath, filePath);
-  logger.info(`[Recorder] Chunk ${idx} → disk (${Math.round(buffer.length / 1024)}KB)`);
-  _enqueue({ sessionId, chunkIndex: idx, filePath });
-}
-
+// ─── Legacy chunk upload (folders written by Phase 0 / older builds) ───
 function _enqueue(item) {
   if (_queuedPaths.has(item.filePath)) return;
   _queuedPaths.add(item.filePath);
@@ -470,7 +723,7 @@ async function _scanBacklog() {
 
   const sessions = [];
   for (const d of dirs) {
-    if (!d.isDirectory()) continue;
+    if (!d.isDirectory() || d.name === 'v2') continue; // v2 spool is handled by sync-v2.js
     try {
       const st = await fs.promises.stat(path.join(root, d.name));
       sessions.push({ name: d.name, mtimeMs: st.mtimeMs });
@@ -594,24 +847,31 @@ async function _checkWithServer(sessionId, dir, pending) {
 
 // ─── Local retention ──────────────────────
 /**
- * Delete locally spooled chunks that are synced (.ok marker) and older than
- * the retention window, on startup and every few hours. The session currently
- * being recorded is never touched; unsynced chunks are never deleted.
+ * Every 10 minutes (and at start): delete synced local data past its
+ * retention. Legacy folders: .ok-marked chunks older than 15 days. v2 spool:
+ * fully synced + closed segments older than 15 days, or oldest first beyond
+ * the 30 GB cap. Unsynced data is never deleted. Also re-checks free disk.
  */
 function _startRetentionSweep() {
-  const sweep = () => {
-    pruneOldRecordings(_recordingsDir(), { skipSessionId: _sessionId })
-      .then(({ removedFiles, removedDirs }) => {
-        if (removedFiles || removedDirs) {
-          logger.info(
-            `[Recorder] Retention: removed ${removedFiles} synced local file(s) and ${removedDirs} empty session folder(s) older than ${Math.round(RECORDING_RETENTION_MS / 86400000)} days`
-          );
-        }
-      })
-      .catch((err) => logger.warn(`[Recorder] Retention sweep failed: ${err.message}`));
+  const sweep = async () => {
+    try {
+      const { removedFiles, removedDirs } = await pruneOldRecordings(_recordingsDir());
+      if (removedFiles || removedDirs) {
+        logger.info(
+          `[Recorder] Retention: removed ${removedFiles} synced legacy file(s) and ${removedDirs} empty session folder(s) older than ${Math.round(RECORDING_RETENTION_MS / 86400000)} days`
+        );
+      }
+    } catch (err) { logger.warn(`[Recorder] Legacy retention sweep failed: ${err.message}`); }
+    try {
+      const r = await pruneV2Spool(_v2Root(), { skipSegmentIds: new Set(_known.keys()) });
+      if (r.removedSegments) {
+        logger.info(`[Recorder] Retention: removed ${r.removedSegments} fully synced v2 segment(s) (${Math.round(r.removedBytes / 1048576)} MB)`);
+      }
+    } catch (err) { logger.warn(`[Recorder] v2 retention sweep failed: ${err.message}`); }
+    _checkDisk();
   };
   sweep();
-  const timer = setInterval(sweep, RETENTION_SWEEP_INTERVAL_MS);
+  const timer = setInterval(sweep, V2_SWEEP_INTERVAL_MS);
   if (typeof timer.unref === 'function') timer.unref();
 }
 
@@ -620,30 +880,17 @@ function _recordingsDir() {
   return path.join(app.getPath('userData'), 'recordings');
 }
 
+function _v2Root() {
+  return spool.v2Root(_recordingsDir());
+}
+
 function _sessionDir(sid) {
   return path.join(_recordingsDir(), sid);
 }
 
-function _chunkPath(sid, idx) {
-  return path.join(_sessionDir(sid), `chunk-${String(idx).padStart(5, '0')}.webm`);
-}
+const _ownerCache = new Map(); // legacy sessionId → userId | null
 
-const _ownerCache = new Map(); // sessionId → userId | null
-
-/** Records the signed-in agent user as owner of a session folder (first writer wins). */
-async function _writeOwner(sessionId) {
-  try {
-    const { getAgentUserId } = await import('./ws-client.js');
-    const userId = getAgentUserId();
-    if (!userId) return;
-    await fs.promises.writeFile(path.join(_sessionDir(sessionId), 'owner'), String(userId), { flag: 'wx' });
-    _ownerCache.set(sessionId, String(userId));
-  } catch (err) {
-    if (err.code !== 'EEXIST') logger.warn(`[Recorder] Could not record session owner: ${err.message}`);
-  }
-}
-
-/** Token of the user who recorded this session; falls back to the current token. */
+/** Token of the user who recorded this legacy session; falls back to the current token. */
 async function _tokenForSession(sessionId) {
   let owner = _ownerCache.get(sessionId);
   if (owner === undefined) {
@@ -657,18 +904,6 @@ async function _tokenForSession(sessionId) {
     if (t) return t;
   }
   return _getToken?.();
-}
-
-/** max existing chunk index in the session folder + 1 (0 when none). */
-async function _nextChunkIndex(sid) {
-  let max = -1;
-  try {
-    for (const f of await fs.promises.readdir(_sessionDir(sid))) {
-      const m = /^chunk-(\d+)\.webm(\.tmp|\.ok)?$/.exec(f);
-      if (m) max = Math.max(max, Number(m[1]));
-    }
-  } catch { /* no folder yet */ }
-  return max + 1;
 }
 
 function _sleep(ms) {

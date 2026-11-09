@@ -97,6 +97,7 @@ function App() {
     } catch {
       /* nothing stored */
     }
+    window.electronAPI?.setLoggedIn?.(false);
     setAuth(null);
     localStorage.removeItem('bio_auth');
   }, []);

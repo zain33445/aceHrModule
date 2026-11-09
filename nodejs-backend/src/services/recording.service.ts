@@ -45,7 +45,7 @@ const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
 
 // Base directory for recording files — outside web root.
 // Override via RECORDINGS_DIR env var; defaults to I:\hrApp_data\recordings on Windows (production).
-const RECORDINGS_DIR = process.env.RECORDINGS_DIR
+export const RECORDINGS_DIR = process.env.RECORDINGS_DIR
   ? path.resolve(process.env.RECORDINGS_DIR)
   : process.platform === 'win32'
     ? 'I:\\hrApp_data\\recordings'
@@ -66,7 +66,7 @@ async function ensureSessionDir(userId: string, sessionId: string, createdAt: Da
 const chunkName = (chunkIndex: number) => `chunk-${String(chunkIndex).padStart(5, '0')}.webm`;
 
 /** Write + fsync + close. Caller renames/links into place afterwards. */
-async function durableWrite(filePath: string, buffer: Buffer): Promise<void> {
+export async function durableWrite(filePath: string, buffer: Buffer): Promise<void> {
   const fh = await fs.promises.open(filePath, 'w');
   try {
     await fh.writeFile(buffer);
@@ -76,7 +76,7 @@ async function durableWrite(filePath: string, buffer: Buffer): Promise<void> {
   }
 }
 
-async function sha256File(filePath: string): Promise<string> {
+export async function sha256File(filePath: string): Promise<string> {
   const h = crypto.createHash('sha256');
   for await (const c of fs.createReadStream(filePath)) h.update(c as Buffer);
   return h.digest('hex');
@@ -269,7 +269,7 @@ async function stopSessionsNow(sessions: { id: string; _count?: { chunks: number
 /** Public: stop active sessions of a user (used by gateway disconnect handler). */
 export async function stopActiveSessionsOf(userId: string): Promise<void> {
   const sessions = await prisma.recordingSession.findMany({
-    where: { user_id: userId, status: { in: ACTIVE } },
+    where: { user_id: userId, status: { in: ACTIVE }, recording_date: null }, // v2 sessions are agent-driven
     include: { _count: { select: { chunks: true } } },
   });
   for (const s of sessions) {
@@ -286,7 +286,7 @@ export async function adoptAgentSession(userId: string, sessionId: string): Prom
   const s = await getOrCreateSession(sessionId, userId);
   if (!ACTIVE.includes(s.status)) await reopenIfNeeded(s);
   const others = await prisma.recordingSession.findMany({
-    where: { user_id: userId, status: { in: ACTIVE }, id: { not: sessionId } },
+    where: { user_id: userId, status: { in: ACTIVE }, id: { not: sessionId }, recording_date: null },
     include: { _count: { select: { chunks: true } } },
   });
   if (others.length) {
@@ -323,7 +323,7 @@ export async function startSessionUnlocked(
   gateway?.clearAgentError(userId); // fresh attempt — drop stale permission errors
 
   const active = await prisma.recordingSession.findFirst({
-    where: { user_id: userId, status: { in: ACTIVE } },
+    where: { user_id: userId, status: { in: ACTIVE }, recording_date: null },
     orderBy: { created_at: 'desc' },
   });
   let sessionId: string;
@@ -467,7 +467,7 @@ export async function saveChunk(
 // Assembly
 // ─────────────────────────────────────────
 
-function runFfmpeg(args: string[]): Promise<{ code: number | null; stderr: string }> {
+export function runFfmpeg(args: string[]): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve) => {
     let ffmpegPath: string | null;
     try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
@@ -481,7 +481,7 @@ function runFfmpeg(args: string[]): Promise<{ code: number | null; stderr: strin
 }
 
 /** Stream-concatenate files into dest with backpressure. */
-async function concatFiles(files: string[], dest: string): Promise<void> {
+export async function concatFiles(files: string[], dest: string): Promise<void> {
   const ws = fs.createWriteStream(dest);
   const failed = new Promise<never>((_, rej) => ws.once('error', rej));
   failed.catch(() => {});
@@ -499,9 +499,9 @@ async function concatFiles(files: string[], dest: string): Promise<void> {
   }
 }
 
-const rm = (p: string) => fs.promises.unlink(p).catch(() => {});
+export const rm = (p: string) => fs.promises.unlink(p).catch(() => {});
 
-const concatListEntry = (p: string) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`;
+export const concatListEntry = (p: string) => `file '${p.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`;
 
 /**
  * Pure file work (no DB). Splits the ordered chunk files into WebM runs (each run
@@ -661,7 +661,13 @@ export async function requestAssembly(sessionId: string): Promise<void> {
     do {
       state.rerun = false;
       try {
-        await assembleSession(sessionId);
+        const meta = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { recording_date: true } });
+        if (meta?.recording_date) {
+          // v2 session (generations). Lazy import: recording-v2.service imports this module.
+          await (await import('./recording-v2.service')).assembleSessionV2(sessionId);
+        } else {
+          await assembleSession(sessionId);
+        }
       } catch (err: any) {
         console.error(`[Recording Service] Assembly failed for ${sessionId}: ${err.message}`);
       }
@@ -688,7 +694,7 @@ async function sweepOnce(): Promise<void> {
 
     // (a) stale live sessions → stopped
     const live = await prisma.recordingSession.findMany({
-      where: { status: { in: ACTIVE } },
+      where: { status: { in: ACTIVE }, recording_date: null },
       select: { id: true, created_at: true, ...lastChunk },
     });
     const stale = live.filter((s) => now - (s.chunks[0]?.uploaded_at ?? s.created_at).getTime() > 10 * 60_000);
@@ -703,7 +709,7 @@ async function sweepOnce(): Promise<void> {
 
     // (b) stopped with chunks, quiet for 2 min → assemble
     const stopped = await prisma.recordingSession.findMany({
-      where: { status: 'stopped', chunks: { some: {} } },
+      where: { status: 'stopped', recording_date: null, chunks: { some: {} } },
       select: { id: true, ...lastChunk },
     });
     for (const s of stopped) {
@@ -716,7 +722,7 @@ async function sweepOnce(): Promise<void> {
     // (c) assembled but newer chunks than the file (or file gone) → re-assemble
     // ponytail: only sessions from the last 30 days are checked, widen if late chunks for older sessions matter.
     const assembled = await prisma.recordingSession.findMany({
-      where: { status: 'assembled', created_at: { gte: new Date(now - 30 * 86_400_000) } },
+      where: { status: 'assembled', recording_date: null, created_at: { gte: new Date(now - 30 * 86_400_000) } },
       select: { id: true, file_path: true, ...lastChunk },
     });
     for (const s of assembled) {
@@ -731,6 +737,9 @@ async function sweepOnce(): Promise<void> {
         await requestAssembly(s.id);
       }
     }
+
+    // v2 sessions follow their own triggers (idle / day over); legacy rules above are untouched.
+    await (await import('./recording-v2.service')).sweepV2();
 
     if (closed || queued) console.log(`[Sweeper] closed ${closed} stale session(s), requested assembly for ${queued}`);
   } catch (err: any) {
@@ -759,6 +768,7 @@ export async function getSession(sessionId: string) {
       chunks: { orderBy: { chunk_index: 'asc' }, select: { chunk_index: true, file_size: true, uploaded_at: true } },
       employee: { select: { id: true, name: true } },
       creator: { select: { id: true, name: true } },
+      segments: { orderBy: { started_at: 'asc' }, select: { id: true, state: true, started_at: true, ended_at: true, last_seq: true, lost_seqs: true, generation: true, width: true, height: true } },
     },
   });
 }

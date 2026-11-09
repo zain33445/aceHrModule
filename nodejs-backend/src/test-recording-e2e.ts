@@ -233,6 +233,12 @@ async function main() {
     const agent2 = await connectAgent(agentTok);
     sockets.push(agent2.ws);
     check('reconnecting agent replaces the old socket', agent2.connected);
+    const agent1Close = await new Promise<number>((res) => {
+      if (agent1.ws.readyState === WebSocket.CLOSED) return res((agent1.ws as any)._closeCode ?? -1);
+      agent1.ws.once('close', (code) => res(code));
+      setTimeout(() => res(-1), 3000);
+    });
+    check('replaced agent is told why (close 4002), so it backs off', agent1Close === 4002, `close code ${agent1Close}`);
     agent2.ws.send(JSON.stringify({ type: 'STATUS', state: 'recording', sessionId: adoptId }));
     await sleep(2000);
     check('server adopts the agent\'s session', (await sessionRow(adoptId))?.status === 'recording');

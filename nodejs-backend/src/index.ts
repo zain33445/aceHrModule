@@ -26,6 +26,8 @@ import auditRoutes from './routes/audit.routes';
 import exportRoutes from './routes/export.routes';
 import monitoringRoutes from './routes/monitoring.routes';
 import recordingRoutes from './routes/recording.routes';
+import recordingV2Routes from './routes/recording-v2.routes';
+import { ensureRecordingSchema } from './db/ensure-recording-schema';
 import tabAccessRoutes from './routes/tab-access.routes';
 import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
@@ -36,6 +38,7 @@ import { initCallGateway } from './gateways/call.gateway';
 import { ensureAdminHrInAllGroups } from './services/chat.service';
 import { cleanupExpiredRecordings } from './services/callrecording.service';
 import { startAssemblySweeper } from './services/recording.service';
+import { startRetentionJob } from './services/recording-v2.service';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
 import prisma from './prisma';
@@ -58,6 +61,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Raw binary parser for video chunk uploads (agent uses Content-Type: application/octet-stream)
 app.use('/api/recording/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+// v2: raw chunk bodies at PUT /api/recording/v2/segments/:id/chunks/:seq (JSON routes under it are unaffected)
+app.use('/api/recording/v2/segments', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 // Raw binary parser for call audio chunk uploads
 app.use('/api/call/recordings/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 
@@ -77,7 +82,9 @@ function auditDetails(body: unknown): string {
 app.use(async (req, res, next) => {
   res.on('finish', async () => {
     if (['POST', 'PUT', 'DELETE'].includes(req.method) && res.statusCode >= 200 && res.statusCode < 300) {
-      if (!req.path.includes('/auth/login') && !req.path.includes('/auth/refresh') && !req.path.includes('/webhooks')) {
+      // v2 chunk PUTs arrive every ~10 s per employee; they are not audit events.
+      const v2Chunk = /^\/api\/recording\/v2\/segments\/[^/]+\/chunks\//.test(req.path);
+      if (!v2Chunk && !req.path.includes('/auth/login') && !req.path.includes('/auth/refresh') && !req.path.includes('/webhooks')) {
         try {
           await prisma.auditLog.create({
             data: {
@@ -119,6 +126,7 @@ app.use('/api/leave-summary', leaveSummaryRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/export', exportRoutes);
 app.use('/api/monitoring', monitoringRoutes);
+app.use('/api/recording/v2', recordingV2Routes);
 app.use('/api/recording', recordingRoutes);
 app.use('/api/tab-access', tabAccessRoutes);
 app.use('/api/overtime', overtimeRoutes);
@@ -145,8 +153,20 @@ initCallGateway(server);
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 
-  // ── Recording assembly sweeper (stale sessions, orphan assembly, late chunks) ──
-  startAssemblySweeper();
+  // ── Recording v2 schema (idempotent DDL), then sweeper + retention. Until it succeeds the
+  //    v2 routes answer 503; the rest of the HR server keeps running and the DDL is retried. ──
+  const initRecording = async () => {
+    try {
+      await ensureRecordingSchema();
+      // Recording assembly sweeper (stale sessions, orphan assembly, late chunks, v2 triggers)
+      startAssemblySweeper();
+      startRetentionJob();
+    } catch (err) {
+      console.error('[Recording Schema] FAILED — recording v2 disabled (503), retrying in 30s:', err);
+      setTimeout(initRecording, 30_000);
+    }
+  };
+  initRecording();
 
   // ── Startup: ensure admin/HR are participants on every department group ──
   setTimeout(async () => {

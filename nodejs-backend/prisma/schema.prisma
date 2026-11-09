@@ -360,33 +360,86 @@ model AgentToken {
 }
 
 model RecordingSession {
-  id         String           @id @default(uuid())
-  user_id    String
-  status     String           @default("pending")
-  started_at DateTime?
-  ended_at   DateTime?
-  file_path  String?
-  created_by String
-  created_at DateTime         @default(now())
-  updated_at DateTime         @updatedAt
-  chunks     RecordingChunk[]
-  creator    User             @relation("AdminCreatedSessions", fields: [created_by], references: [id])
-  employee   User             @relation("EmployeeRecordings", fields: [user_id], references: [id], onDelete: Cascade)
+  id                String             @id @default(uuid())
+  user_id           String
+  status            String             @default("pending")
+  started_at        DateTime?
+  ended_at          DateTime?
+  file_path         String?
+  created_by        String
+  created_at        DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+  // v2 (NULL recording_date = legacy v1 session)
+  recording_date    DateTime?          @db.Date
+  dir_path          String?
+  generation        Int                @default(0)
+  duration_ms       Int?
+  logged_out_ms     Int                @default(0)
+  last_chunk_at     DateTime?
+  assembly_error    String?
+  assembly_attempts Int                @default(0)
+  chunks            RecordingChunk[]
+  segments          RecordingSegment[]
+  creator           User               @relation("AdminCreatedSessions", fields: [created_by], references: [id])
+  employee          User               @relation("EmployeeRecordings", fields: [user_id], references: [id], onDelete: Cascade)
 
+  @@unique([user_id, recording_date])
+  @@index([user_id, status])
   @@map("recording_sessions")
 }
 
-model RecordingChunk {
-  id          String           @id @default(uuid())
+model RecordingSegment {
+  id          String           @id
   session_id  String
-  chunk_index Int
-  file_path   String
-  file_size   Int              @default(0)
-  uploaded_at DateTime         @default(now())
+  user_id     String
+  device_id   String?
+  started_at  DateTime
+  ended_at    DateTime?
+  last_seq    Int?
+  lost_seqs   Int[]            @default([])
+  mime        String?
+  width       Int?
+  height      Int?
+  state       String           @default("open")
+  generation  Int?
+  created_at  DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
   session     RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  chunks      RecordingChunk[]
+
+  @@index([session_id, state])
+  @@map("recording_segments")
+}
+
+model RecordingChunk {
+  id          String            @id @default(uuid())
+  session_id  String
+  chunk_index Int?
+  file_path   String
+  file_size   Int               @default(0)
+  uploaded_at DateTime          @default(now())
+  segment_id  String?
+  seq         Int?
+  sha256      String?
+  captured_at DateTime?
+  duration_ms Int?
+  logged_out  Boolean           @default(false)
+  purged_at   DateTime?
+  session     RecordingSession  @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  segment     RecordingSegment? @relation(fields: [segment_id], references: [id], onDelete: Cascade)
 
   @@unique([session_id, chunk_index])
+  @@unique([segment_id, seq])
   @@map("recording_chunks")
+}
+
+model AppSetting {
+  key        String   @id
+  value      String
+  updated_at DateTime @updatedAt
+  updated_by String?
+
+  @@map("app_settings")
 }
 
 model RecordingSchedule {
