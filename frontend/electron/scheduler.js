@@ -1,8 +1,9 @@
 /**
  * scheduler.js — Cron-based Recording Scheduler (Main Process)
  *
- * Receives schedule entries from the WebSocket gateway and fires
- * start/stop recording commands at the defined times.
+ * DISABLED (Phase 0): recording is always-on and controlled by the server.
+ * applySchedules() only logs; the tick engine below is never started.
+ * Kept so existing imports do not break.
  *
  * Uses a lightweight built-in cron matcher — no external dependencies.
  * Runs a 1-minute tick via setInterval. Compatible with node-cron syntax.
@@ -20,10 +21,9 @@ let _tickTimer = null;
 
 /** Replace all schedules with the new list from the backend. */
 export function applySchedules(schedules) {
-  _schedules = (schedules ?? []).filter(s => s.enabled);
-  logger.info(`[Scheduler] Applied ${_schedules.length} active schedules`);
-  _schedules.forEach(s => logger.info(`[Scheduler]   id=${s.id} action=${s.action} cron="${s.cronExpr}"`));
-  _ensureTick();
+  // Recording is always-on and server-controlled; local schedules are disabled.
+  const n = Array.isArray(schedules) ? schedules.length : 0;
+  logger.info(`[Scheduler] Ignoring ${n} schedule(s) — recording is always-on and server-controlled`);
 }
 
 export function clearSchedules() {

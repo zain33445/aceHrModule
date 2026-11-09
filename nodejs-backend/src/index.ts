@@ -35,11 +35,16 @@ import callRoutes from './routes/call.routes';
 import { initCallGateway } from './gateways/call.gateway';
 import { ensureAdminHrInAllGroups } from './services/chat.service';
 import { cleanupExpiredRecordings } from './services/callrecording.service';
+import { startAssemblySweeper } from './services/recording.service';
 import { processOutboxEvents, recoverStuckEvents } from './workers/outbox-worker';
 
 import prisma from './prisma';
 import { AbsenceService } from './services/absence.service';
 import { HolidayService } from './services/holiday.service';
+
+if (!process.env.AGENT_JWT_SECRET) {
+  console.warn('[SECURITY] AGENT_JWT_SECRET is not set — using the built-in default agent secret. Set it (note: changing it invalidates all deployed agent tokens).');
+}
 
 process.on('unhandledRejection', (reason) => {
   console.error('[Process] Unhandled promise rejection (server kept alive):', reason);
@@ -57,6 +62,17 @@ app.use('/api/recording/chunk', express.raw({ type: 'application/octet-stream', 
 app.use('/api/call/recordings/chunk', express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 
 
+// Never stringify binary bodies; drop secrets/large blobs from audit details.
+const AUDIT_DROP = new Set(['screenshotBase64', 'screenshot_b64', 'token', 'password']);
+function auditDetails(body: unknown): string {
+  if (Buffer.isBuffer(body)) return `[binary ${body.length} bytes]`;
+  try {
+    return JSON.stringify(body || {}, (k, v) => (AUDIT_DROP.has(k) ? undefined : v)).substring(0, 1000);
+  } catch {
+    return '[unserializable]';
+  }
+}
+
 // Audit Middleware
 app.use(async (req, res, next) => {
   res.on('finish', async () => {
@@ -67,9 +83,9 @@ app.use(async (req, res, next) => {
             data: {
               // Prefer the verified identity attached by requireUser; fall back
               // to sniffing the legacy body fields for the older routes.
-              user_id: (req as any).user?.userId || req.body?.user_id || req.body?.reviewed_by || req.body?.hr_id || req.body?.lead_id || req.body?.admin_id || req.body?.req_by || null,
+              user_id: (req as any).user?.userId || (req as any).agentUser?.userId || (req as any).adminUser?.id || req.body?.user_id || req.body?.reviewed_by || req.body?.hr_id || req.body?.lead_id || req.body?.admin_id || req.body?.req_by || null,
               action: `${req.method} ${req.path}`,
-              details: JSON.stringify(req.body || {}).substring(0, 1000)
+              details: auditDetails(req.body)
             }
           });
         } catch (err) {
@@ -129,42 +145,8 @@ initCallGateway(server);
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 
-  // ── Startup: assemble any orphaned sessions ─────────────────────────────
-  setTimeout(async () => {
-    try {
-      const { assembleSession } = await import('./services/recording.service');
-      const orphaned = await prisma.recordingSession.findMany({
-        where: { status: { in: ['stopped', 'recording'] } },
-        include: { _count: { select: { chunks: true } } },
-      });
-      if (orphaned.length === 0) return;
-      console.log(`[Startup] Found ${orphaned.length} orphaned session(s) — assembling...`);
-      for (const session of orphaned) {
-        if (session._count.chunks === 0) {
-          // No chunks at all — just mark as stopped, nothing to assemble
-          await prisma.recordingSession.update({
-            where: { id: session.id },
-            data: { status: 'stopped', ended_at: new Date() },
-          });
-          console.log(`[Startup] Session ${session.id} had 0 chunks — marked stopped.`);
-          continue;
-        }
-        console.log(`[Startup] Assembling session ${session.id} (${session._count.chunks} chunks)...`);
-        // Mark stopped first so assembly can proceed
-        if (session.status === 'recording') {
-          await prisma.recordingSession.update({
-            where: { id: session.id },
-            data: { status: 'stopped', ended_at: new Date() },
-          });
-        }
-        assembleSession(session.id).catch((err) => {
-          console.error(`[Startup] Assembly failed for ${session.id}: ${err.message}`);
-        });
-      }
-    } catch (err) {
-      console.error('[Startup] Orphan cleanup failed:', err);
-    }
-  }, 3000); // wait 3s for DB connections to settle
+  // ── Recording assembly sweeper (stale sessions, orphan assembly, late chunks) ──
+  startAssemblySweeper();
 
   // ── Startup: ensure admin/HR are participants on every department group ──
   setTimeout(async () => {

@@ -20,8 +20,8 @@ import { startMonitor, stopMonitor, setUserId } from './electron/monitor.js';
 import { logger } from './electron/logger.js';
 
 // Recording system modules (NEW)
-import { initRecorderMain, getRecordingState } from './electron/recorder-main.js';
-import { initWsClient, setWsUserId, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
+import { initRecorderMain, getRecordingState, flushAndStop } from './electron/recorder-main.js';
+import { initWsClient, setWsUserId, setSessionToken, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
 import { stopScheduler } from './electron/scheduler.js';
 import { initNotificationClient, setNotificationUserId, shutdownNotificationClient } from './electron/notification-client.js';
 
@@ -147,8 +147,9 @@ function setupSilentCapturePermissions() {
 // ─────────────────────────────────────────
 
 const isDev = !app.isPackaged;
-if (isDev) {
+if (isDev && !process.env.ACEHRM_USER_DATA) {
   // Use a separate user data folder for development to avoid cache/lock conflicts
+  // (an explicit ACEHRM_USER_DATA profile, set above, always wins)
   app.setPath('userData', path.join(app.getPath('appData'), 'acehrm-dev'));
 }
 
@@ -588,6 +589,12 @@ app.whenReady().then(() => {
     logger.info(`Main process received userId from frontend: ${userId}`);
   });
 
+  // Web session JWT from the renderer: used to mint the recording agent token
+  ipcMain.on('set-session-token', (_event, token) => {
+    if (typeof token !== 'string' || !token) return; // ignore empty strings
+    setSessionToken(token);
+  });
+
   ipcMain.on('chat-bubble:click', toggleChatWindow);
   ipcMain.on('chat-bubble:move', (_event, dx, dy) => {
     if (!bubbleWindow) return;
@@ -678,8 +685,21 @@ app.on('activate', () => {
 });
 
 // Graceful shutdown
-app.on('before-quit', () => {
+// The first 'before-quit' is deferred until the recorder has written its
+// in-progress segment; the flag guarantees the second pass runs the shutdown
+// instead of looping (also covers autoUpdater.quitAndInstall(), which ends in
+// app.quit()).
+let quitFlushed = false;
+app.on('before-quit', (event) => {
   app.isQuitting = true;
+  if (!quitFlushed) {
+    quitFlushed = true;
+    event.preventDefault();
+    flushAndStop()
+      .catch((err) => logger.warn(`[Main] Recorder flush on quit failed: ${err.message}`))
+      .finally(() => app.quit());
+    return;
+  }
   stopMonitor();
   shutdownWsClient();
   shutdownNotificationClient();

@@ -141,16 +141,18 @@ const ScreenshotsTab = ({ user, isAdmin = false, employees = [] }) => {
                   onClick={() => {
                     if (log.screenshot_b64) {
                       const win = window.open();
-                      win.document.write(`
-                        <html>
-                          <head>
-                            <title>Screenshot - ${log.app_name} - ${new Date(log.timestamp).toLocaleString()}</title>
-                          </head>
-                          <body style="margin:0;background:#0f172a;display:flex;justify-content:center;align-items:center;height:100vh;">
-                            <img src="data:image/jpeg;base64,${log.screenshot_b64}" style="max-width:98%;max-height:98vh;object-fit:contain;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);border-radius:8px;" />
-                          </body>
-                        </html>
-                      `);
+                      if (!win) {
+                        alert('Popup blocked. Allow popups for this site to view the screenshot.');
+                        return;
+                      }
+                      // DOM APIs only: app_name is employee-controlled, never interpolate into HTML.
+                      const doc = win.document;
+                      doc.title = `Screenshot - ${log.app_name} - ${new Date(log.timestamp).toLocaleString()}`;
+                      doc.body.style.cssText = 'margin:0;background:#0f172a;display:flex;justify-content:center;align-items:center;height:100vh;';
+                      const img = doc.createElement('img');
+                      img.src = `data:image/jpeg;base64,${log.screenshot_b64}`;
+                      img.style.cssText = 'max-width:98%;max-height:98vh;object-fit:contain;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);border-radius:8px;';
+                      doc.body.appendChild(img);
                     }
                   }}
                 >

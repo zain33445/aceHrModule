@@ -86,7 +86,9 @@ export default function RecordingTab({ adminId, employees = [] }) {
   const timerRef = useRef(null);
 
   // ── Data fetching ──────────────────────────────────────────────────────────
+  const refreshSeq = useRef(0);
   const refresh = useCallback(async (quiet = false) => {
+    const seq = ++refreshSeq.current;
     if (!quiet) setLoading(true);
     try {
       const [agentsRes, sessionsRes] = await Promise.all([
@@ -94,24 +96,30 @@ export default function RecordingTab({ adminId, employees = [] }) {
         api.recordingGetSessions(adminId),
       ]);
       const connectedIds = agentsRes.data?.connectedAgents ?? [];
-      setAgents(connectedIds);
-      setSessions(sessionsRes.data?.sessions ?? []);
 
-      // Fetch per-employee live status for employees who are connected
+      // Fetch per-employee live status for employees who are connected.
+      // A failed request yields null so the previous status is kept.
       const statusEntries = await Promise.all(
         connectedIds.map(async (uid) => {
           try {
             const r = await api.recordingGetStatus(adminId, uid);
             return [uid, r.data];
           } catch {
-            return [uid, { agentConnected: true, activeSession: null }];
+            return [uid, null];
           }
         })
       );
-      setStatuses(Object.fromEntries(statusEntries));
+      // A newer refresh started meanwhile: drop this stale response.
+      if (seq !== refreshSeq.current) return;
+      setAgents(connectedIds);
+      setSessions(sessionsRes.data?.sessions ?? []);
+      setStatuses((prev) => Object.fromEntries(
+        statusEntries.map(([uid, data]) => [uid, data ?? prev[uid] ?? { agentConnected: true, activeSession: null }])
+      ));
     } catch (err) {
       console.error('[RecordingTab] Refresh failed:', err.message);
     }
+    // Always clear: a superseded non-quiet refresh must not leave the spinner on.
     if (!quiet) setLoading(false);
   }, [adminId]);
 
@@ -144,14 +152,23 @@ export default function RecordingTab({ adminId, employees = [] }) {
     setActionLoading((prev) => ({ ...prev, [userId]: null }));
   };
 
-  const downloadSession = (sessionId) => {
-    const url = api.recordingGetDownloadUrl(sessionId);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `recording-${sessionId.substring(0, 8)}.webm`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const downloadSession = async (sessionId) => {
+    try {
+      const res = await api.recordingDownloadBlob(sessionId);
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `recording-${sessionId.substring(0, 8)}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      const status = err.response?.status;
+      alert(status === 409
+        ? 'Recording is not assembled yet. Try again shortly.'
+        : `Failed to download recording: ${err.message}`);
+    }
   };
 
   // ── Employee enrichment ───────────────────────────────────────────────────
@@ -667,6 +684,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
         const state = pc.connectionState;
         if (state === 'connected') {
           webrtcConnected = true;
+          setError(null);
         } else if ((state === 'failed' || state === 'disconnected') && !webrtcConnected) {
           fallbackToHttp();
         }
@@ -704,6 +722,8 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
             setError(`Agent: ${msg.message}`);
             fallbackToHttp();
           } else if (msg.type === 'AGENT_ERROR') {
+            // Errors from other employees' agents are not ours.
+            if (msg.targetUserId != null && String(msg.targetUserId) !== String(targetUserId)) return;
             if (msg.code === 'PERMISSION_DENIED') {
               setError('Capture permission blocked on agent — screen access was denied');
             } else {
@@ -736,7 +756,6 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
         if (destroyed) return;
         if (ws.readyState !== WebSocket.OPEN) {
           setError('Live feed connection timed out');
-          return;
         }
         if (!webrtcConnected) fallbackToHttp();
       }, 10000);
@@ -759,8 +778,10 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
       if (destroyed) return;
       abortCtrl = new AbortController();
       try {
+        let token = null;
+        try { token = JSON.parse(localStorage.getItem('bio_auth') || 'null')?.token; } catch { /* none */ }
         const response = await fetch(streamUrl, {
-          headers: { 'X-Admin-Id': adminId },
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
           signal: abortCtrl.signal,
         });
         if (!response.ok) {
@@ -772,7 +793,9 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
         const ms = new MediaSource();
         refs.mediaSource = ms;
         if (videoRef.current) {
-          videoRef.current.src = URL.createObjectURL(ms);
+          videoRef.current.srcObject = null; // else it overrides the MediaSource src
+          refs.objectUrl = URL.createObjectURL(ms);
+          videoRef.current.src = refs.objectUrl;
         }
 
         ms.onsourceopen = async () => {
@@ -789,7 +812,14 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
             }
           }
           while (!destroyed) {
-            const { done, value } = await reader.read();
+            let done, value;
+            try {
+              ({ done, value } = await reader.read());
+            } catch (err) {
+              // Abort on unmount lands here; anything else is a real stream error.
+              if (!destroyed && err.name !== 'AbortError') setError(`HTTP stream error: ${err.message}`);
+              break;
+            }
             if (done) {
               if (ms.readyState === 'open') try { ms.endOfStream(); } catch {}
               break;
@@ -797,7 +827,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
             if (sourceBuffer.updating) {
               await new Promise(r => { sourceBuffer.onupdateend = r; });
             }
-            try { sourceBuffer.appendBuffer(value); } catch {}
+            try { sourceBuffer.appendBuffer(value); setError(null); } catch {}
           }
         };
       } catch (err) {
@@ -808,6 +838,7 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
 
     function cleanupWebRTC() {
       clearTimers();
+      if (videoRef.current) videoRef.current.srcObject = null;
       if (ws) {
         const s = ws;
         ws = null;
@@ -829,22 +860,24 @@ function LivePlayer({ sessionId, adminId, targetUserId }) {
     }
 
     // Start with WebRTC — fetch WS token first for authenticated connection
-    api.recordingGetAdminWsToken(adminId)
-      .then(res => {
-        const wsUrl = res.data?.token
-          ? `${wsBaseUrl}/admin-recording-ws?token=${encodeURIComponent(res.data.token)}`
-          : `${wsBaseUrl}/admin-recording-ws?adminId=${adminId}`;
-        if (!destroyed) startWebRTC(wsUrl);
-      })
-      .catch(() => {
-        // Fall back to adminId-based auth if token endpoint fails
-        if (!destroyed) startWebRTC(`${wsBaseUrl}/admin-recording-ws?adminId=${adminId}`);
-      });
+    // Two-arg .then: a throw inside startWebRTC cannot reach the rejection handler.
+    api.recordingGetAdminWsToken().then(
+      res => {
+        if (destroyed) return;
+        const token = res.data?.token;
+        if (!token) { setError('Live feed unavailable: no WebSocket token'); return; }
+        startWebRTC(`${wsBaseUrl}/admin-recording-ws?token=${encodeURIComponent(token)}`);
+      },
+      err => {
+        if (!destroyed) setError(`Live feed unavailable: ${err.response?.data?.error ?? err.message}`);
+      }
+    );
 
     function cleanup() {
       destroyed = true;
       cleanupWebRTC();
       if (abortCtrl) { abortCtrl.abort(); abortCtrl = null; }
+      if (refs.objectUrl) { URL.revokeObjectURL(refs.objectUrl); refs.objectUrl = null; }
       if (refs.mediaSource && refs.mediaSource.readyState === 'open') {
         try { refs.mediaSource.endOfStream(); } catch {}
       }

@@ -208,7 +208,7 @@ async function handleAppClosed(appName, session) {
 async function handleScreenshotEvent(appName, timestamp, type) {
   try {
     const screenshotBase64 = await captureScreen();
-    logger.info(`[User: ${currentUserId}] Screenshot captured: ${Math.round(screenshotBase64.length / 1024)}KB`);
+    logger.info(`[User: ${currentUserId}] Screenshot captured: ${screenshotBase64 ? Math.round(screenshotBase64.length / 1024) + 'KB' : 'none (capture failed)'}`);
 
     const payload = {
       userId: currentUserId,

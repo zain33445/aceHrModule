@@ -62,6 +62,9 @@ export const WS_ENDPOINT = `${wsBase}/recording-ws`;
 // Chunk upload endpoint
 export const RECORDING_CHUNK_ENDPOINT = `${API_BASE}/recording/chunk`;
 
+// Backlog check: which locally kept chunks the server already holds
+export const RECORDING_CHUNK_CHECK_ENDPOINT = `${API_BASE}/recording/chunks/check`;
+
 // Agent auth endpoint (to get/refresh agent JWT)
 export const AGENT_AUTH_ENDPOINT = `${API_BASE}/recording/agent-auth`;
 

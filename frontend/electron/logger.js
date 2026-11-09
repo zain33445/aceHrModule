@@ -10,8 +10,9 @@ import path from 'path';
 import electronPkg from 'electron';
 const { app } = electronPkg;
 
-// Log file path — stored in Electron's userData folder
-const LOG_FILE = path.join(app.getPath('userData'), 'monitoring.log');
+// Log file path — stored in Electron's userData folder. Resolved on each write:
+// main.js changes userData after this module is imported (dev / ACEHRM_USER_DATA).
+const logFile = () => path.join(app.getPath('userData'), 'monitoring.log');
 
 /**
  * Append a log entry with timestamp and level.
@@ -23,7 +24,7 @@ function log(level, message) {
   const entry = `[${timestamp}] [${level.toUpperCase()}] ${message}\n`;
 
   try {
-    fs.appendFileSync(LOG_FILE, entry, 'utf-8');
+    fs.appendFileSync(logFile(), entry, 'utf-8');
   } catch (err) {
     console.error('Logger write failed:', err.message);
   }
@@ -41,5 +42,5 @@ export const logger = {
   warn: (msg) => log('warn', msg),
   error: (msg) => log('error', msg),
   debug: (msg) => log('debug', msg),
-  getLogPath: () => LOG_FILE,
+  getLogPath: () => logFile(),
 };

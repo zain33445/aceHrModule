@@ -99,6 +99,9 @@ No CI workflows, no tests (root `npm test` is stub).
 | `npm run test-absence` | `nodejs-backend/` | Test absence processing logic |
 | `npm run test-call-ws` | `nodejs-backend/` | Test call gateway upgrade routing (no DB needed) |
 | `npm run test-call-e2e` | `nodejs-backend/` | Live call test against a running server + DB (66 checks) |
+| `npm run test-recording-assembly` | `nodejs-backend/` | Recording assembly (run splitting + ffmpeg join), no DB needed |
+| `npm run test-recording-e2e` | `nodejs-backend/` | Live screen-recording test against a running server + DB (41 checks). Start the server with `RECORDINGS_DIR` set to a scratch folder |
+| `node electron/local-retention.check.mjs` | `frontend/` | Local chunk retention never deletes un-uploaded chunks |
 | `python test_call_browser.py` | `nodejs-backend/` | Two-browser WebRTC call test (needs the Playwright venv + vite) |
 | `python test_call_recording.py` | `nodejs-backend/` | Browser test for the recording pipeline |
 | `python test_electron_call.py` | `nodejs-backend/` | Electron agent test (needs Electron started with `--remote-debugging-port=9222`) |

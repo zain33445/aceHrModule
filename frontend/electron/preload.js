@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Existing: send authenticated userId to main process
   setUserId: (userId) => ipcRenderer.send('set-user-id', String(userId)),
 
+  // Web session JWT → main process (used to obtain the recording agent token)
+  setSessionToken: (token) => ipcRenderer.send('set-session-token', String(token ?? '')),
+
   // Recording API — exposes read-only state to React UI (transparency layer)
   recording: {
     /** Returns current recording state: 'idle' | 'recording' | 'starting' | 'stopping' | 'error' | 'permission_denied' */

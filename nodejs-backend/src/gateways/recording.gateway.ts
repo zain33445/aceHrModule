@@ -85,60 +85,27 @@ export class RecordingGateway {
           this.onPendingConnection(ws);
         });
       } else if (url.pathname === '/admin-recording-ws') {
-        console.log(`[WS Gateway] Admin upgrade request received: ${req.url}`);
-        
-        // Try JWT token first (more secure)
+        // Never log req.url — it carries the token. Pathname only.
+        console.log(`[WS Gateway] Admin upgrade request received: ${url.pathname}`);
+
         const token = url.searchParams.get('token');
         if (token) {
           try {
             const decoded = jwt.verify(token, AGENT_SECRET) as any;
             if (decoded.role === 'admin-ws' || decoded.role === 'admin' || decoded.role === 'superadmin') {
               const adminId = decoded.sub;
-              console.log(`[WS Gateway] Admin upgrade accepted via token for ${adminId}`);
+              console.log(`[WS Gateway] Admin upgrade accepted for ${adminId}`);
               this.wss.handleUpgrade(req, socket, head, (ws) => {
                 this.onAdminConnection(ws, adminId);
               });
               return;
             }
           } catch {}
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
-          return;
+        } else {
+          console.warn(`[WS Gateway] Admin upgrade rejected: missing token`);
         }
-
-        // Fallback: adminId + DB role check (legacy)
-        const adminId = url.searchParams.get('adminId');
-        if (!adminId) {
-          console.warn(`[WS Gateway] Admin upgrade rejected: Missing adminId or token`);
-          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
-        try {
-          const user = await prisma.user.findUnique({ where: { id: adminId } });
-          if (!user) {
-            console.warn(`[WS Gateway] Admin upgrade rejected: User not found (${adminId})`);
-            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-            socket.destroy();
-            return;
-          }
-          if (user.role !== 'admin' && user.role !== 'superadmin') {
-            console.warn(`[WS Gateway] Admin upgrade rejected: Invalid role ${user.role} (${adminId})`);
-            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-            socket.destroy();
-            return;
-          }
-          
-          console.log(`[WS Gateway] Admin upgrade accepted for ${adminId} (legacy)`);
-          this.wss.handleUpgrade(req, socket, head, (ws) => {
-            this.onAdminConnection(ws, adminId);
-          });
-        } catch (err) {
-          console.error(`[WS Gateway] Admin upgrade error:`, err);
-          socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
-          socket.destroy();
-        }
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
       } else if (url.pathname === '/chat-ws') {
         // Owned by the chat gateway's own upgrade listener — do not touch.
         return;
@@ -235,39 +202,15 @@ export class RecordingGateway {
     // Push current schedules to agent
     this.pushSchedules(ws, userId);
 
-    // Auto-start recording session in background
-    // First check if there's already an active session — if so, re-attach instead of creating new
-    setTimeout(() => {
-      import('../services/recording.service').then(async (RecordingService) => {
-        const targetUser = await prisma.user.findUnique({
-          where: { id: userId },
-          select: { role: true },
-        });
-        if (targetUser && (targetUser.role === 'admin' || targetUser.role === 'superadmin')) {
-          console.log(`[WS Gateway] Skipping auto-start for admin ${userId}`);
-          return;
-        }
-
-        const activeSession = await prisma.recordingSession.findFirst({
-          where: { user_id: userId, status: { in: ['pending', 'recording'] } },
-        });
-
-        if (activeSession) {
-          // Re-attach: send the existing session ID so the agent knows which session it's in
-          console.log(`[WS Gateway] Re-attaching ${userId} to existing session ${activeSession.id}`);
-          this.send(ws, {
-            type: 'START_RECORDING',
-            sessionId: activeSession.id,
-            quality: '720p',
-          });
-        } else {
-          // No active session — start a fresh one
-          RecordingService.startSession(userId, userId, '720p').catch(err => {
-            console.error(`[WS Gateway] Auto-start failed for ${userId}:`, err.message);
-          });
-        }
-      }).catch(console.error);
-    }, 1000);
+    // Session reconciliation: the agent sends STATUS {state, sessionId} right after
+    // CONNECTED. Reconcile on the first STATUS; fall back to 'idle' after 5s.
+    const conn = { reconciled: false, timer: undefined as NodeJS.Timeout | undefined };
+    conn.timer = setTimeout(() => {
+      if (conn.reconciled) return;
+      conn.reconciled = true;
+      console.log(`[WS Gateway] No STATUS from ${userId} within 5s — reconciling as idle`);
+      this.reconcile(userId, 'idle', undefined);
+    }, 5000);
 
     // Heartbeat — ping every 30s, auto-disconnect on missed pong
     let missedPongs = 0;
@@ -292,6 +235,7 @@ export class RecordingGateway {
         if (msg.type === 'PONG') {
           missedPongs = 0; // reset on valid pong
         } else {
+          if (msg.type === 'STATUS') this.onAgentStatus(userId, conn, msg);
           this.handleAgentMessage(userId, msg);
         }
       } catch (err) {
@@ -301,6 +245,7 @@ export class RecordingGateway {
 
     ws.on('close', (code, reason) => {
       clearInterval(heartbeat);
+      clearTimeout(conn.timer);
       
       const currentWs = this.agents.get(userId);
       if (currentWs === ws) {
@@ -321,34 +266,11 @@ export class RecordingGateway {
           return;
         }
 
-        // Capture the active session ID NOW, before any reconnect can change DB state
         import('../services/recording.service').then(async (RecordingService) => {
           // Double check again just in case
           if (this.agents.get(userId)) return;
-
-          const activeSessions = await prisma.recordingSession.findMany({
-            where: { user_id: userId, status: { in: ['pending', 'recording'] } },
-            include: { _count: { select: { chunks: true } } },
-          });
-
-          for (const session of activeSessions) {
-            console.log(`[WS Gateway] Marking session ${session.id} stopped on disconnect (${session._count.chunks} chunks)`);
-            await prisma.recordingSession.update({
-              where: { id: session.id },
-              data: { status: 'stopped', ended_at: new Date() },
-            });
-
-            // Assemble after 15s — gives the agent time to upload any in-flight chunks
-            // We always assemble this session even if the agent reconnects, because these
-            // chunks already exist on disk and need to be finalized.
-            if (session._count.chunks > 0) {
-              setTimeout(() => {
-                RecordingService.assembleSession(session.id).catch((err) => {
-                  console.error(`[WS Gateway] Auto-assembly failed for ${session.id}: ${err.message}`);
-                });
-              }, 15_000);
-            }
-          }
+          // Marks stopped, emits stopped:<id> for live viewers, requestAssembly for those with chunks.
+          await RecordingService.stopActiveSessionsOf(userId);
         }).catch(console.error);
       }, 8000);
     });
@@ -356,6 +278,48 @@ export class RecordingGateway {
     ws.on('error', (err) => {
       console.error(`[WS Gateway] Agent ${userId} socket error:`, err.message);
     });
+  }
+
+  // ─────────────────────────────────────────
+  // Session Reconciliation
+  // ─────────────────────────────────────────
+
+  private onAgentStatus(userId: string, conn: { reconciled: boolean; timer?: NodeJS.Timeout }, msg: any): void {
+    if (!conn.reconciled) {
+      conn.reconciled = true;
+      clearTimeout(conn.timer);
+      this.reconcile(userId, String(msg.state ?? 'unknown'), msg.sessionId);
+      return;
+    }
+    // Later STATUS: adopt the agent's session if it differs from the server's active one.
+    if (msg.state === 'recording' && typeof msg.sessionId === 'string') {
+      prisma.recordingSession
+        .findFirst({ where: { user_id: userId, status: { in: ['pending', 'recording'] } }, orderBy: { created_at: 'desc' } })
+        .then((active) => {
+          if (!active || active.id !== msg.sessionId) this.reconcile(userId, 'recording', msg.sessionId);
+        })
+        .catch((err) => console.error(`[WS Gateway] STATUS check failed for ${userId}:`, err.message));
+    }
+  }
+
+  /** Runs inside the per-user lock so it cannot race an admin start. */
+  private reconcile(userId: string, state: string, sessionId: unknown): void {
+    import('../services/recording.service').then(async (RS) => {
+      const targetUser = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+      if (targetUser && (targetUser.role === 'admin' || targetUser.role === 'superadmin')) {
+        console.log(`[WS Gateway] Skipping reconcile for admin ${userId}`);
+        return;
+      }
+      await RS.withUserLock(userId, async () => {
+        if (state === 'recording' && RS.isValidSessionId(sessionId)) {
+          console.log(`[WS Gateway] Agent ${userId} is recording ${sessionId} — adopting`);
+          await RS.adoptAgentSession(userId, sessionId);
+        } else {
+          // Re-attaches to an active session (re-sends START_RECORDING) or starts a new one.
+          await RS.startSessionUnlocked(userId, userId, '720p');
+        }
+      });
+    }).catch((err) => console.error(`[WS Gateway] Reconcile failed for ${userId}:`, err.message));
   }
 
   // ─────────────────────────────────────────
@@ -456,7 +420,7 @@ export class RecordingGateway {
     });
 
     ws.on('close', (code, reason) => {
-      this.admins.delete(adminId);
+      if (this.admins.get(adminId) === ws) this.admins.delete(adminId);
       console.log(`[WS Gateway] Admin disconnected: ${adminId} (${code})`);
     });
 

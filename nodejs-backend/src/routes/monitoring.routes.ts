@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import prisma from '../prisma';
 import { AbsenceService } from '../services/absence.service';
 import { isLateHalfdayExempt } from '../constants/attendance.constants';
+import { requireAdmin } from '../middleware/requireAdmin';
+import { verifyAgentToken } from '../middleware/requireAgentToken';
 
 const router = Router();
 
@@ -14,6 +16,19 @@ const router = Router();
 router.post('/screenshot', async (req: Request, res: Response) => {
   try {
     const { userId, appName, timestamp, screenshotBase64, type = 'check-in' } = req.body;
+
+    // Agent token: optional for legacy agents (attendance check-ins depend on them)
+    // unless MONITORING_REQUIRE_AGENT_TOKEN=1. If a token is sent it must be valid.
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const agent = verifyAgentToken(authHeader.substring(7));
+      if (!agent) return res.status(401).json({ error: 'Invalid or expired agent token.' });
+      if (userId !== agent.userId) return res.status(403).json({ error: 'userId does not match agent token' });
+    } else if (process.env.MONITORING_REQUIRE_AGENT_TOKEN === '1') {
+      return res.status(401).json({ error: 'Agent token required.' });
+    } else {
+      console.warn(`[Monitoring] Unauthenticated screenshot post (userId=${String(userId)}) — upgrade the agent`);
+    }
 
     if (!appName || !timestamp) {
       return res.status(400).json({ error: 'appName and timestamp are required' });
@@ -160,18 +175,27 @@ router.post('/screenshot', async (req: Request, res: Response) => {
  * Retrieve monitoring logs with optional filters.
  * Query params: userId, appName, startDate, endDate, page, limit
  */
-router.get('/logs', async (req: Request, res: Response) => {
+router.get('/logs', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { userId, appName, startDate, endDate, page = 1, limit = 50, includeScreenshot } = req.query;
-    const skip = (Number(page) - 1) * Number(limit);
+    const { userId, appName, startDate, endDate, includeScreenshot } = req.query;
+    const page = Math.max(1, Math.floor(Number(req.query.page)) || 1);
+    const limit = Math.min(200, Math.max(1, Math.floor(Number(req.query.limit)) || 50));
+    const skip = (page - 1) * limit;
+    const parseDate = (v: unknown): Date | null => {
+      if (typeof v !== 'string' || !v || v === 'undefined') return null;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    const from = parseDate(startDate);
+    const to = parseDate(endDate);
 
     const where: any = {};
     if (userId) where.user_id = userId;
     if (appName) where.app_name = appName;
-    if (startDate || endDate) {
+    if (from || to) {
       where.timestamp = {};
-      if (startDate) where.timestamp.gte = new Date(startDate as string);
-      if (endDate) where.timestamp.lte = new Date(endDate as string);
+      if (from) where.timestamp.gte = from;
+      if (to) where.timestamp.lte = to;
     }
 
     const selectFields: any = {
@@ -192,7 +216,7 @@ router.get('/logs', async (req: Request, res: Response) => {
         where,
         select: selectFields,
         orderBy: { timestamp: 'desc' },
-        take: Number(limit),
+        take: limit,
         skip,
       }),
       prisma.monitoringLog.count({ where }),
@@ -202,9 +226,9 @@ router.get('/logs', async (req: Request, res: Response) => {
       logs,
       pagination: {
         total,
-        page: Number(page),
-        limit: Number(limit),
-        totalPages: Math.ceil(total / Number(limit)),
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
     });
   } catch (error: any) {
@@ -218,10 +242,12 @@ router.get('/logs', async (req: Request, res: Response) => {
  * 
  * Get a single monitoring log with screenshot data.
  */
-router.get('/logs/:id', async (req: Request, res: Response) => {
+router.get('/logs/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(404).json({ error: 'Monitoring log not found' });
     const log = await prisma.monitoringLog.findUnique({
-      where: { id: Number(req.params.id) },
+      where: { id },
       include: {
         user: { select: { id: true, name: true } },
       },

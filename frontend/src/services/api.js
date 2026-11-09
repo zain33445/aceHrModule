@@ -43,6 +43,7 @@ function refreshSession(token) {
         if (!auth) throw new Error('signed out');
         auth.token = res.data.token;
         localStorage.setItem('bio_auth', JSON.stringify(auth));
+        window.electronAPI?.setSessionToken?.(res.data.token);
         return res.data.token;
       })
       .finally(() => {
@@ -296,8 +297,10 @@ const api = {
 
   // Monitoring
   getMonitoringLogs: (params) => {
-    const query = new URLSearchParams(params).toString();
-    return axios.get(`${API_BASE}/monitoring/logs?${query}`);
+    const clean = Object.fromEntries(
+      Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    );
+    return axios.get(`${API_BASE}/monitoring/logs`, { params: clean });
   },
 
   // Export URLs (these return files so often handled via window.open instead of axios, but keeping paths here)
@@ -307,37 +310,22 @@ const api = {
     `${API_BASE}/export/salary?start_date=${startDate || ''}&end_date=${endDate || ''}`,
 
   // ── Recording System APIs ──────────────────────────────────────────────────
-  recordingGetAgents: (adminId) =>
-    axios.get(`${API_BASE}/recording/agents`, {
-      headers: { 'X-Admin-Id': String(adminId) },
-    }),
-  recordingGetSessions: (adminId, userId) =>
-    axios.get(`${API_BASE}/recording/sessions`, {
-      headers: { 'X-Admin-Id': String(adminId) },
-      params: userId ? { userId } : {},
-    }),
-  recordingGetStatus: (adminId, userId) =>
-    axios.get(`${API_BASE}/recording/status/${userId}`, {
-      headers: { 'X-Admin-Id': String(adminId) },
-    }),
-  recordingStartSession: (adminId, userId, quality = '720p') =>
-    axios.post(
-      `${API_BASE}/recording/session/start`,
-      { user_id: String(userId), quality },
-      { headers: { 'X-Admin-Id': String(adminId) } }
-    ),
-  recordingStopSession: (adminId, sessionId) =>
-    axios.post(
-      `${API_BASE}/recording/session/stop`,
-      { session_id: sessionId },
-      { headers: { 'X-Admin-Id': String(adminId) } }
-    ),
+  // Auth is the Bearer token added by the interceptor; adminId params are legacy and unused.
+  recordingGetAgents: () => axios.get(`${API_BASE}/recording/agents`),
+  recordingGetSessions: (_adminId, userId) =>
+    axios.get(`${API_BASE}/recording/sessions`, { params: userId ? { userId } : {} }),
+  recordingGetStatus: (_adminId, userId) =>
+    axios.get(`${API_BASE}/recording/status/${userId}`),
+  recordingStartSession: (_adminId, userId, quality = '720p') =>
+    axios.post(`${API_BASE}/recording/session/start`, { user_id: String(userId), quality }),
+  recordingStopSession: (_adminId, sessionId) =>
+    axios.post(`${API_BASE}/recording/session/stop`, { session_id: sessionId }),
   recordingGetDownloadUrl: (sessionId) =>
     `${API_BASE}/recording/sessions/${sessionId}/file`,
-  recordingGetAdminWsToken: (adminId) =>
-    axios.post(`${API_BASE}/recording/admin-ws-token`, {}, {
-      headers: { 'X-Admin-Id': String(adminId) },
-    }),
+  recordingDownloadBlob: (sessionId) =>
+    axios.get(`${API_BASE}/recording/sessions/${sessionId}/file`, { responseType: 'blob' }),
+  recordingGetAdminWsToken: () =>
+    axios.post(`${API_BASE}/recording/admin-ws-token`, {}),
 
   // Tab Access (HR Feature Assignment)
   getHrEmployeesWithTabs: () => axios.get(`${API_BASE}/tab-access/hr-employees`),

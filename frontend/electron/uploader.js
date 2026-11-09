@@ -9,6 +9,7 @@ import electronPkg from 'electron';
 const { net } = electronPkg;
 import { UPLOAD_ENDPOINT, RETRY_CONFIG } from './config.js';
 import { logger } from './logger.js';
+import { getAgentToken } from './ws-client.js';
 
 /**
  * Upload monitoring data to the server with retry.
@@ -57,6 +58,8 @@ function doUpload(payload) {
       });
 
       request.setHeader('Content-Type', 'application/json');
+      const agentToken = getAgentToken();
+      if (agentToken) request.setHeader('Authorization', `Bearer ${agentToken}`);
 
       request.on('response', (response) => {
         let data = '';

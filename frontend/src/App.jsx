@@ -74,6 +74,7 @@ function App() {
     if (auth && auth.user_id && window.electronAPI) {
       window.electronAPI.setUserId(auth.user_id);
     }
+    if (auth?.token) window.electronAPI?.setSessionToken?.(auth.token);
   }, [auth, fetchData]);
 
   const handleLoginSuccess = (authData) => {
@@ -84,6 +85,7 @@ function App() {
     if (authData && authData.user_id && window.electronAPI) {
       window.electronAPI.setUserId(authData.user_id);
     }
+    if (authData?.token) window.electronAPI?.setSessionToken?.(authData.token);
   };
 
   const handleLogout = useCallback(() => {
