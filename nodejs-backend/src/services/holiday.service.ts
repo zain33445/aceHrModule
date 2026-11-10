@@ -67,29 +67,59 @@ export class HolidayService {
 
           // ── 2. If it was "leave", refund 1 leave to the leave bank ──────
           if (existing?.status === 'leave') {
-            // Determine which leave type was deducted (first active policy, or default)
-            const policy = await prisma.employeeLeavePolicy.findFirst({
-              where: { user_id: employee.id, effective_to: null },
-              orderBy: { leave_type_id: 'asc' }
-            });
-            const leaveTypeId = policy?.leave_type_id ?? 1;
+            const dateKey = canonicalDate.toISOString().split('T')[0];
 
-            const leaveBank = await prisma.leaveBank.findUnique({
-              where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } }
+            // Only refund a leave the absence cron actually deducted from the
+            // bank. It always writes a LEAVE_CONSUMPTION ledger row; a leave
+            // request approval only touches the ledger, never the bank.
+            const consumption = await prisma.leaveLedger.findFirst({
+              where: {
+                user_id: employee.id,
+                transaction_type: 'CONSUMPTION',
+                idempotency_key: { endsWith: `-${dateKey}-LEAVE_CONSUMPTION` }
+              },
+              orderBy: { id: 'desc' }
             });
 
-            if (leaveBank) {
-              // Refund 1 leave but never exceed the user's monthly allowance (accrual rate)
-              const maxLeaves = policy ? Number(policy.accrual_rate) : 0;
-              const refunded = Math.min(
-                leaveBank.leaves_remaining + 1,
-                maxLeaves
-              );
-              await prisma.leaveBank.update({
-                where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } },
-                data: { leaves_remaining: refunded }
+            if (consumption) {
+              const leaveTypeId = consumption.leave_type_id;
+              const holidayKey = `${employee.id}-${leaveTypeId}-${dateKey}-HOLIDAY_REVERSAL`;
+              const punchKey = `${employee.id}-${leaveTypeId}-${dateKey}-LEAVE_REVERSAL`;
+
+              // Refund exactly 1 leave — never clamp to the accrual rate, or a
+              // balance above one month's accrual is silently wiped out.
+              const refunded = await prisma.$transaction(async (tx) => {
+                const alreadyReversed = await tx.leaveLedger.findFirst({
+                  where: { idempotency_key: { in: [holidayKey, punchKey] } }
+                });
+                if (alreadyReversed) return false;
+
+                await tx.leaveBank.upsert({
+                  where: { user_id_leave_type_id: { user_id: employee.id, leave_type_id: leaveTypeId } },
+                  create: {
+                    user_id: employee.id,
+                    leave_type_id: leaveTypeId,
+                    leaves_remaining: 1
+                  },
+                  update: { leaves_remaining: { increment: 1 } }
+                });
+
+                await tx.leaveLedger.create({
+                  data: {
+                    user_id: employee.id,
+                    leave_type_id: leaveTypeId,
+                    transaction_type: 'REVERSAL',
+                    amount: 1,
+                    idempotency_key: holidayKey,
+                    notes: `Refund: public holiday "${holiday.name}" on ${dateKey}`,
+                    created_by_type: 'SYSTEM'
+                  }
+                });
+
+                return true;
               });
-              leavesRefunded++;
+
+              if (refunded) leavesRefunded++;
             }
           }
 
