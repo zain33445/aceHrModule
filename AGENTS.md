@@ -75,7 +75,9 @@ No CI workflows, no tests (root `npm test` is stub).
 - v1 (agents ≤ 1.11.x): legacy `POST /api/recording/chunk` + START/STOP flow, still supported; legacy sessions have `recording_date = NULL`.
 - **Schema**: `ensureRecordingSchema()` runs the idempotent, additive `prisma/migrations/20261110000000_recording_v2/migration.sql` at backend start (never `db push`). Deploys must ship that file and run `npx prisma generate` before building. `.gitignore` ignores `*.sql` except migrations.
 - Access: `requireRecordingAccess` = admin/superadmin or a `user_tab_access` grant for `recording`. Agent tokens via `/recording/agent-auth` need the user's session token.
-- Local agent spool: `<userData>/recordings/v2/<userId>/<segmentId>/` (15 days / 30 GB cap, unsynced data never deleted).
+- Local agent spool: `<userData>/recordings/v2/<userId>/<segmentId>/` (15 days / 30 GB cap, unsynced data never deleted). Recording pauses below 2 GB free disk (`disk_low`, shown as "Low disk" in the live grid).
+- Live view (Phase 4): `src/gateways/live-hub.ts` — presence, one WebRTC stream per (viewer, agent), agent is the offerer, max 4 viewers per agent (`LIVE_MAX_VIEWERS_PER_AGENT`). Agent side runs in its own hidden window (`electron/live-main.js`, `electron/live-renderer/`), separate from the recorder. Remote admins need TURN on the main server: `docs/live-view-turn.md`.
+- Admin/HR UI (Phase 5): `RecordingTab` = Live grid (4×4, pages of 16) | Recordings by day (signed playback URL `?pt=`) | Settings (retention, admins only).
 - Desktop monitoring logs app names + optional screenshots (3-day retention).
 
 ## New system: Voice & Video Calling
@@ -106,6 +108,9 @@ No CI workflows, no tests (root `npm test` is stub).
 | `npm run test-recording-e2e` | `nodejs-backend/` | Live screen-recording test against a running server + DB (45 checks). Start the server with `RECORDINGS_DIR` set to a scratch folder |
 | `npm run test-recording-v2-e2e` | `nodejs-backend/` | Live recording v2 test (131 checks); run with the server's `RECORDINGS_DIR` |
 | `npm run test-recording-day` | `nodejs-backend/` | Shift-based recording-day rule, no DB needed |
+| `npm run test-recording-live-e2e` | `nodejs-backend/` | Live view hub test (70 checks): presence, streams, caps, HR access, playback tokens |
+| `npm run test-recording-edge-e2e` | `nodejs-backend/` | Edge cases S1–S14 from `docs/recording-edge-cases.md` (51 checks); run with the server's `RECORDINGS_DIR` |
+| `node electron/<name>.check.mjs` | `frontend/` | Agent edge cases A1–A14: `spool-reliability`, `sync-v2`, `token-store`, `agent-policy`, `live-registry` |
 | `node electron/local-retention.check.mjs` | `frontend/` | Local chunk retention never deletes un-uploaded chunks |
 | `node electron/recording-day.check.mjs` / `spool-v2.check.mjs` | `frontend/` | Agent day rule, spool and v2 retention checks |
 | `python test_call_browser.py` | `nodejs-backend/` | Two-browser WebRTC call test (needs the Playwright venv + vite) |

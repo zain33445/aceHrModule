@@ -172,3 +172,33 @@ export async function findSessionUser(sessionId: string, userId: string) {
   if (!session || session.revoked_at || session.user_id !== userId) return null;
   return session.user;
 }
+
+// ── Recording viewer / playback tokens (S8) ────────────────────────────
+// Signed with the SESSION secret, never the agent secret (which is a public default and is held by
+// every agent). `typ` keeps them from being replayed as session/call tokens and vice versa.
+
+/** 5-minute ticket for the /admin-recording-ws viewer socket. */
+export function signViewerToken(userId: string): string {
+  return jwt.sign({ sub: userId, typ: 'viewer' }, SESSION_SECRET, { expiresIn: '5m' });
+}
+
+/** The viewer's user id, or null for anything that is not a valid viewer token. */
+export function verifyViewerToken(token: string): string | null {
+  try {
+    const d = jwt.verify(token, SESSION_SECRET, { algorithms: ['HS256'] }) as any;
+    return d.typ === 'viewer' && typeof d.sub === 'string' ? d.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 10-minute token for GET /recording/sessions/:id/file?pt=… (a <video> cannot send headers). */
+export function signPlaybackToken(userId: string, recordingSessionId: string): string {
+  return jwt.sign({ sub: userId, sid: recordingSessionId, typ: 'playback' }, SESSION_SECRET, { expiresIn: '10m' });
+}
+
+/** Throws jsonwebtoken errors (expired / invalid). Returns { sub, sid } only for a playback token. */
+export function verifyPlaybackToken(token: string): { sub: string; sid: string } | null {
+  const d = jwt.verify(token, SESSION_SECRET, { algorithms: ['HS256'] }) as any;
+  return d.typ === 'playback' && typeof d.sub === 'string' && typeof d.sid === 'string' ? { sub: d.sub, sid: d.sid } : null;
+}

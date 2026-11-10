@@ -13,7 +13,7 @@
  *    (Phase 0 / older builds): they keep the old upload path below, untouched.
  */
 import electronPkg from 'electron';
-const { BrowserWindow, desktopCapturer, ipcMain, app } = electronPkg;
+const { BrowserWindow, desktopCapturer, ipcMain, app, screen } = electronPkg;
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -29,6 +29,7 @@ import { pruneOldRecordings, pruneV2Spool, RECORDING_RETENTION_MS, V2_SWEEP_INTE
 import { recordingDateFor, nextBoundaryInstant, normalizeRule } from './recording-day.js';
 import * as spool from './spool-v2.js';
 import { initSyncV2, kickSync, getBacklog } from './sync-v2.js';
+import { pickPrimarySource, serverNow } from './agent-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,7 +46,7 @@ const _queuedPaths = new Set(); // file paths currently in _uploadQueue
 let _isUploading = false;
 
 // ── v2 state ──
-let _state = 'idle'; // idle | starting | recording | stopping | permission_denied | disk_low | error
+let _state = 'idle'; // idle | starting | recording | stopping | permission_denied | disk_low | write_error | error
 let _recorderWindow = null;
 let _windowPromise = null; // single in-flight window creation
 let _onStateChange = null;
@@ -69,6 +70,9 @@ let _chunksInSeg = 0;
 let _rotateAt = Infinity;
 let _sourceId = null;
 let _diskLow = false;
+let _diskLowFromWrite = false; // _diskLow was raised by an ENOSPC chunk write, not by statfs (A1)
+let _writeBlocked = null; // null | 'disk_low' | 'write_error': unwritten chunk bytes hit the cap, capture paused (A1)
+let _clockOffset = 0;     // serverTime - local clock, from the last CONNECTED (A12)
 let _diskFree = null;
 let _statfsUnavailable = false;
 let _restartTimer = null;
@@ -88,11 +92,10 @@ export function initRecorderMain(getToken, onStateChange) {
 
   initSyncV2({
     root: _v2Root(),
-    tokenFor: async (userId) => {
-      const ws = await import('./ws-client.js');
-      return ws.getAgentTokenFor(userId) || ws.getAgentToken();
-    },
-    refresh: async () => (await import('./ws-client.js')).refreshAgentToken(),
+    // A3: only the segment owner's own token, never another user's.
+    tokenFor: async (userId) => (await import('./ws-client.js')).getAgentTokenFor(userId),
+    refresh: async (userId) => (await import('./ws-client.js')).refreshAgentToken(userId),
+    log: logger,
   });
   _ready = spool.recoverOpenSegments(_v2Root())
     .then((n) => { if (n) logger.info(`[Recorder] Closed ${n} segment(s) left open by the previous run`); })
@@ -166,10 +169,11 @@ function _forwardErrorToGateway(msg) {
  * Who records and under which recording-day rule. Called from the cache at
  * boot, on user switch and on every protocol-2 CONNECTED.
  */
-export function setRecordPolicy({ userId, record, recordingDay }) {
+export function setRecordPolicy({ userId, record, recordingDay, clockOffsetMs }) {
   _userId = userId != null ? String(userId) : null;
   _record = !!record;
   _rule = normalizeRule(recordingDay);
+  if (Number.isFinite(clockOffsetMs)) _clockOffset = clockOffsetMs;
   if (_seg) _rotateAt = _computeRotateAt(_seg);
   _requestReconcile('policy');
 }
@@ -232,7 +236,7 @@ export async function warmupCapture() {
       return false;
     }
     const win = await _ensureWindow();
-    win.webContents.send('recording:warmup', { sourceId: sources[0].id });
+    win.webContents.send('recording:warmup', { sourceId: _primarySource(sources).id });
     return true;
   } catch (err) {
     logger.warn(`[Recorder] Warm-up failed: ${err.message}`);
@@ -261,7 +265,9 @@ export function flushAndStop(timeoutMs = 4000) {
   _quitting = true;
   if (_restartTimer) { clearTimeout(_restartTimer); _restartTimer = null; }
   const stop = _serial(() => _stopSegment('quit', { timeoutMs: Math.max(500, timeoutMs - 500) }));
-  return Promise.race([stop, _sleep(timeoutMs)]).then(() => Promise.allSettled(_allPending())).then(() => {});
+  return Promise.race([stop, _sleep(timeoutMs)])
+    .then(() => Promise.race([Promise.allSettled(_allPending()), _sleep(1500)])) // a failing disk retries forever: bounded
+    .then(() => {});
 }
 
 export async function handleWebRtcMessage(msg) {
@@ -274,7 +280,10 @@ export async function handleWebRtcMessage(msg) {
 }
 
 // ─── Control loop ─────────────────────────
-const _wantRecording = () => !_quitting && !!_userId && _record && !_diskLow;
+const _wantRecording = () => !_quitting && !!_userId && _record && !_diskLow && !_writeBlocked;
+const _idleState = () => (_diskLow ? 'disk_low' : (_writeBlocked ?? 'idle'));
+/** Capture source of the primary display (A14). */
+const _primarySource = (sources) => pickPrimarySource(sources, screen.getPrimaryDisplay().id);
 
 function _serial(fn) {
   const p = _chain.then(fn).catch((err) => logger.error(`[Recorder] Control step failed: ${err.message}`));
@@ -302,9 +311,10 @@ async function _reconcileNow(reason) {
     return;
   }
   if (_seg || _closing.size) await _stopSegment(reason);
-  if (!_quitting) _setState(_diskLow ? 'disk_low' : 'idle');
+  if (!_quitting) _setState(_idleState());
 }
 
+const _serverNow = () => serverNow(_clockOffset);
 const _computeRotateAt = (seg) => {
   const t = Date.parse(seg.startedAt);
   return Math.min(t + RECORDING_SEGMENT_MAX_MS, nextBoundaryInstant(t, _rule));
@@ -321,7 +331,7 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
     const win = await _ensureWindow();
     const { getDeviceId } = await import('./ws-client.js');
 
-    const startedAt = new Date();
+    const startedAt = new Date(serverNow(_clockOffset)); // A12: server-corrected, the recording day follows server time
     const segmentId = crypto.randomUUID();
     const info = {
       segmentId,
@@ -342,7 +352,7 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
     _chunksInSeg = 0;
     _lastChunkAt = Date.now(); // watchdog clock restarts with the segment
     _rotateAt = _computeRotateAt(meta);
-    _sourceId = sources[0].id;
+    _sourceId = _primarySource(sources).id;
 
     win.webContents.send('recording:begin', {
       segmentId,
@@ -383,7 +393,7 @@ async function _stopSegment(reason, { timeoutMs = 5000 } = {}) {
     _rotateAt = Infinity;
     _intentionalStop = false;
   }
-  if (!_quitting) _setState(_diskLow ? 'disk_low' : 'idle');
+  if (!_quitting) _setState(_idleState());
 }
 
 function _waitStopped(segmentId, ms) {
@@ -395,8 +405,14 @@ function _waitStopped(segmentId, ms) {
   });
 }
 
+/** Wait for a segment's in-flight chunk writes, but never forever: a failing disk retries indefinitely (A1). */
+const _awaitWrites = (segmentId, ms = 10_000) => Promise.race([
+  Promise.allSettled([...(_pendingWrites.get(segmentId) || [])]),
+  _sleep(ms),
+]);
+
 async function _closeFromDisk(meta) {
-  await Promise.allSettled([...(_pendingWrites.get(meta.segmentId) || [])]);
+  await _awaitWrites(meta.segmentId);
   try { await spool.closeSegment(meta.dir); } catch (err) { logger.error(`[Recorder] closeSegment failed: ${err.message}`); }
   _known.delete(meta.segmentId);
   _pendingWrites.delete(meta.segmentId);
@@ -406,7 +422,7 @@ async function _closeFromDisk(meta) {
 async function _onSegmentStopped(segmentId, lastSeq) {
   const meta = _known.get(segmentId);
   if (meta) {
-    await Promise.allSettled([...(_pendingWrites.get(segmentId) || [])]); // last chunk durable first
+    await _awaitWrites(segmentId); // last chunk durable first (late ones still raise lastSeq, A2)
     try { await spool.closeSegment(meta.dir, lastSeq); } catch (err) { logger.error(`[Recorder] closeSegment failed: ${err.message}`); }
     _known.delete(segmentId);
     _pendingWrites.delete(segmentId);
@@ -427,31 +443,51 @@ function _allPending() {
   return [..._pendingWrites.values()].flatMap((s) => [...s]);
 }
 
-/** Write durably (tmp → fsync → rename) as soon as the renderer hands it over. */
+/** Unwritten chunk bytes at the cap -> pause capture; drained -> resume. Bytes are never dropped (A1). */
+function _checkWriteBackpressure() {
+  const pending = spool.pendingBytes();
+  if (!_writeBlocked && pending >= spool.PENDING_CAP_BYTES) {
+    _writeBlocked = spool.lastWriteError()?.code === 'ENOSPC' ? 'disk_low' : 'write_error';
+    logger.error(`[Recorder] ${Math.round(pending / 1048576)} MB of chunks cannot be written — capture paused (${_writeBlocked})`);
+    _requestReconcile('write backlog');
+  } else if (_writeBlocked && pending === 0) {
+    _writeBlocked = null;
+    logger.info('[Recorder] Pending chunk writes drained — resuming recording');
+    _requestReconcile('write backlog drained');
+  }
+}
+
+/** Write durably (tmp, fsync, rename) as soon as the renderer hands it over; retried until it succeeds. */
 function _onChunk({ segmentId, seq, capturedAt, durationMs, buffer }) {
   if (!buffer || !buffer.byteLength) return;
-  _lastChunkAt = Date.now(); // liveness for the watchdog, before the write
+  _lastChunkAt = Date.now(); // liveness = chunks RECEIVED from the renderer, not written (A1)
   if (_seg?.segmentId === segmentId) {
     _chunksInSeg++;
     if (_chunksInSeg >= 2) _restartDelay = 0; // healthy again
   }
-  const meta = _known.get(segmentId);
-  let dir = meta?.dir;
-  if (!dir) {
-    dir = spool.orphanDir(_v2Root(), segmentId);
-    logger.error(`[Recorder] Chunk for unknown segment ${segmentId} — kept in ${dir}`);
-  }
   const loggedOut = !_loggedIn;
+  const data = Buffer.from(buffer);
   const set = _pendingWrites.get(segmentId) || new Set();
   _pendingWrites.set(segmentId, set);
-  const p = spool.writeChunk(dir, seq, Buffer.from(buffer), { capturedAt, durationMs, loggedOut })
-    .then((r) => {
-      logger.info(`[Recorder] Chunk ${segmentId.slice(0, 8)}/${r.seq} → disk (${Math.round(r.bytes / 1024)}KB)${r.moved ? ` [seq ${seq} was taken]` : ''}`);
-      kickSync();
-    })
-    .catch((err) => logger.error(`[Recorder] Chunk write failed (${segmentId}/${seq}): ${err.message}`))
-    .finally(() => set.delete(p));
+  const p = (async () => {
+    // A2: a segment no longer in memory (already closed) is found on disk and written into its own folder.
+    let dir = _known.get(segmentId)?.dir ?? await spool.findSegmentDir(_v2Root(), segmentId);
+    if (!dir) { // folder gone: a bare folder is rebuilt by the sync worker (A6)
+      dir = spool.segmentDir(_v2Root(), _userId ?? '_', segmentId);
+      logger.error(`[Recorder] Chunk for unknown segment ${segmentId} — written to ${dir}`);
+    }
+    const r = await spool.writeChunkReliable(dir, seq, data, { capturedAt, durationMs, loggedOut }, {
+      onError: (err) => logger.error(`[Recorder] Chunk write failed (${segmentId}/${seq}): ${err.message} — will retry`),
+      onDiskLow: () => { if (!_diskLow) { _diskLow = true; _diskLowFromWrite = true; logger.warn('[Recorder] Disk full (ENOSPC) — recording paused (disk_low)'); _requestReconcile('disk full'); } },
+      onRecovered: () => { if (_diskLowFromWrite) { _diskLow = false; _diskLowFromWrite = false; logger.info('[Recorder] Chunk writes succeed again — resuming'); _requestReconcile('disk recovered'); } },
+    });
+    logger.info(`[Recorder] Chunk ${segmentId.slice(0, 8)}/${r.seq} → disk (${Math.round(r.bytes / 1024)}KB)${r.moved ? ` [seq ${seq} was taken]` : ''}`);
+    kickSync();
+  })()
+    .catch((err) => logger.error(`[Recorder] Chunk lost (${segmentId}/${seq}): ${err.message}`))
+    .finally(() => { set.delete(p); _checkWriteBackpressure(); });
   set.add(p);
+  _checkWriteBackpressure();
 }
 
 // ─── Watchdog / restarts ──────────────────
@@ -489,13 +525,14 @@ function _tick() {
   if (_seg && _state !== 'stopping') {
     if (now - _lastChunkAt > RECORDING_WATCHDOG_MS) {
       _scheduleRestart(`no chunk for ${Math.round(RECORDING_WATCHDOG_MS / 1000)}s`);
-    } else if (now >= _rotateAt) {
+    } else if (_serverNow() >= _rotateAt) {
       _rotateAt = Infinity; // _beginSegment sets the next one
       _serial(() => _beginSegment('rotate'));
     }
   } else if (_wantRecording() && !_seg && !_restartTimer && _state !== 'stopping') {
     _requestReconcile('self-heal');
   }
+  _checkWriteBackpressure();
   if (_tickCount % 6 === 0) {
     _checkDisk();
     _checkSource();

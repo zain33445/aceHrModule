@@ -4,7 +4,7 @@
  */
 import crypto from 'crypto';
 import { Router, Request, Response, NextFunction } from 'express';
-import { requireAgentToken } from '../middleware/requireAgentToken';
+import { requireAgentToken, canUserRecord } from '../middleware/requireAgentToken';
 import { isRecordingSchemaReady } from '../db/ensure-recording-schema';
 import { HttpError } from '../services/recording.service';
 import * as V2 from '../services/recording-v2.service';
@@ -35,6 +35,10 @@ router.put('/segments/:segmentId', async (req: Request, res: Response) => {
   const segmentId = String(req.params.segmentId);
   if (!validSegment(segmentId)) return res.status(400).json({ error: 'invalid segmentId' });
   try {
+    // S9: new registrations only (an existing segment's re-registration is answered idempotently by the service).
+    if (!(await canUserRecord(userOf(req))) && !(await V2.segmentExists(segmentId))) {
+      return res.status(403).json({ error: 'recording_not_allowed' });
+    }
     const r = await V2.registerSegment(userOf(req), segmentId, req.body ?? {});
     res.status(r.created ? 201 : 200).json({ segmentId: r.segmentId, sessionId: r.sessionId, recordingDate: r.recordingDate, state: r.state });
   } catch (err) {
@@ -56,20 +60,23 @@ router.put('/segments/:segmentId/chunks/:seq', async (req: Request, res: Respons
   const actual = crypto.createHash('sha256').update(body).digest('hex');
   if (actual !== sha.toLowerCase()) return res.status(400).json({ error: 'sha256_mismatch' });
 
+  // S3: optional metadata is best effort — a malformed header never costs us the chunk.
+  const warn: string[] = [];
   let capturedAt: Date | null = null;
   const cap = req.header('x-captured-at');
   if (cap) {
     capturedAt = new Date(cap);
-    if (isNaN(capturedAt.getTime())) return res.status(400).json({ error: 'X-Captured-At must be an ISO date' });
+    if (isNaN(capturedAt.getTime())) { capturedAt = null; warn.push(`X-Captured-At=${JSON.stringify(cap.slice(0, 40))}`); }
   }
   let durationMs: number | null = null;
   const dur = req.header('x-duration-ms');
   if (dur !== undefined && dur !== '') {
-    if (!/^\d{1,9}$/.test(dur)) return res.status(400).json({ error: 'X-Duration-Ms must be a non-negative integer' });
-    durationMs = parseInt(dur, 10);
+    if (/^\d{1,9}$/.test(dur)) durationMs = parseInt(dur, 10);
+    else warn.push(`X-Duration-Ms=${JSON.stringify(dur.slice(0, 20))}`);
   }
   const lo = req.header('x-logged-out');
-  if (lo !== undefined && lo !== '0' && lo !== '1') return res.status(400).json({ error: 'X-Logged-Out must be 0 or 1' });
+  if (lo !== undefined && lo !== '0' && lo !== '1') warn.push(`X-Logged-Out=${JSON.stringify(lo.slice(0, 20))}`);
+  if (warn.length) console.warn(`[Recording v2] segment ${segmentId} seq ${seq}: malformed header(s) ignored: ${warn.join(', ')}`);
 
   try {
     const r = await V2.saveChunkV2(userOf(req), segmentId, seq, body, { sha256: sha, capturedAt, durationMs, loggedOut: lo === '1' });

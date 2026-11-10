@@ -261,3 +261,152 @@ Local retention (sweep at start and every 10 min):
   START_RECORDING for v2 agents.
 - new `nodejs-backend/src/test-recording-day.ts`: `recordingDateFor` cases.
 - new `frontend/electron/recording-day.check.mjs` + spool retention checks.
+
+---
+
+# Phase 4 — Live view (LiveHub)
+
+Goal: an admin (or an HR user with the `recording` grant) opens the Recording
+panel and live feeds appear by themselves; there is no "start live" action.
+Live view and recording are separate failure domains on the agent.
+
+## 10. Topology
+
+- WebRTC peer-to-peer per (viewer, agent). **The agent is the offerer**; the
+  viewer only receives. Signalling uses the existing gateway sockets
+  (`/recording-ws` for agents, `/admin-recording-ws` for viewers).
+- ICE servers come from `getIceServers()` (`turn.service.ts`: STUN plus
+  short-lived TURN credentials from `TURN_URLS` / `TURN_SHARED_SECRET`). The
+  server sends them in `CONNECTED` (viewer) and `LIVE_START` (agent).
+  Production runs a TURN server on the main server (§15) so a remote admin on
+  Tailscale can reach office PCs.
+- Viewer cap: **4 concurrent streams per agent** (`LIVE_MAX_VIEWERS_PER_AGENT`,
+  default 4). Extra subscribers get `LIVE_REJECTED reason:'viewer_limit'`.
+- Quality profiles, applied by the agent with `RTCRtpSender.setParameters` (no
+  renegotiation): `grid` = scaleResolutionDownBy 2 (≈640×360), maxFramerate 5,
+  maxBitrate 250 kbps; `focus` = 1280×720, maxFramerate 10, maxBitrate 1.2 Mbps.
+- Protocol-1 (old) agents cannot do LIVE_*. They are listed in presence with
+  `liveCapable:false` (UI: "Update app for live view"). The legacy
+  WEBRTC_OFFER/ANSWER relay stays in the gateway for old admin UIs.
+
+## 11. Messages (JSON)
+
+Viewer socket: `/admin-recording-ws?token=…` (token from
+`POST /api/recording/admin-ws-token`, which requires recording access). One
+viewer socket may hold many streams (the grid).
+
+Server → viewer:
+- `CONNECTED { viewerId, iceServers }` — `viewerId` is unique per socket.
+- `LIVE_PRESENCE { agents: Agent[] }` — full snapshot right after CONNECTED.
+- `LIVE_PRESENCE_UPDATE { agent: Agent }` — on any change (connect, disconnect,
+  STATUS change). `Agent = { userId, name, department, connected, liveCapable,
+  recording, loggedIn, state, viewers, version }`; `recording` = agent state is
+  `recording`; `liveCapable` = protocol 2 and recording allowed; `viewers` =
+  current stream count. Admin/superadmin agents are not listed.
+- `LIVE_SUBSCRIBED { streamId, userId, quality }`
+- `LIVE_REJECTED { userId, reason }` — `viewer_limit | offline | not_live_capable | not_allowed`
+- `LIVE_SIGNAL { streamId, description?, candidate? }` (from the agent)
+- `LIVE_STATE { streamId, state, error? }` (agent: `connecting | connected | failed | closed`)
+- `LIVE_ENDED { streamId, reason }` — `agent_disconnected | agent_stopped | unsubscribed`
+- `PING` every 30 s; the viewer answers `PONG`; 2 missed → server closes.
+
+Viewer → server:
+- `LIVE_SUBSCRIBE { userId, quality }` → server allocates `streamId` (uuid),
+  checks presence and cap, sends `LIVE_START` to the agent and
+  `LIVE_SUBSCRIBED` to the viewer.
+- `LIVE_QUALITY { streamId, quality }` → forwarded to the agent.
+- `LIVE_UNSUBSCRIBE { streamId }` → `LIVE_STOP` to the agent.
+- `LIVE_SIGNAL { streamId, description?, candidate? }` → relayed to the agent.
+- `PONG`.
+The server checks that every `streamId` belongs to the sender (viewer or
+agent); anything else is dropped and logged.
+
+Server → agent: `LIVE_START { streamId, quality, iceServers }`,
+`LIVE_QUALITY { streamId, quality }`, `LIVE_STOP { streamId }`,
+`LIVE_SIGNAL { streamId, description?, candidate? }` (from the viewer).
+
+Agent → server: `LIVE_SIGNAL { streamId, description?, candidate? }`,
+`LIVE_STATE { streamId, state, error? }`; v2 `STATUS` gains `liveViewers`.
+
+Lifecycle:
+- Viewer socket closes → server sends `LIVE_STOP` for all its streams.
+- Agent socket closes or is replaced → server sends `LIVE_ENDED
+  agent_disconnected` to those viewers and forgets the streams.
+- Recovery is viewer-driven: on `failed`, `LIVE_ENDED`, or no `connected`
+  within 15 s, the viewer unsubscribes and resubscribes with backoff (2 s, 4 s,
+  8 s … max 30 s) while the agent is present and live-capable.
+- Agent: `iceConnectionState` `failed` → one `restartIce()` + new offer; still
+  failing after 10 s → `LIVE_STATE failed` and close the peer.
+
+## 12. Agent live engine (separate process)
+
+- A second hidden BrowserWindow (`electron/live-renderer/`) owns live view,
+  independent of the recorder window: its own desktop `getUserMedia` (max
+  1280×720, max 10 fps), started on the first `LIVE_START`, released 30 s after
+  the last stream closes. A crash of either window never affects the other;
+  main recreates the live window on `render-process-gone`.
+- One `RTCPeerConnection` per streamId; the agent creates the offer, sends
+  `LIVE_SIGNAL {description}`, trickles candidates (copy `candidate`, `sdpMid`,
+  `sdpMLineIndex` explicitly — IPC drops RTCIceCandidate fields), applies the
+  viewer's answer and candidates (queue candidates until the remote
+  description is set).
+- `LIVE_QUALITY` → `sender.setParameters` per §10.
+- The legacy recorder-window WebRTC answerer stays for old admin UIs.
+
+# Phase 5 — Admin / HR screens
+
+## 13. API additions (server)
+
+- `GET /api/recording/days?from=YYYY-MM-DD&to=YYYY-MM-DD&userId=&page=1&pageSize=50`
+  (recording access) → `{ items: Day[], total, page, pageSize }`,
+  `Day = { sessionId, userId, name, department, recordingDate, createdAt,
+  legacy, status, generation, durationMs, loggedOutMs, segments,
+  incompleteSegments, openSegments, assembling, lastChunkAt, hasFile }`,
+  newest first. Legacy sessions: `legacy:true`, `recordingDate:null`, filtered
+  by `created_at`.
+- `POST /api/recording/sessions/:id/playback-token` (recording access) →
+  `{ url }` = `/api/recording/sessions/:id/file?pt=<jwt>` (relative to the API
+  base), valid 10 minutes, so a `<video src>` can stream with Range without an
+  Authorization header. `pt` is accepted only by the file route and only for
+  that session.
+- `GET /api/recording/live-presence` (recording access) → `Agent[]` as in
+  `LIVE_PRESENCE` (first paint and polling fallback).
+- Existing: `GET/PUT /api/recording/settings`, `GET /agents-status`.
+
+## 14. UI (frontend/src)
+
+`RecordingTab` becomes three tabs:
+1. **Live** — 4×4 grid (16 cells), one cell per unique user, pages of 16
+   sorted by name, department filter and name search. Only users on the
+   visible page are subscribed (`grid` quality); changing page or filter
+   unsubscribes the rest. One viewer socket for the whole tab (hook
+   `useLiveHub`) with reconnect/backoff and PONG. A cell shows the name,
+   department, a badge (`Live`, `Connecting`, `Reconnecting`, `Not recording`,
+   `Offline`, `Busy`, `Update app`), and the subtext **"currently logged
+   out"** when `loggedIn === false`. A disconnected user stays 60 s as
+   `Reconnecting`, then leaves the grid. Clicking a cell opens a focus view
+   (same stream switched to `focus`; back to `grid` on close). Empty state when
+   nobody is live.
+2. **Recordings** — table from `GET /days`: employee, day, duration,
+   "includes Xh Ym logged out" when `loggedOutMs > 0`, status (`Recording`,
+   `Assembling`, `Ready`, `Incomplete`), **Play** (in-app `<video>` with the
+   playback-token URL, seekable) and **Download** (authenticated blob as in
+   Phase 0). Filters: date range (default last 7 days), employee. Legacy
+   sessions carry a "legacy" tag.
+3. **Settings** (admins only) — retention: Forever / 30 / 60 / 90 days.
+
+The old Start/Stop buttons and LivePlayer modal are removed (recording is
+always-on). HR users with the `recording` grant get the same tab (Live +
+Recordings, no Settings) through `EmployeeDashboardNew`'s granted-tab map.
+Tailwind spacing trap (AGENTS.md): use arbitrary values for max/min widths.
+
+## 15. TURN on the main server (deployment)
+
+Remote admins reach the main server only over Tailscale; office PCs reach it on
+the LAN. One TURN server on the main server serves both: coturn (Docker or WSL
+on Windows) listening on the LAN and Tailscale addresses with
+`relay-ip=<LAN IP>` (relay candidates reachable by office PCs),
+`use-auth-secret`, `static-auth-secret=<TURN_SHARED_SECRET>`, `realm=acehrm`,
+3478 udp+tcp and a relay port range. Backend `.env`:
+`TURN_URLS=turn:<LAN IP>:3478?transport=udp,turn:<LAN IP>:3478?transport=tcp,turn:<Tailscale IP>:3478?transport=udp,turn:<Tailscale IP>:3478?transport=tcp`
+and `TURN_SHARED_SECRET`. Step-by-step: `docs/live-view-turn.md`.

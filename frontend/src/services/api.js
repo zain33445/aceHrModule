@@ -326,6 +326,18 @@ const api = {
     axios.get(`${API_BASE}/recording/sessions/${sessionId}/file`, { responseType: 'blob' }),
   recordingGetAdminWsToken: () =>
     axios.post(`${API_BASE}/recording/admin-ws-token`, {}),
+  recordingGetDays: (params) => {
+    const clean = Object.fromEntries(
+      Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== '')
+    );
+    return axios.get(`${API_BASE}/recording/days`, { params: clean });
+  },
+  recordingPlaybackToken: (sessionId) =>
+    axios.post(`${API_BASE}/recording/sessions/${sessionId}/playback-token`, {}),
+  recordingGetLivePresence: () => axios.get(`${API_BASE}/recording/live-presence`),
+  recordingGetSettings: () => axios.get(`${API_BASE}/recording/settings`),
+  recordingPutSettings: ({ retentionDays }) =>
+    axios.put(`${API_BASE}/recording/settings`, { retentionDays }),
 
   // Tab Access (HR Feature Assignment)
   getHrEmployeesWithTabs: () => axios.get(`${API_BASE}/tab-access/hr-employees`),

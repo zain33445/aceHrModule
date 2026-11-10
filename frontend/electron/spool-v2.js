@@ -95,14 +95,65 @@ export function writeChunk(dir, seq, buffer, { capturedAt, durationMs, loggedOut
     while (await exists(chunkFile(dir, n))) n++;
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
     await writeFileDurable(chunkFile(dir, n), buffer); // chunk first: the bytes are what matters
-    await writeFileDurable(chunkFile(dir, n, 'json'), JSON.stringify({
-      capturedAt: capturedAt || new Date().toISOString(),
-      durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : 0,
-      loggedOut: !!loggedOut,
-      sha256,
-    }));
+    try {
+      await writeFileDurable(chunkFile(dir, n, 'json'), JSON.stringify({
+        capturedAt: capturedAt || new Date().toISOString(),
+        durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : 0,
+        loggedOut: !!loggedOut,
+        sha256,
+      }));
+    } catch (err) {
+      // A retry must not see a half-stored chunk and duplicate it under the next seq.
+      try { await fs.promises.unlink(chunkFile(dir, n)); } catch { /* keep whatever is there */ }
+      throw err;
+    }
+    // A2: a late chunk for an already closed segment raises lastSeq and re-opens the close handshake.
+    const seg = await readSegment(dir);
+    if (seg?.closed && !(Number.isInteger(seg.lastSeq) && seg.lastSeq >= n)) {
+      await writeFileDurable(path.join(dir, 'segment.json'), JSON.stringify({ ...seg, lastSeq: n }));
+      try { await fs.promises.unlink(path.join(dir, 'closed.ok')); } catch { /* not acknowledged yet */ }
+    }
     return { seq: n, sha256, bytes: buffer.length, moved: n !== seq };
   });
+}
+
+// ── Reliable writes (A1): bytes stay in memory and are retried until they are on disk ──
+export const PENDING_CAP_BYTES = 200 * 1024 * 1024;
+let _pendingBytes = 0;
+let _lastWriteError = null;
+export const pendingBytes = () => _pendingBytes;
+export const lastWriteError = () => _lastWriteError;
+
+/**
+ * writeChunk with retry + backoff. Never gives up and never drops the buffer; callers watch
+ * pendingBytes() against PENDING_CAP_BYTES to pause capture instead of growing memory.
+ * @param {{retryMs?:number, onError?:(e:Error)=>void, onDiskLow?:()=>void, onRecovered?:()=>void, write?:Function}} [opts]
+ */
+export async function writeChunkReliable(dir, seq, buffer, meta, opts = {}) {
+  const { retryMs = 1000, onError, onDiskLow, onRecovered, write = writeChunk } = opts;
+  _pendingBytes += buffer.length;
+  try {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await write(dir, seq, buffer, meta);
+        if (attempt > 0) { _lastWriteError = null; try { onRecovered?.(); } catch { /* listener */ } }
+        return r;
+      } catch (err) {
+        _lastWriteError = err;
+        try { onError?.(err); } catch { /* listener */ }
+        if (err?.code === 'ENOSPC') { try { onDiskLow?.(); } catch { /* listener */ } }
+        await new Promise((r) => setTimeout(r, Math.min(retryMs * 2 ** Math.min(attempt, 4), 30_000)));
+      }
+    }
+  } finally {
+    _pendingBytes -= buffer.length;
+  }
+}
+
+/** Folder of an existing segment, wherever its user folder is; null when unknown (A2). */
+export async function findSegmentDir(root, segmentId) {
+  for (const s of await listSegmentDirs(root)) if (s.segmentId === segmentId) return s.dir;
+  return null;
 }
 
 /** Segment folders under the v2 root: [{ dir, userDir, segmentId }]. */

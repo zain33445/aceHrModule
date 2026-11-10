@@ -648,6 +648,11 @@ export async function assembleSession(sessionId: string): Promise<string> {
 
 const assemblyRuns = new Map<string, { rerun: boolean }>();
 
+/** True while an assembly run for this session is in flight (in-memory lock). */
+export function isAssembling(sessionId: string): boolean {
+  return assemblyRuns.has(sessionId);
+}
+
 /** Per-session guarded assembly; a call during a run schedules exactly one more run. Never rejects. */
 export async function requestAssembly(sessionId: string): Promise<void> {
   const running = assemblyRuns.get(sessionId);

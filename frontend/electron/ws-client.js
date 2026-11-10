@@ -14,7 +14,10 @@ import { logger } from './logger.js';
 import { randomUUID } from 'crypto';
 import { WS_ENDPOINT, AGENT_AUTH_ENDPOINT, AGENT_TOKEN_FILE, RECORDING_PROTOCOL, RECORDING_STATUS_INTERVAL_MS } from './config.js';
 import { handleWebRtcMessage, setRecordPolicy, getRecorderStatus, addStatusListener } from './recorder-main.js';
+import { handleLiveMessage, getLiveViewerCount, addLiveCountListener, closeAllLive } from './live-main.js';
 import { setSyncEnabled } from './sync-v2.js';
+import { loadStore, saveStore, mergeConnected } from './token-store.js';
+import { decideRecording, clockOffset } from './agent-policy.js';
 import { applySchedules } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,7 +32,8 @@ let _currentUserId = null;
 let _agentToken = null;
 let _agentTokenUserId = null; // user the cached agent token was issued for
 let _sessionToken = null;     // web session JWT, pushed from the renderer
-let _refreshPromise = null;   // single-flight guard for refreshAgentToken()
+const _refreshes = new Map(); // userId -> in-flight refreshAgentToken(); one per user, never shared across users
+let _clockOffsetMs = 0;       // serverTime - local clock, from the last CONNECTED (A12)
 let _isShuttingDown = false;
 let _lastMessageAt = 0;
 let _livenessTimer = null;
@@ -54,17 +58,22 @@ let _tokens = {}; // { [userId]: token }
 // can start at boot even when the server is unreachable.
 let _policies = {}; // { [userId]: { record: boolean, recordingDay: {boundaryMinutes, shiftStartMinutes} } }
 
-/** Loads every cached token. Returns the userId that was current when saved. */
+/** Loads every cached token (main file, else .bak). Returns the userId that was current when saved. */
 function _loadTokens() {
   try {
     const p = _tokenPath();
-    if (!fs.existsSync(p)) return null;
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const lastUser = data?.userId != null ? String(data.userId) : null;
-    _tokens = data?.tokens && typeof data.tokens === 'object'
+    const { data, from } = loadStore(p);
+    if (from !== 'main' && fs.existsSync(p)) {
+      // A7: keep the unreadable file for a human; it is never overwritten.
+      try { fs.copyFileSync(p, `${p}.corrupt-${Date.now()}`); } catch { /* best effort */ }
+      logger.warn(`[WS Client] ${AGENT_TOKEN_FILE} unreadable — ${from === 'bak' ? 'recovered from .bak' : 'starting empty'}`);
+    }
+    if (!data) return null;
+    const lastUser = data.userId != null ? String(data.userId) : null;
+    _tokens = data.tokens && typeof data.tokens === 'object'
       ? { ...data.tokens }
-      : (data?.token && lastUser ? { [lastUser]: data.token } : {}); // pre-map format
-    _policies = data?.policies && typeof data.policies === 'object' ? { ...data.policies } : {};
+      : (data.token && lastUser ? { [lastUser]: data.token } : {}); // pre-map format
+    _policies = data.policies && typeof data.policies === 'object' ? { ...data.policies } : {};
     return lastUser;
   } catch { /* ignore */ }
   return null;
@@ -72,14 +81,14 @@ function _loadTokens() {
 
 function _saveTokens() {
   try {
-    fs.writeFileSync(_tokenPath(), JSON.stringify({
+    saveStore(_tokenPath(), {
       tokens: _tokens,
       policies: _policies,
       // Current pair kept at top level so an older agent build can still read it.
       token: _agentToken,
       userId: _agentTokenUserId,
       savedAt: new Date().toISOString(),
-    }));
+    });
   } catch (err) { logger.error(`[WS Client] Token save failed: ${err.message}`); }
 }
 
@@ -103,13 +112,21 @@ export function getDeviceId() {
   return _deviceId;
 }
 
-/** Tell the recorder who records (cached policy of the current agent user). */
+/**
+ * Tell the recorder who records. The decision belongs to the user who is signed in now (A9): a user
+ * without a cached token + server-confirmed policy is NOT recorded, and is never attributed to the
+ * previous user's token.
+ */
 function _applyPolicy() {
-  const u = _agentTokenUserId;
-  if (!u) return; // token lost (4001): keep recording as-is rather than stopping
-  const p = _policies[u];
-  setRecordPolicy({ userId: u, record: !!p?.record, recordingDay: p?.recordingDay });
+  const u = _currentUserId != null ? String(_currentUserId) : _agentTokenUserId;
+  if (!u) return; // nobody known yet (token lost on 4001): keep recording as-is rather than stopping
+  const d = decideRecording({ userId: u, tokens: _tokens, policies: _policies });
+  if (!d.record) logger.info(`[WS Client] Not recording: ${d.reason}`);
+  setRecordPolicy({ userId: u, record: d.record, recordingDay: _policies[u]?.recordingDay, clockOffsetMs: _clockOffsetMs });
 }
+
+/** serverTime - local clock (ms) from the last CONNECTED; add to Date.now() for server time. */
+export function getClockOffsetMs() { return _clockOffsetMs; }
 
 /** Returns the current agent JWT (injected into recorder-main) */
 export function getAgentToken() { return _agentToken; }
@@ -159,27 +176,30 @@ function _fetchAgentToken(userId) {
 }
 
 /**
- * Fetch a fresh agent token for the current user using the session token.
- * Single-flight: concurrent callers share one request. On failure the existing
- * token (if any) is kept. Resolves true when a new token was obtained.
+ * Fetch a fresh agent token for `userId` (default: the current user) using the session token.
+ * Single-flight PER USER: concurrent callers for the same user share one request, a refresh for
+ * user A never satisfies a request for user B. Only the signed-in user can be refreshed (the
+ * session token is theirs). On failure the existing token (if any) is kept. Resolves true on success.
  */
-export function refreshAgentToken() {
-  if (_refreshPromise) return _refreshPromise;
-  _refreshPromise = (async () => {
-    const userId = _currentUserId;
-    if (!userId || !_sessionToken) return false;
-    const token = await _fetchAgentToken(userId);
+export function refreshAgentToken(userId = _currentUserId) {
+  const uid = userId != null ? String(userId) : null;
+  if (!uid || !_sessionToken || uid !== String(_currentUserId)) return Promise.resolve(false);
+  const running = _refreshes.get(uid);
+  if (running) return running;
+  const p = (async () => {
+    const token = await _fetchAgentToken(uid);
     if (!token) return false;
+    _tokens[uid] = token;
     const prevUser = _agentTokenUserId;
-    _agentToken = token;
-    _agentTokenUserId = String(userId);
-    _tokens[_agentTokenUserId] = token;
+    if (uid === String(_currentUserId)) { _agentToken = token; _agentTokenUserId = uid; }
     _saveTokens();
     logger.info('[WS Client] Agent token obtained and saved');
     if (prevUser && prevUser !== _agentTokenUserId) _onUserSwitch(prevUser);
+    else _applyPolicy();
     return true;
-  })().finally(() => { _refreshPromise = null; });
-  return _refreshPromise;
+  })().finally(() => { _refreshes.delete(uid); });
+  _refreshes.set(uid, p);
+  return p;
 }
 
 // ─── Public Init ──────────────────────────
@@ -191,7 +211,7 @@ export async function initWsClient(userId) {
   const lastUser = _loadTokens();
   const actAs = userId != null ? String(userId) : lastUser;
   if (actAs && _tokens[actAs]) { _agentToken = _tokens[actAs]; _agentTokenUserId = actAs; }
-  if (!_statusHooked) { _statusHooked = true; addStatusListener(() => _sendStatus()); }
+  if (!_statusHooked) { _statusHooked = true; addStatusListener(() => _sendStatus()); addLiveCountListener(() => _sendStatus()); }
   _applyPolicy(); // records from boot using the cached flag, even offline
   if (!_agentToken && userId) {
     logger.info('[WS Client] No cached token — fetching from backend...');
@@ -222,10 +242,12 @@ export function setWsUserId(userId) {
     _reconnect();
     return;
   }
-  // Losing data is worse than misattribution: if the new token cannot be
-  // fetched we keep the old one and keep recording.
+  // A9: a user we have no token/policy for is not recorded (and never under the previous user's
+  // identity) until their token arrives and the server confirms their policy. Segments already on
+  // disk keep their owner and upload with that owner's token.
+  _applyPolicy();
   refreshAgentToken().then((ok) => {
-    if (!ok) logger.warn('[WS Client] Could not fetch agent token for new user — keeping previous token');
+    if (!ok) logger.warn('[WS Client] Could not fetch agent token for new user — recording paused for them');
     _reconnect();
   });
 }
@@ -246,6 +268,7 @@ export function shutdownWsClient() {
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   if (_livenessTimer) { clearInterval(_livenessTimer); _livenessTimer = null; }
   if (_statusTimer) { clearInterval(_statusTimer); _statusTimer = null; }
+  closeAllLive();
   const old = _ws;
   _ws = null; // detach first so the socket's own listeners ignore the close
   if (old) { try { old.close(); } catch { /* ignore */ } }
@@ -296,6 +319,7 @@ function _connect() {
     sock.addEventListener('close', (event) => {
       if (_ws !== sock) return; // a replaced socket closing must not touch current state
       _ws = null;
+      closeAllLive(); // the server ended our streams with the socket
       if (_isShuttingDown) return;
       if (event.code === 4002) {
         // Another agent of the same user (e.g. a second PC) replaced us. Coming
@@ -353,6 +377,7 @@ function _scheduleReconnect(delayOverride) {
 function _reconnect() {
   if (_isShuttingDown) return;
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  closeAllLive();
   const old = _ws;
   _ws = null; // detach first: the old socket's close listener then does nothing
   if (old) { try { old.close(); } catch { /* ignore */ } }
@@ -381,6 +406,13 @@ function _handleMessage(msg) {
     case 'WEBRTC_OFFER':
     case 'WEBRTC_ICE_CANDIDATE':
       handleWebRtcMessage(msg);
+      break;
+
+    case 'LIVE_START':
+    case 'LIVE_QUALITY':
+    case 'LIVE_STOP':
+    case 'LIVE_SIGNAL':
+      handleLiveMessage(msg);
       break;
 
     case 'CHUNK_ACK':
@@ -433,15 +465,16 @@ function _onConnected(msg) {
     setSyncEnabled(true);
     const t = typeof msg.serverTime === 'number' ? msg.serverTime : Date.parse(msg.serverTime);
     if (Number.isFinite(t)) {
+      _clockOffsetMs = clockOffset(t);
       const skew = Date.now() - t;
       const line = `[WS Client] Clock skew vs server: ${(skew / 1000).toFixed(1)}s`;
       if (Math.abs(skew) > CLOCK_SKEW_WARN_MS) logger.warn(line); else logger.info(line);
     }
     const uid = String(msg.userId ?? _agentTokenUserId ?? '');
     if (uid) {
-      _policies[uid] = { record: !!msg.record, recordingDay: msg.recordingDay ?? null };
+      _policies[uid] = mergeConnected(_policies[uid], msg); // A11: a missing recordingDay keeps the cached rule
       _saveTokens();
-      if (uid === _agentTokenUserId) _applyPolicy();
+      if (uid === (_currentUserId != null ? String(_currentUserId) : _agentTokenUserId)) _applyPolicy();
     }
   } else if (!_warnedOldServer) {
     // Old server: keep recording locally into the v2 spool, upload nothing
@@ -456,6 +489,7 @@ function _sendStatus() {
   sendWsMessage({
     type: 'STATUS',
     ...getRecorderStatus(),
+    liveViewers: getLiveViewerCount(),
     userId: _currentUserId,
     version: app.getVersion(),
   });

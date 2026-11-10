@@ -1,8 +1,18 @@
 import { Router } from 'express';
 import prisma from '../prisma';
 import axios from 'axios';
+import { requireUser } from '../middleware/requireUser';
 
 const router = Router();
+
+// S10/S14: every employee route needs a signed session. (Role restrictions: follow-up, out of scope.)
+router.use(requireUser);
+
+/** Never send the password hash to a client. */
+const publicUser = <T extends { password_hash?: unknown }>(u: T): Omit<T, 'password_hash'> => {
+  const { password_hash, ...rest } = u;
+  return rest;
+};
 
 // Get all employees
 router.get('/', async (req, res) => {
@@ -12,7 +22,7 @@ router.get('/', async (req, res) => {
         department: true
       }
     });
-    res.json(users);
+    res.json(users.map(publicUser));
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch employees" });
   }
@@ -93,7 +103,7 @@ router.post('/', async (req, res) => {
       });
     }
 
-    res.status(201).json({ message: "Employee created", user, device_sync: deviceSyncStatus });
+    res.status(201).json({ message: "Employee created", user: publicUser(user), device_sync: deviceSyncStatus });
   } catch (error: any) {
     console.error("Failed to create employee:", error.message);
     res.status(500).json({ error: "Failed to create employee", details: error.message });

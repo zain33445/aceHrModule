@@ -16,20 +16,17 @@
  *   GET    /api/recording/agents               List connected agents
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import fs from 'fs';
-import jwt from 'jsonwebtoken';
 import { requireAdmin } from '../middleware/requireAdmin';
-import { requireRecordingAccess } from '../middleware/requireRecordingAccess';
+import { requireRecordingAccess, hasRecordingAccess } from '../middleware/requireRecordingAccess';
 import { requireAgentToken } from '../middleware/requireAgentToken';
-import { verifyUserToken, findSessionUser, TOKEN_EXPIRED_CODE } from '../middleware/requireUser';
+import { verifyUserToken, findSessionUser, TOKEN_EXPIRED_CODE, signViewerToken, signPlaybackToken, verifyPlaybackToken } from '../middleware/requireUser';
 import { getGateway } from '../gateways/recording.gateway';
 import * as RecordingService from '../services/recording.service';
 import { recordingEmitter, HttpError, isValidSessionId, startsWithEbml } from '../services/recording.service';
 import { assembleOnDemand, getRetentionDays, setRetentionDays, RETENTION_VALUES } from '../services/recording-v2.service';
 import prisma from '../prisma';
-
-const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
 
 const router = Router();
 
@@ -164,6 +161,91 @@ router.get('/sessions', requireRecordingAccess, async (req: Request, res: Respon
   }
 });
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const parseDay = (v: unknown): Date | null => {
+  if (typeof v !== 'string' || !DAY_RE.test(v)) return null;
+  const d = new Date(`${v}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v ? null : d;
+};
+
+/**
+ * GET /api/recording/days?from=YYYY-MM-DD&to=YYYY-MM-DD&userId=&page=1&pageSize=50
+ * One row per recording session (v2: per day; legacy: per session), newest first.
+ * v2 is filtered by recording_date, legacy by created_at (Karachi calendar day).
+ */
+router.get('/days', requireRecordingAccess, async (req: Request, res: Response) => {
+  const from = parseDay(req.query.from);
+  const to = parseDay(req.query.to);
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required as YYYY-MM-DD' });
+  if (from > to) return res.status(400).json({ error: 'from must not be after to' });
+  const intParam = (v: unknown, def: number) => (v === undefined || v === '' ? def : /^\d{1,6}$/.test(String(v)) ? parseInt(String(v), 10) : NaN);
+  const page = intParam(req.query.page, 1);
+  const pageSize = intParam(req.query.pageSize, 50);
+  if (!(page >= 1) || !(pageSize >= 1 && pageSize <= 200)) return res.status(400).json({ error: 'page >= 1 and 1 <= pageSize <= 200 required' });
+  const userId = typeof req.query.userId === 'string' && req.query.userId ? req.query.userId : undefined;
+
+  try {
+    const legacyFrom = new Date(`${req.query.from}T00:00:00+05:00`);
+    const legacyTo = new Date(new Date(`${req.query.to}T00:00:00+05:00`).getTime() + 86_400_000);
+    const where = {
+      ...(userId ? { user_id: userId } : {}),
+      OR: [
+        { recording_date: { gte: from, lte: to } },
+        { recording_date: null, created_at: { gte: legacyFrom, lt: legacyTo } },
+      ],
+    };
+    // ponytail: sort keys for the whole range in memory (a few thousand light rows); SQL COALESCE sort if ranges grow.
+    const keys = await prisma.recordingSession.findMany({ where, select: { id: true, recording_date: true, created_at: true } });
+    keys.sort((a, b) => (b.recording_date ?? b.created_at).getTime() - (a.recording_date ?? a.created_at).getTime() || b.created_at.getTime() - a.created_at.getTime());
+    const ids = keys.slice((page - 1) * pageSize, page * pageSize).map((k) => k.id);
+    const rows = await prisma.recordingSession.findMany({
+      where: { id: { in: ids } },
+      include: { employee: { select: { name: true, department: { select: { name: true } } } }, segments: { select: { state: true } } },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const items = await Promise.all(ids.map(async (id) => {
+      const r = byId.get(id);
+      if (!r) return null;
+      const legacy = !r.recording_date;
+      const st = (state: string) => r.segments.filter((x) => x.state === state).length;
+      let hasFile = false;
+      if (r.file_path) hasFile = await fs.promises.stat(r.file_path).then((f) => f.isFile(), () => false);
+      return {
+        sessionId: r.id,
+        userId: r.user_id,
+        name: r.employee.name,
+        department: r.employee.department?.name ?? null,
+        recordingDate: r.recording_date ? r.recording_date.toISOString().slice(0, 10) : null,
+        createdAt: r.created_at,
+        legacy,
+        status: r.status,
+        generation: r.generation,
+        durationMs: legacy ? null : r.duration_ms,
+        loggedOutMs: r.logged_out_ms,
+        segments: r.segments.length,
+        incompleteSegments: st('incomplete'),
+        openSegments: st('open'),
+        assembling: !legacy && (RecordingService.isAssembling(r.id) || st('complete') + st('incomplete') > 0),
+        lastChunkAt: r.last_chunk_at,
+        hasFile,
+      };
+    }));
+    res.json({ items: items.filter(Boolean), total: keys.length, page, pageSize });
+  } catch (err: any) {
+    console.error('[Recording] days failed:', err.message);
+    res.status(500).json({ error: 'Failed to list recording days' });
+  }
+});
+
+/** GET /api/recording/live-presence - Agent[] (same data as LIVE_PRESENCE). */
+router.get('/live-presence', requireRecordingAccess, async (req: Request, res: Response) => {
+  try {
+    res.json((await getGateway()?.getLivePresence()) ?? []);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to read presence' });
+  }
+});
+
 /**
  * GET /api/recording/sessions/:id
  * Returns session detail including chunk list.
@@ -179,10 +261,52 @@ router.get('/sessions/:id', requireRecordingAccess, async (req: Request, res: Re
 });
 
 /**
+ * File route auth: a Bearer header goes through requireRecordingAccess unchanged; without one,
+ * `?pt=<playback token>` (POST /sessions/:id/playback-token) lets a <video src> stream with Range.
+ * `pt` is honoured on this route only and only for the session it was minted for.
+ */
+async function requireFileAccess(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const pt = req.query.pt;
+  if (req.headers.authorization || typeof pt !== 'string') return requireRecordingAccess(req, res, next);
+  try {
+    const d = verifyPlaybackToken(pt);
+    if (!d || d.sid !== String(req.params.id)) {
+      res.status(401).json({ error: 'Invalid playback token.' });
+      return;
+    }
+    if (!(await hasRecordingAccess(d.sub))) {
+      res.status(403).json({ error: 'Recording access required.' });
+      return;
+    }
+    next();
+  } catch (err: any) {
+    const expired = err?.name === 'TokenExpiredError';
+    res.status(401).json({ error: expired ? 'Playback token expired.' : 'Invalid playback token.' });
+  }
+}
+
+/**
+ * POST /api/recording/sessions/:id/playback-token
+ * 10-minute token for GET /sessions/:id/file?pt=... (video element, no Authorization header).
+ */
+router.post('/sessions/:id/playback-token', requireRecordingAccess, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  if (!isValidSessionId(id)) return res.status(400).json({ error: 'Invalid session id' });
+  try {
+    const exists = await prisma.recordingSession.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'Session not found' });
+    const pt = signPlaybackToken((req as any).adminUser.id, id);
+    res.json({ url: `/api/recording/sessions/${id}/file?pt=${pt}` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create playback token' });
+  }
+});
+
+/**
  * GET /api/recording/sessions/:id/file
  * Streams the assembled WebM recording (supports HTTP Range).
  */
-router.get('/sessions/:id/file', requireRecordingAccess, async (req: Request, res: Response) => {
+router.get('/sessions/:id/file', requireFileAccess, async (req: Request, res: Response) => {
   try {
     const session = await RecordingService.getSession(String(req.params.id));
     if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -213,7 +337,8 @@ router.get('/sessions/:id/file', requireRecordingAccess, async (req: Request, re
     const filename = `recording-${employeeName}-${dayPart}${session.id.substring(0, 8)}.webm`.replace(/[^A-Za-z0-9._-]/g, '-');
 
     res.setHeader('Content-Type', 'video/webm');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // S13: only an explicit download is an attachment (the browser then streams it to disk); <video> needs inline.
+    res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${filename}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('X-Session-Id', session.id);
 
@@ -519,12 +644,7 @@ router.put('/settings', requireAdmin, async (req: Request, res: Response) => {
  */
 router.post('/admin-ws-token', requireRecordingAccess, (req: Request, res: Response) => {
   const admin = (req as any).adminUser;
-  const token = jwt.sign(
-    { sub: admin.id, role: 'admin-ws' },
-    AGENT_SECRET,
-    { expiresIn: '5m' }
-  );
-  res.json({ token });
+  res.json({ token: signViewerToken(admin.id) });
 });
 
 export default router;

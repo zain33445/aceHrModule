@@ -21,6 +21,7 @@ import { logger } from './electron/logger.js';
 
 // Recording system modules (NEW)
 import { initRecorderMain, getRecordingState, flushAndStop, setLoggedIn } from './electron/recorder-main.js';
+import { initLiveMain, shutdownLive } from './electron/live-main.js';
 import { initWsClient, setWsUserId, setSessionToken, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
 import { stopScheduler } from './electron/scheduler.js';
 import { initNotificationClient, setNotificationUserId, shutdownNotificationClient } from './electron/notification-client.js';
@@ -571,6 +572,9 @@ app.whenReady().then(() => {
     }
   );
 
+  // Live view engine (own hidden window, created on the first LIVE_START)
+  initLiveMain();
+
   // Preflight: warm up desktop capture once so first live session has no cold prompt
   setTimeout(() => {
     import('./electron/recorder-main.js')
@@ -705,6 +709,7 @@ app.on('before-quit', (event) => {
     return;
   }
   stopMonitor();
+  shutdownLive();
   shutdownWsClient();
   shutdownNotificationClient();
   stopScheduler();

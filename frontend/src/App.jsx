@@ -70,22 +70,24 @@ function App() {
       fetchData();
     }
 
+    // Session token first: the agent needs it to mint the new user's recording token the moment it learns who that is.
+    if (auth?.token) window.electronAPI?.setSessionToken?.(auth.token);
     // Pass user ID to Electron Desktop Monitor if available
     if (auth && auth.user_id && window.electronAPI) {
       window.electronAPI.setUserId(auth.user_id);
     }
-    if (auth?.token) window.electronAPI?.setSessionToken?.(auth.token);
   }, [auth, fetchData]);
 
   const handleLoginSuccess = (authData) => {
     setAuth(authData);
     localStorage.setItem('bio_auth', JSON.stringify(authData));
 
+    // Session token before the user id (see the effect above)
+    if (authData?.token) window.electronAPI?.setSessionToken?.(authData.token);
     // Pass user ID to Electron Desktop Monitor immediately on login
     if (authData && authData.user_id && window.electronAPI) {
       window.electronAPI.setUserId(authData.user_id);
     }
-    if (authData?.token) window.electronAPI?.setSessionToken?.(authData.token);
   };
 
   const handleLogout = useCallback(() => {
@@ -106,6 +108,7 @@ function App() {
   // from before sessions existed): drop to the login screen.
   useEffect(() => {
     const onExpired = () => {
+      window.electronAPI?.setLoggedIn?.(false);
       setAuth(null);
       localStorage.removeItem('bio_auth');
     };

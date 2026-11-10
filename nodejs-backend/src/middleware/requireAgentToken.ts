@@ -8,6 +8,7 @@
 
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import prisma from '../prisma';
 
 const AGENT_SECRET = process.env.AGENT_JWT_SECRET || 'ace-agent-secret-change-in-prod';
 
@@ -68,4 +69,20 @@ export function verifyAgentToken(token: string): AgentPayload | null {
   } catch {
     return null;
   }
+}
+
+// ── S9: who may START recording ────────────────────────────────────────
+// Deactivated users and admins must not register new segments with a still-valid agent token.
+// Chunk uploads for an already-registered segment stay open (captured bytes are never refused).
+const USER_CACHE_MS = 60_000;
+const userCache = new Map<string, { at: number; canRecord: boolean }>();
+
+/** True for an active, non-admin user. Cached for 60 s. Unknown user → false. */
+export async function canUserRecord(userId: string): Promise<boolean> {
+  const hit = userCache.get(userId);
+  if (hit && Date.now() - hit.at < USER_CACHE_MS) return hit.canRecord;
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true } });
+  const canRecord = !!u && u.status === 'active' && u.role !== 'admin' && u.role !== 'superadmin';
+  userCache.set(userId, { at: Date.now(), canRecord });
+  return canRecord;
 }

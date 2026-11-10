@@ -622,7 +622,7 @@ function AdminDashboardNew({
         id: "recording",
         label: "Recording",
         icon: Video,
-        content: <RecordingTab adminId={user?.user_id} employees={employees} />,
+        content: <RecordingTab adminId={user?.user_id} employees={employees} isAdmin={true} />,
       },
       {
         id: "holidays",

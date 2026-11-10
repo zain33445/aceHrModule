@@ -15,7 +15,9 @@
     "db:baseline": "ts-node src/db-baseline.ts",
     "test-recording-e2e": "ts-node src/test-recording-e2e.ts",
     "test-recording-day": "ts-node src/test-recording-day.ts",
-    "test-recording-v2-e2e": "ts-node src/test-recording-v2-e2e.ts"
+    "test-recording-v2-e2e": "ts-node src/test-recording-v2-e2e.ts",
+    "test-recording-live-e2e": "ts-node src/test-recording-live-e2e.ts",
+    "test-recording-edge-e2e": "ts-node src/test-recording-edge-e2e.ts"
   },
   "prisma": {
     "seed": "ts-node ./src/seed.ts"

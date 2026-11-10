@@ -213,7 +213,9 @@ async function main() {
     check('missing X-Chunk-Sha256 → 400', (await putChunk(agentTok, segA, 5, runA[0], {}, null)).status === 400);
     check('non-hex X-Chunk-Sha256 → 400', (await putChunk(agentTok, segA, 5, runA[0], {}, 'zz'.repeat(32))).status === 400);
     check('bad seq → 400', (await putChunk(agentTok, segA, 'abc', runA[0])).status === 400);
-    check('bad X-Logged-Out → 400', (await putChunk(agentTok, segA, 5, runA[0], { 'X-Logged-Out': 'yes' })).status === 400);
+    // S3 (edge cases): malformed optional metadata is stored as null/default, never refused (on segC2, so segA's manifest stays [0,1,2])
+    const badLo = await putChunk(agentTok, segC2, 0, runA[0], { 'X-Logged-Out': 'yes' });
+    check('malformed X-Logged-Out → 201, stored with logged_out=false', badLo.status === 201 && (await prisma.recordingChunk.findUnique({ where: { segment_id_seq: { segment_id: segC2, seq: 0 } } }))?.logged_out === false, `${badLo.status}`);
     check('empty body → 400', (await putChunk(agentTok, segA, 5, Buffer.alloc(0))).status === 400);
     check('corrupt-in-transit chunk was not stored', !(await prisma.recordingChunk.findUnique({ where: { segment_id_seq: { segment_id: segA, seq: 5 } } })));
     const unreg = await putChunk(agentTok, `e2e-nope-${rid()}`, 0, runA[0]);
@@ -262,6 +264,12 @@ async function main() {
     check('retention 0 (forever) deletes nothing', none.sessions === 0 && !!(await sessionRow(oldSession)));
     const put30 = await axios.put(`${API}/recording/settings`, { retentionDays: 30 }, bearer(adminTok));
     check('settings PUT 30 → saved and readable', put30.status === 200 && (await axios.get(`${API}/recording/settings`, bearer(adminTok))).data.retentionDays === 30);
+    // S6: retention protects sessions with unassembled segments or chunks newer than 7 days. First show that:
+    const protectedRun = await runRetentionOnce({ onlyUserId: empId });
+    check('retention 30 skips the 40-day-old session while it has unassembled segments / fresh chunks', protectedRun.sessions === 0 && !!(await sessionRow(oldSession)));
+    // …then make it eligible (segments assembled, chunks received > 7 days ago) so deletion stays covered.
+    await prisma.recordingSegment.updateMany({ where: { session_id: oldSession }, data: { state: 'assembled' } });
+    await prisma.recordingChunk.updateMany({ where: { session_id: oldSession }, data: { uploaded_at: new Date(Date.now() - 8 * 86_400_000) } });
     const oldDir = (await sessionRow(oldSession))!.dir_path!;
     const ran = await runRetentionOnce({ onlyUserId: empId });
     check('retention 30 deletes the 40-day-old session (rows)', ran.sessions === 1 && !(await sessionRow(oldSession)) && !(await prisma.recordingSegment.findUnique({ where: { id: segC1 } })));

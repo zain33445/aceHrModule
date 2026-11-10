@@ -1111,12 +1111,12 @@ function StaffManager({
                   <input
                     type={showPassword ? "text" : "password"}
                     className="input-field"
-                    defaultValue={
-                      selectedEmp.password_hash || selectedEmp.password
-                    }
-                    onBlur={(e) =>
-                      onUpdatePassword(selectedEmp.id, e.target.value)
-                    }
+                    defaultValue={selectedEmp.password || ""}
+                    placeholder="Enter a new password"
+                    onBlur={(e) => {
+                      // The server never returns the stored hash: only send when a new password was typed.
+                      if (e.target.value) onUpdatePassword(selectedEmp.id, e.target.value);
+                    }}
                     style={{
                       width: "100%",
                       padding: "0.4rem 2rem 0.4rem 0.5rem",

@@ -46,6 +46,7 @@ import LeaveBalanceTab from "./leaves/LeaveBalanceTab";
 import { PayslipPDFButton } from "./salary/PayslipPDFButton";
 import { PayrollTab } from "./salary/PayrollTab";
 import { SettingsTab } from "./dashboard/SettingsTab";
+import RecordingTab from "./dashboard/RecordingTab";
 import { DepartmentManager } from "./departments/DepartmentManager";
 import { DataExportPanel } from "./export/DataExportPanel";
 import { AuditLogTab } from "./audit/AuditLogTab";
@@ -200,7 +201,8 @@ function EmployeeDashboard({ user, onLogout }) {
   useEffect(() => {
     if (
       grantedTabs.includes("employees") ||
-      grantedTabs.includes("leave-allocation")
+      grantedTabs.includes("leave-allocation") ||
+      grantedTabs.includes("recording")
     ) {
       fetchEmployees();
     }
@@ -785,6 +787,11 @@ function EmployeeDashboard({ user, onLogout }) {
           id: "admin-overtime",
           label: "Overtime",
           content: <OvertimeAdminTab user={user} />,
+        },
+        recording: {
+          id: "admin-recording",
+          label: "Recording",
+          content: <RecordingTab employees={employees} isAdmin={false} />,
         },
         employees: {
           id: "admin-employees",

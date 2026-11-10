@@ -75,10 +75,23 @@ async function touchSession(sessionId: string, status: string, extra: Record<str
   if (status !== 'recording') console.log(`[Recording v2] Reopened session ${sessionId} (was ${status})`);
 }
 
+export async function segmentExists(segmentId: string): Promise<boolean> {
+  return !!(await prisma.recordingSegment.findUnique({ where: { id: segmentId }, select: { id: true } }));
+}
+
+const CLOCK_PAST_MS = 365 * 86_400_000;
+const CLOCK_FUTURE_MS = 86_400_000;
+
 export async function registerSegment(userId: string, segmentId: string, body: RegisterBody) {
   if (!SEGMENT_ID_RE.test(segmentId)) throw new HttpError(400, 'invalid segmentId');
-  const startedAt = new Date(String(body.startedAt ?? ''));
+  let startedAt = new Date(String(body.startedAt ?? ''));
   if (typeof body.startedAt !== 'string' || isNaN(startedAt.getTime())) throw new HttpError(400, 'startedAt (ISO date) required');
+  // S5: a wrong agent clock must not create sessions in 1970 / 2099 - fall back to server receipt time.
+  const nowMs = Date.now();
+  if (startedAt.getTime() < nowMs - CLOCK_PAST_MS || startedAt.getTime() > nowMs + CLOCK_FUTURE_MS) {
+    console.warn(`[Recording v2] Segment ${segmentId}: startedAt ${startedAt.toISOString()} outside [now-365d, now+1d] - clamped to server time`);
+    startedAt = new Date(nowMs);
+  }
 
   const existing = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, include: { session: true } });
   if (existing) {
@@ -207,8 +220,11 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
       }
       if (!placed) {
         const existingHash = await sha256File(finalPath);
-        if (existingHash === sha) result = { duplicate: true };
-        else {
+        if (existingHash === sha) {
+          result = { duplicate: true };
+          // S1: the file is there but its row is not (crash between link and insert) - heal it.
+          if (!existingRow) await insertChunkRow(segmentId, session.id, seq, finalPath, existingHash, (await fs.promises.stat(finalPath)).size, meta);
+        } else {
           result = await keepConflict(tmpPath);
           // Heal a row lost to a crash between file write and DB insert: row describes the ORIGINAL file.
           if (!existingRow) await insertChunkRow(segmentId, session.id, seq, finalPath, existingHash, (await fs.promises.stat(finalPath)).size, meta);
@@ -230,10 +246,10 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
     });
     if (seg.state === 'assembled') {
       console.warn(`[Recording v2] Late chunk seg=${segmentId} seq=${seq} for an already assembled segment — kept on disk, not in the video`);
-    } else {
-      await recomputeSegmentState(segmentId);
     }
   }
+  // Always recompute (also after a duplicate: a healed row may complete the segment). Only touches open-ish states.
+  if (!result.conflict && seg.state !== 'assembled') await recomputeSegmentState(segmentId);
   return result;
 }
 
@@ -339,6 +355,42 @@ async function ffmpegOk(args: string[], out: string): Promise<boolean> {
   return true;
 }
 
+const ABANDONED_SEGMENT_MS = 30 * 60_000;
+
+/**
+ * S4: a segment that is still open/closed but has not received a chunk for 30 min is finished: lastSeq
+ * = highest stored seq (kept when the agent already closed it), missing seqs below it become lost_seqs,
+ * then the normal state recompute makes it complete/incomplete (= assemblable). Zero-chunk segments are
+ * left to the 48 h rule. Optionally scoped to one session (assembly start).
+ */
+export async function closeAbandonedSegments(sessionId?: string): Promise<number> {
+  const cutoff = new Date(Date.now() - ABANDONED_SEGMENT_MS);
+  const groups = await prisma.recordingChunk.groupBy({
+    by: ['segment_id'],
+    where: { segment: { state: { in: ['open', 'closed'] } }, ...(sessionId ? { session_id: sessionId } : {}) },
+    _max: { uploaded_at: true, seq: true },
+    having: { uploaded_at: { _max: { lt: cutoff } } },
+  });
+  let n = 0;
+  for (const g of groups) {
+    if (!g.segment_id || g._max.seq === null) continue;
+    const seg = await prisma.recordingSegment.findUnique({ where: { id: g.segment_id } });
+    if (!seg || (seg.state !== 'open' && seg.state !== 'closed')) continue;
+    const have = new Set((await prisma.recordingChunk.findMany({ where: { segment_id: seg.id }, select: { seq: true } })).map((c) => c.seq));
+    const lastSeq = seg.last_seq ?? g._max.seq;
+    const lost: number[] = [];
+    for (let i = 0; i <= lastSeq; i++) if (!have.has(i)) lost.push(i);
+    await prisma.recordingSegment.update({
+      where: { id: seg.id },
+      data: { state: 'closed', last_seq: lastSeq, lost_seqs: lost, ended_at: seg.ended_at ?? g._max.uploaded_at ?? new Date() },
+    });
+    const next = await recomputeSegmentState(seg.id);
+    console.warn(`[Recording v2] Segment ${seg.id} abandoned (no chunk for 30 min) - closed at lastSeq ${lastSeq}, ${lost.length} lost, now ${next}`);
+    n++;
+  }
+  return n;
+}
+
 const REENCODE = ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '600k', '-an'];
 
 export async function assembleSessionV2(sessionId: string): Promise<void> {
@@ -357,12 +409,28 @@ export async function assembleSessionV2(sessionId: string): Promise<void> {
 async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   const session = await prisma.recordingSession.findUnique({ where: { id: sessionId } });
   if (!session || !session.recording_date) throw new Error('v2 session not found');
-  const segments = await prisma.recordingSegment.findMany({
+  await closeAbandonedSegments(sessionId); // S4: on-demand assembly benefits too
+  const all = await prisma.recordingSegment.findMany({
     where: { session_id: sessionId, state: { in: ASSEMBLABLE } },
     orderBy: { started_at: 'asc' },
     include: { chunks: { where: { purged_at: null }, orderBy: { seq: 'asc' } } },
   });
-  if (segments.length === 0) return;
+  if (all.length === 0) return;
+
+  // S2: never commit (and so never purge) a segment whose stored chunk file is missing. It stays as it is;
+  // healthy segments of the same session are still assembled.
+  const broken: string[] = [];
+  const segments = all.filter((seg) => {
+    const miss = seg.chunks.find((c) => !fs.existsSync(c.file_path));
+    if (miss) broken.push(`segment ${seg.id} seq ${miss.seq} (${miss.file_path})`);
+    return !miss;
+  });
+  const brokenMsg = () => `chunk file missing on disk: ${broken.join('; ')}`.slice(0, 900);
+  if (broken.length) console.error(`[Recording v2] Session ${sessionId}: ${brokenMsg()}`);
+  if (segments.length === 0) throw new Error(brokenMsg());
+  const keepError = () => broken.length
+    ? prisma.recordingSession.update({ where: { id: sessionId }, data: { assembly_error: brokenMsg(), assembly_attempts: { increment: 1 } } })
+    : null;
 
   const dir = dirOf(session);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -440,6 +508,7 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     if (segFiles.length === 0) {
       // Nothing playable in these segments: close them so they stop being retried; generation unchanged.
       await commitGeneration(session, usedSegments, null, session.duration_ms ?? 0, 0, session.generation, null);
+      await keepError();
       return;
     }
 
@@ -477,6 +546,7 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     await fs.promises.rename(tmpFinal, finalPath);
     const loggedOutAdd = usedSegments.flatMap((s) => s.chunks).reduce((a, c) => a + (c.logged_out ? (c.duration_ms ?? 0) : 0), 0);
     await commitGeneration(session, usedSegments, finalPath, finalDuration, loggedOutAdd, next, prevFile);
+    await keepError(); // the commit cleared assembly_error; a skipped broken segment must stay visible
     console.log(`[Recording v2] Session ${sessionId} g${next}: +${usedSegments.length} segment(s), ${Math.round(finalDuration / 1000)}s`);
   } finally {
     for (const t of temps) await rm(t);
@@ -544,6 +614,9 @@ export async function sweepV2(): Promise<void> {
     });
     if (stuck.count) console.warn(`[Sweeper v2] ${stuck.count} segment(s) idle > 48h marked incomplete`);
 
+    // S4: finish segments nobody closed (agent crashed) so they become assemblable
+    await closeAbandonedSegments().catch((err) => console.error('[Sweeper v2] abandoned-segment pass failed:', err.message));
+
     // (a) live → stopped after 10 min without chunks
     const live = await prisma.recordingSession.findMany({
       where: { recording_date: { not: null }, status: { in: ['pending', 'recording'] } },
@@ -590,6 +663,9 @@ export async function sweepV2(): Promise<void> {
 export async function assembleOnDemand(sessionId: string): Promise<boolean> {
   const n = await prisma.recordingSegment.count({ where: { session_id: sessionId, state: { in: ASSEMBLABLE } } });
   if (n === 0) return false;
+  // S11: same backoff as the sweeper - a <video> Range request must not re-run a failing ffmpeg every time.
+  const s = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { assembly_error: true, assembly_attempts: true, updated_at: true } });
+  if (s?.assembly_error && Date.now() - s.updated_at.getTime() < assemblyBackoffMs(s.assembly_attempts)) return false;
   const { requestAssembly } = await import('./recording.service');
   requestAssembly(sessionId).catch(console.error);
   return true;
@@ -633,12 +709,18 @@ export async function runRetentionOnce(opts: { onlyUserId?: string } = {}): Prom
     const now = Date.now();
     const cutoffDate = dateOnly(new Date(now + 5 * 3600_000 - days * 86_400_000).toISOString().slice(0, 10));
     const cutoffCreated = new Date(now - days * 86_400_000);
+    const aged = {
+      ...(opts.onlyUserId ? { user_id: opts.onlyUserId } : {}), // tests scope the sweep to their own user
+      status: { notIn: ['pending', 'recording'] },
+      OR: [{ recording_date: { lt: cutoffDate } }, { recording_date: null, created_at: { lt: cutoffCreated } }],
+    };
+    // S6: never delete what is not safely in a video yet, or what just arrived.
+    const recent = new Date(now - 7 * 86_400_000);
+    const unsafe = [{ segments: { some: { state: { not: 'assembled' } } } }, { chunks: { some: { uploaded_at: { gt: recent } } } }];
+    const skipped = await prisma.recordingSession.findMany({ where: { ...aged, AND: [{ OR: unsafe }] }, select: { id: true } });
+    if (skipped.length) console.warn(`[Retention] skipped ${skipped.length} old session(s) with unassembled segments or chunks from the last 7 days: ${skipped.slice(0, 10).map((x) => x.id).join(', ')}`);
     const old = await prisma.recordingSession.findMany({
-      where: {
-        ...(opts.onlyUserId ? { user_id: opts.onlyUserId } : {}), // tests scope the sweep to their own user
-        status: { notIn: ['pending', 'recording'] },
-        OR: [{ recording_date: { lt: cutoffDate } }, { recording_date: null, created_at: { lt: cutoffCreated } }],
-      },
+      where: { ...aged, segments: { none: { state: { not: 'assembled' } } }, chunks: { none: { uploaded_at: { gt: recent } } } },
       select: { id: true, file_path: true, dir_path: true, recording_date: true, chunks: { select: { file_path: true } } },
       take: 200,
     });

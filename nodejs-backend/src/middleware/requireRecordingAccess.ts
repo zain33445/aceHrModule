@@ -46,3 +46,15 @@ export async function requireRecordingAccess(req: Request, res: Response, next: 
     res.status(500).json({ error: 'Authentication check failed.' });
   }
 }
+
+/** Fresh check (no session token): active user who is admin/superadmin or holds the 'recording' grant. */
+export async function hasRecordingAccess(userId: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, role: true, status: true } });
+  if (!user || user.status !== 'active') return false;
+  if (user.role === 'admin' || user.role === 'superadmin') return true;
+  const grant = await prisma.userTabAccess.findUnique({
+    where: { user_id_tab_key: { user_id: user.id, tab_key: 'recording' } },
+    select: { user_id: true },
+  });
+  return !!grant;
+}
