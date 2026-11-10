@@ -109,7 +109,7 @@ No CI workflows, no tests (root `npm test` is stub).
 | `npm run test-recording-v2-e2e` | `nodejs-backend/` | Live recording v2 test (131 checks); run with the server's `RECORDINGS_DIR` |
 | `npm run test-recording-day` | `nodejs-backend/` | Shift-based recording-day rule, no DB needed |
 | `npm run test-recording-live-e2e` | `nodejs-backend/` | Live view hub test (70 checks): presence, streams, caps, HR access, playback tokens |
-| `npm run test-recording-edge-e2e` | `nodejs-backend/` | Edge cases S1–S14 from `docs/recording-edge-cases.md` (51 checks); run with the server's `RECORDINGS_DIR` |
+| `npm run test-recording-edge-e2e` | `nodejs-backend/` | Edge cases S1–S16 from `docs/recording-edge-cases.md` (69 checks); run with the server's `RECORDINGS_DIR` |
 | `node electron/<name>.check.mjs` | `frontend/` | Agent edge cases A1–A14: `spool-reliability`, `sync-v2`, `token-store`, `agent-policy`, `live-registry` |
 | `node electron/local-retention.check.mjs` | `frontend/` | Local chunk retention never deletes un-uploaded chunks |
 | `node electron/recording-day.check.mjs` / `spool-v2.check.mjs` | `frontend/` | Agent day rule, spool and v2 retention checks |

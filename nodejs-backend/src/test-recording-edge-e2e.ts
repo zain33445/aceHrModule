@@ -135,7 +135,7 @@ async function main() {
   const sockets: WebSocket[] = [];
   const tmpFiles: string[] = [];
 
-  console.log(`\nRecording edge-case e2e (S1–S13) against ${API}\n`);
+  console.log(`\nRecording edge-case e2e (S1–S16) against ${API}\n`);
   if (process.env.AGENT_JWT_SECRET) console.log('  note: AGENT_JWT_SECRET is set — S8 forges tokens with it (the agent secret), not the built-in default\n');
   const emp = (await prisma.user.findUnique({ where: { username: EMPLOYEE.username } }))!;
   const other = (await prisma.user.findUnique({ where: { username: OTHER.username } }))!;
@@ -153,6 +153,7 @@ async function main() {
     throw new Error(`${OTHER.username} already holds the recording tab — refusing to run`);
   }
 
+  const tabSnapshot = await prisma.userTabAccess.findMany({ where: { user_id: { in: [emp.id, other.id] } }, select: { user_id: true, tab_key: true } });
   const prevSetting = await prisma.appSetting.findUnique({ where: { key: 'recording.retention_days' } });
   const prevOtherStatus = other.status;
   const sessionIds = new Set<string>();
@@ -414,9 +415,52 @@ async function main() {
     check('S14 harness: no user was created or deleted by those requests', (await prisma.user.count()) === usersBefore);
     const adm14 = await axios.post(`${API}/employees/update-employee`, { user_id: ghost, monthly_salary: 1 }, bearer(adminTok));
     check('S14 control: with an admin Bearer the same route is reachable (not 401/403)', adm14.status !== 401 && adm14.status !== 403, `${adm14.status}`);
+
+    // ── S15: tab-access routes need a session; non-admins cannot read others' tabs ──
+    console.log('S15 /api/tab-access');
+    const TA = `${API}/tab-access`;
+    const hasRow = async (uid: string, key: string) => !!(await prisma.userTabAccess.findUnique({ where: { user_id_tab_key: { user_id: uid, tab_key: key } } }));
+    check('S15 GET /hr-employees without Authorization → 401', (await axios.get(`${TA}/hr-employees`, noThrow)).status === 401);
+    check('S15 GET /hr-employees with an employee Bearer → 403', (await axios.get(`${TA}/hr-employees`, bearer(empTok))).status === 403);
+    const hrAdm = await axios.get(`${TA}/hr-employees`, bearer(adminTok));
+    check('S15 GET /hr-employees with an admin Bearer → 200 and an employees array', hrAdm.status === 200 && Array.isArray(hrAdm.data?.employees), `${hrAdm.status}`);
+    const myTabsUrl = `${TA}/my-tabs?user_id=${empId}`;
+    check('S15 GET /my-tabs without Authorization → 401', (await axios.get(myTabsUrl, noThrow)).status === 401);
+    const mineOwn = await axios.get(myTabsUrl, bearer(empTok));
+    check('S15 GET /my-tabs for one\'s own user_id → 200 and a tabs array', mineOwn.status === 200 && Array.isArray(mineOwn.data?.tabs), `${mineOwn.status}`);
+    check('S15 GET /my-tabs for another user\'s id (employee Bearer) → 403', (await axios.get(myTabsUrl, bearer(otherTok))).status === 403);
+    check('S15 GET /my-tabs for another user\'s id (admin Bearer) → 200', (await axios.get(myTabsUrl, bearer(adminTok))).status === 200);
+    const badTab = await axios.post(`${TA}/toggle`, { user_id: other.id, tab_key: 'not-a-real-tab', granted: true }, bearer(adminTok));
+    check('S15 POST /toggle with an unknown tab_key → 400', badTab.status === 400, `${badTab.status}`);
+    check('S15 …and no row was created for the unknown tab', !(await hasRow(other.id, 'not-a-real-tab')));
+    await prisma.userTabAccess.deleteMany({ where: { user_id: other.id, tab_key: { in: ['not-a-real-tab', 'holidays'] } } }); // snapshot is restored in finally
+    const strGrant = await axios.post(`${TA}/toggle`, { user_id: other.id, tab_key: 'holidays', granted: 'false' }, bearer(adminTok));
+    check('S15 POST /toggle with granted:"false" (string) does not create a grant', !(await hasRow(other.id, 'holidays')), `${strGrant.status}`);
+
+    // ── S16: exports need the matching tab grant ───────────
+    console.log('S16 /api/export');
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' });
+    const xl: AxiosRequestConfig = { responseType: 'arraybuffer', validateStatus: () => true };
+    const xlAs = (t?: string): AxiosRequestConfig => (t ? { ...xl, headers: { Authorization: `Bearer ${t}` } } : xl);
+    const isXlsx = (r: any) => r.status === 200 && String(r.headers['content-type'] || '').includes('spreadsheetml');
+    await prisma.userTabAccess.deleteMany({ where: { user_id: other.id, tab_key: { in: ['export', 'attendance', 'payroll'] } } });
+    for (const [ep, key] of [['attendance', 'export'], ['salary', 'payroll']] as const) {
+      const url = `${API}/export/${ep}?start_date=${today}&end_date=${today}`;
+      check(`S16 GET /export/${ep} without Authorization → 401`, (await axios.get(url, xlAs())).status === 401);
+      check(`S16 GET /export/${ep} for haseeb without an export/attendance/payroll grant → 403`, (await axios.get(url, xlAs(otherTok))).status === 403);
+      await prisma.userTabAccess.create({ data: { user_id: other.id, tab_key: key } });
+      const granted = await axios.get(url, xlAs(otherTok));
+      check(`S16 GET /export/${ep} for haseeb with a '${key}' grant → 200 spreadsheetml`, isXlsx(granted), `${granted.status} ${granted.headers['content-type']}`);
+      await prisma.userTabAccess.deleteMany({ where: { user_id: other.id, tab_key: key } });
+      const adm = await axios.get(url, xlAs(adminTok));
+      check(`S16 GET /export/${ep} for an admin → 200 spreadsheetml`, isXlsx(adm), `${adm.status} ${adm.headers['content-type']}`);
+    }
   } finally {
     for (const s of sockets) { try { s.close(); } catch { /* ignore */ } }
     await sleep(500);
+    // restore daood's and haseeb's tab grants exactly as snapshotted at start
+    await prisma.userTabAccess.deleteMany({ where: { user_id: { in: [emp.id, other.id] } } });
+    if (tabSnapshot.length) await prisma.userTabAccess.createMany({ data: tabSnapshot, skipDuplicates: true });
     await prisma.user.update({ where: { id: other.id }, data: { status: prevOtherStatus } }).catch(() => {});
     await prisma.userTabAccess.deleteMany({ where: { user_id: other.id, tab_key: 'recording' } });
     if (prevSetting) await prisma.appSetting.upsert({ where: { key: prevSetting.key }, create: { key: prevSetting.key, value: prevSetting.value, updated_by: prevSetting.updated_by }, update: { value: prevSetting.value, updated_by: prevSetting.updated_by } });
@@ -432,7 +476,7 @@ async function main() {
       if (r.dir_path && r.dir_path.endsWith(`(${r.id})`)) await fs.promises.rm(r.dir_path, { recursive: true, force: true }).catch(() => {});
     }
     await prisma.recordingSession.deleteMany({ where: { id: { in: [...ids] } } }); // segments + chunks cascade
-    await prisma.auditLog.deleteMany({ where: { created_at: { gte: testStart }, OR: [{ action: { contains: '/recording/' } }, { action: { contains: '/employees' } }] } });
+    await prisma.auditLog.deleteMany({ where: { created_at: { gte: testStart }, OR: [{ action: { contains: '/recording/' } }, { action: { contains: '/employees' } }, { action: { contains: '/tab-access' } }] } });
     for (const f of tmpFiles) await fs.promises.rm(f, { force: true }).catch(() => {});
     console.log(`\nCleanup: removed ${ids.size} test session(s); restored retention setting, haseeb's status and grants`);
     await prisma.$disconnect();

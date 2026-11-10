@@ -55,6 +55,15 @@ function refreshSession(token) {
 
 axios.interceptors.response.use(undefined, async (error) => {
   const { config, response } = error;
+  // A failed blob download carries its JSON error body as a Blob: decode it so the checks below
+  // (and callers) can read response.data.code / .error like for any other request.
+  if (config?.responseType === 'blob' && response?.data instanceof Blob) {
+    try {
+      response.data = JSON.parse(await response.data.text());
+    } catch {
+      response.data = {};
+    }
+  }
   const sent = config?.headers?.Authorization;
   if (
     response?.status !== 401 ||
@@ -80,6 +89,24 @@ axios.interceptors.response.use(undefined, async (error) => {
   config._retried = true;
   return axios(config);
 });
+
+/** Saves an axios blob response, using the server's Content-Disposition filename when present. */
+export function saveBlob(response, fallbackName) {
+  const cd = response.headers?.['content-disposition'] || '';
+  const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+  let name = fallbackName;
+  if (m) {
+    try { name = decodeURIComponent(m[1]); } catch { name = m[1]; }
+  }
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 const api = {
   // Existing methods...
@@ -303,11 +330,9 @@ const api = {
     return axios.get(`${API_BASE}/monitoring/logs`, { params: clean });
   },
 
-  // Export URLs (these return files so often handled via window.open instead of axios, but keeping paths here)
-  getExportAttendanceUrl: (startDate, endDate) => 
-    `${API_BASE}/export/attendance?start_date=${startDate || ''}&end_date=${endDate || ''}`,
-  getExportSalaryUrl: (startDate, endDate) => 
-    `${API_BASE}/export/salary?start_date=${startDate || ''}&end_date=${endDate || ''}`,
+  // Exports need the Bearer session, so they are blob downloads through axios (pair with saveBlob).
+  exportAttendance: (params) => axios.get(`${API_BASE}/export/attendance`, { params, responseType: 'blob' }),
+  exportSalary: (params) => axios.get(`${API_BASE}/export/salary`, { params, responseType: 'blob' }),
 
   // ── Recording System APIs ──────────────────────────────────────────────────
   // Auth is the Bearer token added by the interceptor; adminId params are legacy and unused.

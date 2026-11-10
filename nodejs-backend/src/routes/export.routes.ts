@@ -2,11 +2,13 @@ import { Router } from 'express';
 import prisma from '../prisma';
 import ExcelJS from 'exceljs';
 import { DisputeService } from '../services/dispute.service';
+import { requireAnyTabGrant } from '../middleware/requireTabGrant';
 
 const router = Router();
+const requireExportAccess = requireAnyTabGrant(['export', 'attendance', 'payroll']);
 
 // Export Attendance
-router.get('/attendance', async (req, res) => {
+router.get('/attendance', requireExportAccess, async (req, res) => {
   const { start_date, end_date, user_id } = req.query;
 
   try {
@@ -79,7 +81,7 @@ router.get('/attendance', async (req, res) => {
 
 
 // Export Payroll Report (rich: per-employee with attendance stats)
-router.get('/salary', async (req, res) => {
+router.get('/salary', requireExportAccess, async (req, res) => {
   const { start_date, end_date } = req.query;
 
   console.log('start_date', start_date);

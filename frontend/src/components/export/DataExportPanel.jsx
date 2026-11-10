@@ -3,19 +3,33 @@ import { motion } from 'framer-motion';
 import { Download, FileDown, Calendar, DollarSign } from 'lucide-react';
 import { Card, CardHeader, CardBody } from '../common/Card';
 import { Button } from '../common/Button';
-import api from '../../services/api';
+import api, { saveBlob } from '../../services/api';
 
 export const DataExportPanel = () => {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  const handleExportAttendance = () => {
-    window.open(api.getExportAttendanceUrl(startDate, endDate), '_blank');
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState('');
+
+  const download = async (call, fallbackName) => {
+    setDownloading(true);
+    setError('');
+    try {
+      saveBlob(await call({ start_date: startDate, end_date: endDate }), fallbackName);
+    } catch (err) {
+      setError(
+        err?.response?.status === 403
+          ? "You don't have access to exports."
+          : err?.response?.data?.error || 'Export failed. Please try again.'
+      );
+    } finally {
+      setDownloading(false);
+    }
   };
 
-  const handleExportSalary = () => {
-    window.open(api.getExportSalaryUrl(startDate, endDate), '_blank');
-  };
+  const handleExportAttendance = () => download(api.exportAttendance, 'attendance_export.xlsx');
+  const handleExportSalary = () => download(api.exportSalary, 'salary_export.xlsx');
 
   return (
     <motion.div
@@ -56,6 +70,7 @@ export const DataExportPanel = () => {
             </div>
           </div>
           <p className="text-sm text-neutral-500">Leaving dates empty will export all available records.</p>
+          {error && <p className="text-sm text-red-600">{error}</p>}
         </CardBody>
       </Card>
 
@@ -69,6 +84,7 @@ export const DataExportPanel = () => {
             <p className="text-sm text-neutral-500 mb-6">Export detailed daily check-in and check-out logs for all employees.</p>
             <Button
               onClick={handleExportAttendance}
+              disabled={downloading}
               className="w-full flex items-center justify-center gap-2"
               variant="primary"
             >
@@ -87,6 +103,7 @@ export const DataExportPanel = () => {
             <p className="text-sm text-neutral-500 mb-6">Export monthly salary calculations, deductions, and total paid amounts.</p>
             <Button
               onClick={handleExportSalary}
+              disabled={downloading}
               className="w-full flex items-center justify-center gap-2"
               variant="primary"
             >

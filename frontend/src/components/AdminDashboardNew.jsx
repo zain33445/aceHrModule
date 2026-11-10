@@ -27,7 +27,7 @@ import { Button } from "./common/Button";
 import { Card, CardHeader, CardBody, CardFooter } from "./common/Card";
 import { SlideUp, FadeIn } from "./animations";
 import { Badge } from "./common/Badge";
-import api from "../services/api";
+import api, { saveBlob } from "../services/api";
 import StaffManager from "./StaffManager";
 import { AttendanceFilters } from "./common/AttendanceFilters";
 import { Pagination } from "./common/Pagination";
@@ -401,18 +401,16 @@ function AdminDashboardNew({
   const [isExporting, setIsExporting] = useState(false);
 
   const handleExport = async (month = null) => {
-    const baseUrl =
-      import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
-    let url = "";
+    let call = null;
+    let params = {};
     let filename = "export.xlsx";
 
     if (activeTab === "attendance") {
       const { startDate, endDate, userId } = attendanceFilters;
-      const params = new URLSearchParams();
-      if (startDate) params.set("start_date", startDate);
-      if (endDate) params.set("end_date", endDate);
-      if (userId && userId !== "all") params.set("user_id", userId);
-      url = `${baseUrl}/export/attendance?${params.toString()}`;
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
+      if (userId && userId !== "all") params.user_id = userId;
+      call = api.exportAttendance;
       filename = `attendance_export.xlsx`;
     } else if (activeTab === "payroll") {
       let start = "";
@@ -426,7 +424,8 @@ function AdminDashboardNew({
       } else {
         filename = `payroll_current_month.xlsx`;
       }
-      url = `${baseUrl}/export/salary?start_date=${start}&end_date=${end}`;
+      params = { start_date: start, end_date: end };
+      call = api.exportSalary;
     } else {
       alert(
         "Export is available for the Attendance and Payroll tabs.\nPlease switch to one of those tabs first.",
@@ -436,33 +435,17 @@ function AdminDashboardNew({
 
     setIsExporting(true);
     try {
-      const response = await fetch(url);
-      const contentType = response.headers.get("content-type") || "";
-
-      if (!response.ok || contentType.includes("application/json")) {
-        // Server returned an error — read the JSON message and show alert
-        const errJson = await response
-          .json()
-          .catch(() => ({ error: "Export failed. Please try again." }));
-        alert(`Export failed: ${errJson.error || "Unknown error"}`);
-        return;
-      }
-
       // Valid XLSX blob — trigger download without navigating away
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(objectUrl);
+      saveBlob(await call(params), filename);
     } catch (err) {
       console.error("Export error:", err);
-      alert(
-        "Export failed: Unable to reach the server. Please check your connection.",
-      );
+      if (err?.response) {
+        alert(`Export failed: ${err.response.data?.error || "Unknown error"}`);
+      } else {
+        alert(
+          "Export failed: Unable to reach the server. Please check your connection.",
+        );
+      }
     } finally {
       setIsExporting(false);
     }
