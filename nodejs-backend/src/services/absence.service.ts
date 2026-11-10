@@ -325,30 +325,47 @@ export class AbsenceService {
         isHalfday = finalStatus === 'halfday';
 
         if (existingRecord.status === 'leave') {
-          // A real punch has now arrived for a day that was auto-marked 'leave'
-          // (deducted before this punch had synced in). A punch can never
-          // legitimately produce 'leave', so that earlier deduction was wrong —
-          // refund it, logged through leave_ledger, before the status is overwritten.
-          const leaveTypeId = await this.getDefaultLeaveTypeId(userId);
+          // A real punch arrived for a day marked 'leave'. Refund ONLY a legacy
+          // automatic deduction (ledger CONSUMPTION row for this date), once.
+          // Approved-leave days have no such row and get no refund.
           const dateKey = this.getUtcDateKey(date);
+          const consumption = await prisma.leaveLedger.findFirst({
+            where: {
+              user_id: userId,
+              transaction_type: 'CONSUMPTION',
+              idempotency_key: { endsWith: `-${dateKey}-LEAVE_CONSUMPTION` }
+            },
+            orderBy: { id: 'desc' }
+          });
 
-          await prisma.$transaction([
-            prisma.leaveBank.update({
-              where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-              data: { leaves_remaining: { increment: 1 } }
-            }),
-            prisma.leaveLedger.create({
-              data: {
-                user_id: userId,
-                leave_type_id: leaveTypeId,
-                transaction_type: 'REVERSAL',
-                amount: 1,
-                idempotency_key: `${userId}-${leaveTypeId}-${dateKey}-LEAVE_REVERSAL`,
-                notes: `Reversal: auto-deducted for ${dateKey} before punch synced`,
-                created_by_type: 'SYSTEM'
-              }
-            })
-          ]);
+          if (consumption) {
+            const leaveTypeId = consumption.leave_type_id;
+            const punchKey = `${userId}-${leaveTypeId}-${dateKey}-LEAVE_REVERSAL`;
+            const holidayKey = `${userId}-${leaveTypeId}-${dateKey}-HOLIDAY_REVERSAL`;
+
+            await prisma.$transaction(async (tx) => {
+              const alreadyReversed = await tx.leaveLedger.findFirst({
+                where: { idempotency_key: { in: [punchKey, holidayKey] } }
+              });
+              if (alreadyReversed) return;
+
+              await tx.leaveBank.update({
+                where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
+                data: { leaves_remaining: { increment: 1 } }
+              });
+              await tx.leaveLedger.create({
+                data: {
+                  user_id: userId,
+                  leave_type_id: leaveTypeId,
+                  transaction_type: 'REVERSAL',
+                  amount: 1,
+                  idempotency_key: punchKey,
+                  notes: `Reversal: auto-deducted for ${dateKey} before punch synced`,
+                  created_by_type: 'SYSTEM'
+                }
+              });
+            });
+          }
         }
 
         await prisma.attendanceRecord.update({
@@ -549,52 +566,13 @@ export class AbsenceService {
       }
     });
 
-    // Determine which leave type to deduct from
-    const leaveTypeId = await this.getDefaultLeaveTypeId(userId);
-
-    // Get or create user's leave bank record, and ensure monthly reset
-    const leaveBankRecord = await this.ensureMonthlyReset(userId, date, leaveTypeId);
-
     // Compare target date against TODAY in Karachi timezone (independent of Windows system clock)
     const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Karachi" });
     const isToday = date.toISOString().startsWith(todayStr);
 
-    let status: 'leave' | 'absent' | 'pending';
-    let newLeavesRemaining = leaveBankRecord.leaves_remaining;
-
-    if (isToday) {
-      // Rule 1: Today with no punches
-      status = 'pending';
-    } else if (leaveBankRecord.leaves_remaining > 0) {
-      // Rule 2: Past date with leaves remaining
-      status = 'leave';
-      newLeavesRemaining = leaveBankRecord.leaves_remaining - 1;
-
-      const dateKey = this.getUtcDateKey(date);
-
-      // Update leave bank and log the consumption atomically — every leave
-      // transaction must be traceable through leave_ledger.
-      await prisma.$transaction([
-        prisma.leaveBank.update({
-          where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-          data: { leaves_remaining: newLeavesRemaining }
-        }),
-        prisma.leaveLedger.create({
-          data: {
-            user_id: userId,
-            leave_type_id: leaveTypeId,
-            transaction_type: 'CONSUMPTION',
-            amount: -1,
-            idempotency_key: `${userId}-${leaveTypeId}-${dateKey}-LEAVE_CONSUMPTION`,
-            notes: `Auto-deducted for unexcused absence on ${dateKey}`,
-            created_by_type: 'SYSTEM'
-          }
-        })
-      ]);
-    } else {
-      // Rule 2: Past date with no leaves
-      status = 'absent';
-    }
+    // Policy: a past working day with no punches is ALWAYS 'absent' (salary deduction).
+    // Leave is only consumed through approved leave requests, never automatically.
+    const status: 'absent' | 'pending' = isToday ? 'pending' : 'absent';
 
     // Create or finalize the attendance record — but PRESERVE existing check-in/out
     // times (set by the Electron desktop monitor) if they already exist.
@@ -635,35 +613,6 @@ export class AbsenceService {
         });
       }
     }
-  }
-
-  private static async ensureMonthlyReset(userId: string, date: Date, leaveTypeId: number = 1) {
-    const currentMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-
-    let leaveBankRecord = await prisma.leaveBank.findUnique({
-      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } }
-    });
-
-    if (!leaveBankRecord) {
-      leaveBankRecord = await prisma.leaveBank.create({
-        data: {
-          user_id: userId,
-          leave_type_id: leaveTypeId,
-          leaves_remaining: 0,
-          last_reset_month: currentMonth
-        }
-      });
-    } else if (leaveBankRecord.last_reset_month !== currentMonth) {
-      leaveBankRecord = await prisma.leaveBank.update({
-        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-        data: {
-          last_reset_month: currentMonth
-        }
-      });
-      console.log(`Leave bank month tracked for user ${userId} (type ${leaveTypeId}) for ${currentMonth}`);
-    }
-
-    return leaveBankRecord;
   }
 
   /**

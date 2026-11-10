@@ -1,7 +1,7 @@
 # Absence Management System
 
 ## Overview
-The absence management system automatically tracks employee absences and manages leave allocations. At the end of each day, the system checks for employees who haven't logged any attendance and processes them according to their remaining leave balance.
+The absence management system automatically tracks employee absences and manages leave allocations. At the end of each day, the system checks for employees who haven't logged any attendance and marks a missed working day as absent with a salary deduction. Leave is only consumed through approved leave requests.
 
 ## Database Tables
 
@@ -30,10 +30,10 @@ The absence management system automatically tracks employee absences and manages
 
 ### Daily Absence Processing
 1. **Check Attendance**: For each employee, check if they have any attendance logs for the previous day
-2. **Leave Bank Check**: If no attendance logs exist:
-   - Check `leave_bank.leaves_remaining` for the user
-   - If `leaves_remaining > 0`: Deduct 1 and mark status as "leave"
-   - If `leaves_remaining = 0`: Mark status as "absent"
+2. **No Punches**: If no attendance logs exist on a past working day:
+   - Mark status as "absent" and create the "absent" salary deduction
+   - Leave is **never** consumed automatically; `leave_bank.leaves_remaining` is only reduced through approved leave requests (which set the day to "leave" and reverse the absent deduction)
+   - Legacy days auto-deducted before this rule are still refunded once when a punch arrives or a holiday is applied
 3. **Record Creation**: Create an absence record with the appropriate status
 
 ### Leave Bank Management

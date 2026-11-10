@@ -114,6 +114,18 @@ async function processEvent(event: any) {
           }
         });
       }
+
+      // Approved leave replaces any absence penalty for this day. REVERSED (not
+      // deleted) keeps history, same as dispute.service.
+      await prisma.deduction.updateMany({
+        where: {
+          user_id,
+          type: 'absent',
+          status: 'ACTIVE',
+          date: { gte: startOfDay, lte: endOfDay }
+        },
+        data: { status: 'REVERSED' }
+      });
     }
   } else if (event.type === 'DEVICE_CREATE_USER') {
     const { employee_id, name } = event.payload as any;

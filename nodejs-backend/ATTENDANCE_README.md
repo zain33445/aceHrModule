@@ -60,10 +60,10 @@ Tracks remaining leave balance for each employee.
 ### Attendance Status Determination
 The system processes attendance logs and determines status based on:
 
-1. **No Attendance Logs**: 
-   - Check `leave_bank.leaves_remaining` for the user
-   - If `leaves_remaining > 0`: Mark as "leave" and deduct 1
-   - If `leaves_remaining = 0`: Mark as "absent"
+1. **No Attendance Logs**: On a past working day:
+   - Mark status as "absent" and create the "absent" salary deduction
+   - Leave is **never** consumed automatically; `leave_bank.leaves_remaining` is only reduced through approved leave requests (which set the day to "leave" and reverse the absent deduction)
+   - Legacy days auto-deducted before this rule are still refunded once when a punch arrives or a holiday is applied
 
 2. **With Attendance Logs**:
    - Extract check-in time from first log and check-out time from last log
