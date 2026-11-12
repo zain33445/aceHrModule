@@ -3,6 +3,20 @@ import { ChevronLeft, ChevronRight, Lock, Search, WifiOff } from 'lucide-react';
 import LiveCell from './LiveCell';
 
 const PAGE_SIZE = 16;
+const COLS_KEY = 'liveGridCols';
+const COLS_CLS = {
+  2: 'sm:grid-cols-2',
+  3: 'sm:grid-cols-2 lg:grid-cols-3',
+  4: 'sm:grid-cols-2 lg:grid-cols-4',
+};
+const readCols = () => {
+  try {
+    const n = Number(localStorage.getItem(COLS_KEY));
+    return COLS_CLS[n] ? n : 2;
+  } catch {
+    return 2;
+  }
+};
 const fieldCls =
   'rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500';
 
@@ -11,6 +25,11 @@ export default function LiveGrid({ hub }) {
   const [dept, setDept] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
+  const [cols, setCols] = useState(readCols);
+  const pickCols = (n) => {
+    setCols(n);
+    try { localStorage.setItem(COLS_KEY, String(n)); } catch { /* per-viewer convenience only */ }
+  };
 
   const departments = useMemo(
     () => [...new Set(agents.map((a) => a.department).filter(Boolean))].sort(),
@@ -71,6 +90,22 @@ export default function LiveGrid({ hub }) {
           />
         </div>
         <div className="ml-auto flex items-center gap-2 text-sm text-neutral-600">
+          <div role="group" aria-label="Grid columns" className="mr-2 flex items-center gap-1">
+            {[2, 3, 4].map((n) => (
+              <button
+                key={n}
+                type="button"
+                aria-pressed={cols === n}
+                aria-label={`${n} columns`}
+                onClick={() => pickCols(n)}
+                className={`rounded-md border px-2.5 py-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  cols === n ? 'border-blue-600 bg-blue-600 text-white' : 'border-neutral-300 hover:bg-neutral-50'
+                }`}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             aria-label="Previous page"
@@ -102,7 +137,7 @@ export default function LiveGrid({ hub }) {
           No one matches the filter
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className={`grid grid-cols-1 gap-3 ${COLS_CLS[cols]}`}>
           {visible.map((a) => <LiveCell key={a.userId} hub={hub} agent={a} />)}
         </div>
       )}

@@ -37,7 +37,7 @@ export const LayoutContainer = ({
 
         {/* Main Content */}
         <main className="flex-1 overflow-y-auto no-scrollbar">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className={`${activeTab === 'recording' || activeTab === 'admin-recording' ? 'max-w-[120rem]' : 'max-w-7xl'} mx-auto px-4 sm:px-6 lg:px-8 py-8`}>
             {children}
           </div>
         </main>
