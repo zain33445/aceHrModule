@@ -84,7 +84,9 @@ produces the client.
 - unique index `(segment_id, seq)`
 
 `app_settings` (new): `key TEXT PK`, `value TEXT`, `updated_at TIMESTAMP`, `updated_by TEXT NULL`.
-- `recording.retention_days`: `'0'` (forever, default) | `'30'` | `'60'` | `'90'`.
+- `recording.retention_days`: `'0'` (forever) | `'30'` | `'60'` | `'90'`. **Default 30 days, but only
+  when no row exists**; an explicitly saved `'0'` stays forever.
+- `recording.quality`: `'480p'` | `'720p'` (default when unset/invalid) | `'1080p'`.
 
 ## 4. Server storage layout (v2)
 
@@ -107,8 +109,11 @@ Agent → server first message:
 
 Server → agent:
 `{ type: 'CONNECTED', userId, protocol: 2, record: boolean,
-   recordingDay: { boundaryMinutes, shiftStartMinutes }, serverTime }`
+   recordingDay: { boundaryMinutes, shiftStartMinutes }, quality: '480p'|'720p'|'1080p', serverTime }`
 - `record` is false for admin/superadmin (never recorded).
+- `{ type: 'RECORDING_SETTINGS', quality }` is sent to every connected protocol-2
+  agent when an admin changes the quality. Agents pin the quality **per recording
+  day** and apply a change from their next recording day.
 - For protocol-2 agents the server sends **no** `START_RECORDING` /
   `STOP_RECORDING` and does **no** session reconcile/adopt: v2 recording is
   agent-driven and sessions are created by segment registration (§6).
@@ -160,11 +165,13 @@ All idempotent. The segment's owner is the token's user; another user → 403.
 Assembly (per session, existing per-session lock):
 1. Take segments in `complete`/`incomplete` state not yet assembled, ordered
    by `started_at`. Remux each (stream chunks in seq order → `ffmpeg -c copy`).
-   If a segment's width/height differ from the current generation, re-encode it
-   to the generation's size (scale+pad, libvpx) before joining.
+   If a segment's codec or width/height differ from the reference (previous
+   generation, or the first segment for generation 0), convert it to the
+   reference codec and size (scale+pad) with quality-based args
+   (`reencodeArgs`: vp8 crf 10 / 3M, vp9 crf 32, `-deadline good`) before joining.
 2. Join `[current generation file (if any), new segment files…]` with the
    ffmpeg concat demuxer (`-c copy`) into `recording-g<N+1>.webm.tmp`;
-   fallback re-encode as in Phase 0.
+   last-resort full re-encode with `reencodeArgs(reference codec)` (rare, as segments are normalised first).
 3. Verify: ffmpeg exits 0 on a demux pass and duration ≥
    previous generation duration + Σ new segment durations − 2 s.
 4. fsync + rename to `recording-g<N+1>.webm`; one DB transaction sets
@@ -195,8 +202,9 @@ Access:
 - `POST /api/tab-access/toggle` becomes admin-only (today anyone can grant
   themselves any tab).
 
-Retention: `GET /api/recording/settings` (access) → `{ retentionDays }`;
-`PUT /api/recording/settings` (admin) body `{ retentionDays: 0|30|60|90 }`.
+Settings: `GET /api/recording/settings` (access) → `{ retentionDays, quality }`;
+`PUT /api/recording/settings` (admin) body `{ retentionDays?: 0|30|60|90, quality?: '480p'|'720p'|'1080p' }`
+(at least one; returns both current values; a quality change triggers `RECORDING_SETTINGS`).
 A daily job deletes sessions (v2 and legacy) whose `recording_date`
 (legacy: `created_at`) is older than the setting — files first, then rows —
 and logs what it deleted. `0` = forever (default) deletes nothing.
@@ -229,7 +237,14 @@ Recording control (always-on):
 - Watchdog: no chunk for 3 timeslices while recording → restart capture (new
   segment). `render-process-gone` / hidden window closed → recreate and restart.
   Video track `ended` → re-acquire the screen source, new segment.
-- Quality: 1280×720 max, **5 fps**, VP8 ~600 kbps, **10 s** timeslice.
+- Quality (server setting, pinned per recording day), all **15 fps**, VP9 with VP8
+  fallback, keyframe ~5 s, **10 s** timeslice:
+
+  | Preset | Size | Bitrate |
+  |---|---|---|
+  | 480p | 854×480 | 0.6 Mbps |
+  | 720p (default) | 1280×720 | 1.2 Mbps |
+  | 1080p | 1920×1080 | 2.0 Mbps |
 - Logged-in state: renderer calls `electronAPI.setLoggedIn(false)` on logout;
   `set-user-id` means logged in. Each chunk records `loggedOut`. STATUS reports it.
 
@@ -283,8 +298,9 @@ Live view and recording are separate failure domains on the agent.
 - Viewer cap: **4 concurrent streams per agent** (`LIVE_MAX_VIEWERS_PER_AGENT`,
   default 4). Extra subscribers get `LIVE_REJECTED reason:'viewer_limit'`.
 - Quality profiles, applied by the agent with `RTCRtpSender.setParameters` (no
-  renegotiation): `grid` = scaleResolutionDownBy 2 (≈640×360), maxFramerate 5,
-  maxBitrate 250 kbps; `focus` = 1280×720, maxFramerate 10, maxBitrate 1.2 Mbps.
+  renegotiation): `grid` = ~640 px wide, maxFramerate 10,
+  maxBitrate 400 kbps, degradationPreference `balanced`; `focus` = full resolution,
+  maxFramerate 20, maxBitrate 2.5 Mbps, `maintain-framerate`.
 - Protocol-1 (old) agents cannot do LIVE_*. They are listed in presence with
   `liveCapable:false` (UI: "Update app for live view"). The legacy
   WEBRTC_OFFER/ANSWER relay stays in the gateway for old admin UIs.
@@ -341,8 +357,8 @@ Lifecycle:
 ## 12. Agent live engine (separate process)
 
 - A second hidden BrowserWindow (`electron/live-renderer/`) owns live view,
-  independent of the recorder window: its own desktop `getUserMedia` (max
-  1280×720, max 10 fps), started on the first `LIVE_START`, released 30 s after
+  independent of the recorder window: its own desktop `getUserMedia` (up to
+  1920×1080 @ 20 fps), started on the first `LIVE_START`, released 30 s after
   the last stream closes. A crash of either window never affects the other;
   main recreates the live window on `render-process-gone`.
 - One `RTCPeerConnection` per streamId; the agent creates the offer, sends
@@ -393,7 +409,7 @@ Lifecycle:
    playback-token URL, seekable) and **Download** (authenticated blob as in
    Phase 0). Filters: date range (default last 7 days), employee. Legacy
    sessions carry a "legacy" tag.
-3. **Settings** (admins only) — retention: Forever / 30 / 60 / 90 days.
+3. **Settings** (admins only) — retention (Forever / 30 / 60 / 90 days, default 30) and recording quality (480p / 720p / 1080p).
 
 The old Start/Stop buttons and LivePlayer modal are removed (recording is
 always-on). HR users with the `recording` grant get the same tab (Live +

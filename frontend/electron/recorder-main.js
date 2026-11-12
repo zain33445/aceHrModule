@@ -21,7 +21,7 @@ import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
 import {
   RECORDING_CHUNK_ENDPOINT, RECORDING_CHUNK_CHECK_ENDPOINT,
-  RECORDING_FPS, RECORDING_VIDEO_BPS, RECORDING_TIMESLICE_MS, RECORDING_MAX_WIDTH, RECORDING_MAX_HEIGHT,
+  RECORDING_FPS, RECORDING_PRESETS, RECORDING_TIMESLICE_MS,
   RECORDING_SEGMENT_MAX_MS, RECORDING_WATCHDOG_MS, RECORDING_RESTART_BACKOFF_CAP_MS,
   RECORDING_DISK_LOW_BYTES, RECORDING_DISK_RESUME_BYTES,
 } from './config.js';
@@ -329,7 +329,7 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
     const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
     if (!sources?.length) throw new Error('No screen sources found');
     const win = await _ensureWindow();
-    const { getDeviceId } = await import('./ws-client.js');
+    const { getDeviceId, resolveRecordingQuality } = await import('./ws-client.js');
 
     const startedAt = new Date(serverNow(_clockOffset)); // A12: server-corrected, the recording day follows server time
     const segmentId = crypto.randomUUID();
@@ -359,10 +359,8 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
       sourceId: _sourceId,
       newCapture,
       timesliceMs: RECORDING_TIMESLICE_MS,
-      videoBitsPerSecond: RECORDING_VIDEO_BPS,
       maxFps: RECORDING_FPS,
-      maxWidth: RECORDING_MAX_WIDTH,
-      maxHeight: RECORDING_MAX_HEIGHT,
+      ...RECORDING_PRESETS[resolveRecordingQuality(_userId, info.recordingDate)],
     });
     logger.info(`[Recorder] New segment ${segmentId} (${reason}) user ${_userId} day ${info.recordingDate}${prev ? `, previous ${prev.segmentId} stopping` : ''}`);
     _emitStatus();

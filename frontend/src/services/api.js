@@ -361,8 +361,7 @@ const api = {
     axios.post(`${API_BASE}/recording/sessions/${sessionId}/playback-token`, {}),
   recordingGetLivePresence: () => axios.get(`${API_BASE}/recording/live-presence`),
   recordingGetSettings: () => axios.get(`${API_BASE}/recording/settings`),
-  recordingPutSettings: ({ retentionDays }) =>
-    axios.put(`${API_BASE}/recording/settings`, { retentionDays }),
+  recordingPutSettings: (body) => axios.put(`${API_BASE}/recording/settings`, body),
 
   // Tab Access (HR Feature Assignment)
   getHrEmployeesWithTabs: () => axios.get(`${API_BASE}/tab-access/hr-employees`),

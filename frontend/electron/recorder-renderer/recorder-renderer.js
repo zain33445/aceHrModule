@@ -101,12 +101,12 @@ async function acquireCapture({ sourceId, maxWidth, maxHeight, maxFps }) {
         chromeMediaSourceId: sourceId,
         maxWidth: maxWidth || 1280,
         maxHeight: maxHeight || 720,
-        maxFrameRate: maxFps || 5,
+        maxFrameRate: maxFps || 15,
       },
     },
   });
   const track = stream.getVideoTracks()[0];
-  const c = { stream, track, sourceId };
+  const c = { stream, track, sourceId, maxWidth, maxHeight, maxFps };
   capture = c;
   track.addEventListener('ended', () => {
     // Display unplugged / source gone. Only the CURRENT capture counts.
@@ -130,12 +130,19 @@ function stopRecorder(rec) {
 async function begin(p) {
   const { segmentId, timesliceMs, videoBitsPerSecond } = p;
   try {
-    if (p.newCapture || !capture || capture.track.readyState !== 'live') await acquireCapture(p);
+    // A new recording day may bring a different quality preset: constraints are fixed at capture time.
+    const changed = capture && (capture.maxWidth !== p.maxWidth || capture.maxHeight !== p.maxHeight || capture.maxFps !== p.maxFps);
+    if (changed && current && current.recorder.state !== 'inactive') {
+      // Flush the old recorder's last chunk before its tracks are stopped.
+      stopRecorder(current);
+      await Promise.race([current.stopped, new Promise((r) => setTimeout(r, 4000))]);
+    }
+    if (p.newCapture || changed || !capture || capture.track.readyState !== 'live') await acquireCapture(p);
     const mimeType = getSupportedMimeType();
     if (!mimeType) throw new Error('No supported video MIME type found in this Chromium build');
 
     const myCapture = capture;
-    const recorder = new MediaRecorder(myCapture.stream, { mimeType, videoBitsPerSecond });
+    const recorder = new MediaRecorder(myCapture.stream, { mimeType, videoBitsPerSecond, videoKeyFrameIntervalDuration: 5000 });
     const rec = { segmentId, recorder, seq: 0, lastEmitAt: Date.now(), pending: Promise.resolve() };
     rec.stopped = new Promise((r) => { rec.resolveStopped = r; });
 
@@ -215,10 +222,10 @@ ipcRenderer.on('recording:stop', (_event, { release } = {}) => {
 // ─────────────────────────────────────────
 
 function getSupportedMimeType() {
-  // Preference order: VP8 (most compatible in Electron), then VP9
+  // Preference order: VP9 (sharper at low bitrate), then VP8
   const candidates = [
-    'video/webm; codecs=vp8',
     'video/webm; codecs=vp9',
+    'video/webm; codecs=vp8',
     'video/webm; codecs=vp8,opus',
     'video/webm',
   ];

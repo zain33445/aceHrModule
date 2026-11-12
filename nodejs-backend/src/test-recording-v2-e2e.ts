@@ -136,6 +136,7 @@ async function main() {
 
   // State to restore afterwards
   const prevSetting = await prisma.appSetting.findUnique({ where: { key: 'recording.retention_days' } });
+  const prevQuality = await prisma.appSetting.findUnique({ where: { key: 'recording.quality' } });
   const otherHadGrant = !!(await prisma.userTabAccess.findUnique({ where: { user_id_tab_key: { user_id: other.id, tab_key: 'recording' } } }));
   if (otherHadGrant) throw new Error(`${OTHER.username} already holds the recording tab — refusing to run (would lose the grant semantics under test)`);
 
@@ -390,6 +391,12 @@ async function main() {
     check('CONNECTED.record is true for an employee', c?.record === true);
     check('CONNECTED carries the recordingDay rule', Number.isInteger(c?.recordingDay?.boundaryMinutes) && Number.isInteger(c?.recordingDay?.shiftStartMinutes) && c.recordingDay.boundaryMinutes === rule.boundaryMinutes && c.recordingDay.shiftStartMinutes === rule.shiftStartMinutes, JSON.stringify(c?.recordingDay));
     check('CONNECTED carries serverTime', typeof c?.serverTime === 'string' && !isNaN(Date.parse(c.serverTime)));
+    check('CONNECTED carries a valid quality', ['480p', '720p', '1080p'].includes(c?.quality), String(c?.quality));
+    check('settings GET as admin → quality is 480p/720p/1080p', ['480p', '720p', '1080p'].includes((await axios.get(`${API}/recording/settings`, bearer(adminTok))).data.quality));
+    check('settings PUT invalid quality → 400', (await axios.put(`${API}/recording/settings`, { quality: '4k' }, bearer(adminTok))).status === 400);
+    const putQ = await axios.put(`${API}/recording/settings`, { quality: '1080p' }, bearer(adminTok));
+    check('settings PUT quality 1080p → 200 with quality', putQ.status === 200 && putQ.data.quality === '1080p');
+    check('connected v2 agent receives RECORDING_SETTINGS 1080p', !!(await agent.waitFor((m) => m.type === 'RECORDING_SETTINGS' && m.quality === '1080p')));
     agent.ws.send(JSON.stringify({ type: 'STATUS', state: 'recording', segmentId: segD, sessionId: S, loggedIn: true, backlogChunks: 3, backlogBytes: 1234, diskFreeBytes: 99999, version: 'e2e' }));
     console.log('  …waiting 7s: a v2 agent must not receive START_RECORDING / schedules or trigger a reconcile');
     await sleep(7000);
@@ -412,6 +419,12 @@ async function main() {
     check('disconnect of a protocol-2 agent does not stop the session', before === 'recording' && (await sessionRow(S))?.status === 'recording', `${before} → ${(await sessionRow(S))?.status}`);
     const st2 = ((await axios.get(`${API}/recording/agents-status`, bearer(adminTok))).data as any[]).find((a) => a.userId === empId);
     check('agents-status keeps the last STATUS after disconnect (connected=false)', !!st2 && st2.connected === false && st2.state === 'recording');
+
+    const fresh = await connectAgentV2(agentTok);
+    sockets.push(fresh.ws);
+    check('fresh protocol-2 CONNECTED carries quality 1080p', fresh.connected?.quality === '1080p', String(fresh.connected?.quality));
+    await prisma.appSetting.deleteMany({ where: { key: 'recording.retention_days' } }); // restored in finally
+    check('retention unset → GET returns 30', (await axios.get(`${API}/recording/settings`, bearer(adminTok))).data.retentionDays === 30);
   } finally {
     for (const s of sockets) { try { s.close(); } catch { /* ignore */ } }
     await sleep(500);
@@ -419,6 +432,8 @@ async function main() {
     // restore settings / grants
     if (prevSetting) await prisma.appSetting.upsert({ where: { key: prevSetting.key }, create: { key: prevSetting.key, value: prevSetting.value, updated_by: prevSetting.updated_by }, update: { value: prevSetting.value, updated_by: prevSetting.updated_by } });
     else await prisma.appSetting.deleteMany({ where: { key: 'recording.retention_days' } });
+    if (prevQuality) await prisma.appSetting.upsert({ where: { key: prevQuality.key }, create: { key: prevQuality.key, value: prevQuality.value, updated_by: prevQuality.updated_by }, update: { value: prevQuality.value, updated_by: prevQuality.updated_by } });
+    else await prisma.appSetting.deleteMany({ where: { key: 'recording.quality' } });
     await prisma.userTabAccess.deleteMany({ where: { user_id: other.id, tab_key: 'recording' } });
 
     // sessions + files

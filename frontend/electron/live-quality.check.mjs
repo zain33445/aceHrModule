@@ -3,8 +3,11 @@ import assert from 'assert';
 import { createRequire } from 'module';
 const { qualityToEncoding, serializeCandidate, mapConnectionState } = createRequire(import.meta.url)('./live-quality.cjs');
 
-assert.deepStrictEqual(qualityToEncoding('grid'), { scaleResolutionDownBy: 2, maxFramerate: 5, maxBitrate: 250000 });
-assert.deepStrictEqual(qualityToEncoding('focus'), { scaleResolutionDownBy: 1, maxFramerate: 10, maxBitrate: 1200000 });
+const grid = { maxFramerate: 10, maxBitrate: 400000, degradationPreference: 'balanced' };
+assert.deepStrictEqual(qualityToEncoding('grid'), { scaleResolutionDownBy: 2, ...grid });
+assert.deepStrictEqual(qualityToEncoding('grid', 1920), { scaleResolutionDownBy: 3, ...grid });
+assert.deepStrictEqual(qualityToEncoding('grid', 480), { scaleResolutionDownBy: 1, ...grid });
+assert.deepStrictEqual(qualityToEncoding('focus', 1920), { scaleResolutionDownBy: 1, maxFramerate: 20, maxBitrate: 2500000, degradationPreference: 'maintain-framerate' });
 assert.deepStrictEqual(qualityToEncoding('bogus'), qualityToEncoding('grid'));
 
 // Getters live on the prototype, like RTCIceCandidate: JSON.stringify would drop them.

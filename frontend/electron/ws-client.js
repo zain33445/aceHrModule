@@ -17,7 +17,7 @@ import { handleWebRtcMessage, setRecordPolicy, getRecorderStatus, addStatusListe
 import { handleLiveMessage, getLiveViewerCount, addLiveCountListener, closeAllLive } from './live-main.js';
 import { setSyncEnabled } from './sync-v2.js';
 import { loadStore, saveStore, mergeConnected } from './token-store.js';
-import { decideRecording, clockOffset } from './agent-policy.js';
+import { decideRecording, clockOffset, pinnedQuality, asQuality } from './agent-policy.js';
 import { applySchedules } from './scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -33,6 +33,8 @@ let _agentToken = null;
 let _agentTokenUserId = null; // user the cached agent token was issued for
 let _sessionToken = null;     // web session JWT, pushed from the renderer
 const _refreshes = new Map(); // userId -> in-flight refreshAgentToken(); one per user, never shared across users
+let _serverQuality = '720p';  // admin recording quality, last known (persisted)
+let _qualityPin = null;       // { userId, recordingDate, quality } - fixed for the recording day
 let _clockOffsetMs = 0;       // serverTime - local clock, from the last CONNECTED (A12)
 let _isShuttingDown = false;
 let _lastMessageAt = 0;
@@ -74,6 +76,8 @@ function _loadTokens() {
       ? { ...data.tokens }
       : (data.token && lastUser ? { [lastUser]: data.token } : {}); // pre-map format
     _policies = data.policies && typeof data.policies === 'object' ? { ...data.policies } : {};
+    _serverQuality = asQuality(data.recordingQuality);
+    _qualityPin = data.qualityPin && typeof data.qualityPin === 'object' ? data.qualityPin : null;
     return lastUser;
   } catch { /* ignore */ }
   return null;
@@ -84,6 +88,8 @@ function _saveTokens() {
     saveStore(_tokenPath(), {
       tokens: _tokens,
       policies: _policies,
+      recordingQuality: _serverQuality,
+      qualityPin: _qualityPin,
       // Current pair kept at top level so an older agent build can still read it.
       token: _agentToken,
       userId: _agentTokenUserId,
@@ -123,6 +129,13 @@ function _applyPolicy() {
   const d = decideRecording({ userId: u, tokens: _tokens, policies: _policies });
   if (!d.record) logger.info(`[WS Client] Not recording: ${d.reason}`);
   setRecordPolicy({ userId: u, record: d.record, recordingDay: _policies[u]?.recordingDay, clockOffsetMs: _clockOffsetMs });
+}
+
+/** Quality preset for a segment starting in this recording day; pinned on the day's first segment. */
+export function resolveRecordingQuality(userId, recordingDate) {
+  const r = pinnedQuality(_qualityPin, recordingDate, userId, _serverQuality);
+  if (r.pin !== _qualityPin) { _qualityPin = r.pin; _saveTokens(); }
+  return r.quality;
 }
 
 /** serverTime - local clock (ms) from the last CONNECTED; add to Date.now() for server time. */
@@ -415,6 +428,11 @@ function _handleMessage(msg) {
       handleLiveMessage(msg);
       break;
 
+    case 'RECORDING_SETTINGS':
+      _serverQuality = asQuality(msg.quality); // applies from the next recording day (pinnedQuality)
+      _saveTokens();
+      break;
+
     case 'CHUNK_ACK':
       logger.info(`[WS Client] Chunk ${msg.chunkIndex} acknowledged for session ${msg.sessionId}`);
       break;
@@ -463,6 +481,7 @@ function _onConnected(msg) {
   logger.info('[WS Client] Gateway acknowledged connection');
   if (msg.protocol === RECORDING_PROTOCOL) {
     setSyncEnabled(true);
+    _serverQuality = asQuality(msg.quality);
     const t = typeof msg.serverTime === 'number' ? msg.serverTime : Date.parse(msg.serverTime);
     if (Number.isFinite(t)) {
       _clockOffsetMs = clockOffset(t);

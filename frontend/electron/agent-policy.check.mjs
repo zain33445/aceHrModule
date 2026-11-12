@@ -67,4 +67,16 @@ await check('A14 pickPrimarySource falls back to sources[0]; empty list -> null'
   assert.strictEqual(pick([], '1'), null);
 });
 
+await check('pinnedQuality: same day keeps pin; new day/other user takes server; unknown -> 720p', async () => {
+  const [pq] = await fns('pinnedQuality');
+  const a = pq(null, '2026-11-12', 'u1', '1080p');
+  assert.strictEqual(a.quality, '1080p');
+  const b = pq(a.pin, '2026-11-12', 'u1', '480p');
+  assert.strictEqual(b.quality, '1080p');
+  assert.strictEqual(pq(a.pin, '2026-11-13', 'u1', '480p').quality, '480p');
+  assert.strictEqual(pq(a.pin, '2026-11-12', 'u2', '480p').quality, '480p');
+  assert.strictEqual(pq(null, 'd', 'u1', undefined).quality, '720p');
+  assert.strictEqual(pq(null, 'd', 'u1', '4k').quality, '720p');
+});
+
 finish('agent-policy');

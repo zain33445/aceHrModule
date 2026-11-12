@@ -33,6 +33,7 @@ export type WsMessageType =
   | 'STATUS_REQUEST'
   | 'PING'
   | 'CONNECTED'
+  | 'RECORDING_SETTINGS'
   | 'WEBRTC_OFFER'
   | 'WEBRTC_ANSWER'
   | 'WEBRTC_ICE_CANDIDATE'
@@ -331,12 +332,14 @@ export class RecordingGateway {
     try {
       const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true, status: true } });
       const rule = await ruleForUser(userId);
+      const { getRecordingQuality } = await import('../services/recording-v2.service'); // lazy: avoids an import cycle
       this.send(ws, {
         type: 'CONNECTED',
         userId,
         protocol: 2,
         record: !!user && user.status === 'active' && user.role !== 'admin' && user.role !== 'superadmin',
         recordingDay: rule,
+        quality: await getRecordingQuality(),
         serverTime: new Date().toISOString(),
       });
     } catch (err: any) {
@@ -564,6 +567,15 @@ export class RecordingGateway {
     this.send(ws, message);
     console.log(`[WS Gateway] → ${userId}: ${message.type}`);
     return true;
+  }
+
+  /** Tell every connected protocol-2 agent the current recording quality (applied from its next recording day). */
+  async pushRecordingSettings(): Promise<void> {
+    const { getRecordingQuality } = await import('../services/recording-v2.service');
+    const quality = await getRecordingQuality();
+    for (const [userId, ws] of this.agents) {
+      if (this.agentMeta.get(userId)?.protocol === 2 && ws.readyState === WebSocket.OPEN) this.send(ws, { type: 'RECORDING_SETTINGS', quality });
+    }
   }
 
   /** Push updated schedule list to a specific agent */

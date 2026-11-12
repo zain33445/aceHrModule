@@ -25,7 +25,7 @@ import { verifyUserToken, findSessionUser, TOKEN_EXPIRED_CODE, signViewerToken, 
 import { getGateway } from '../gateways/recording.gateway';
 import * as RecordingService from '../services/recording.service';
 import { recordingEmitter, HttpError, isValidSessionId, startsWithEbml } from '../services/recording.service';
-import { assembleOnDemand, getRetentionDays, setRetentionDays, RETENTION_VALUES } from '../services/recording-v2.service';
+import { assembleOnDemand, getRetentionDays, setRetentionDays, RETENTION_VALUES, QUALITY_VALUES, getRecordingQuality, setRecordingQuality } from '../services/recording-v2.service';
 import prisma from '../prisma';
 
 const router = Router();
@@ -614,24 +614,36 @@ router.get('/agents-status', requireRecordingAccess, (req: Request, res: Respons
   res.json(getGateway()?.getAgentsStatus() ?? []);
 });
 
-/** GET /api/recording/settings — { retentionDays } (0 = keep forever). */
+/** GET /api/recording/settings — { retentionDays (0 = forever), quality } */
 router.get('/settings', requireRecordingAccess, async (req: Request, res: Response) => {
   try {
-    res.json({ retentionDays: await getRetentionDays() });
+    res.json({ retentionDays: await getRetentionDays(), quality: await getRecordingQuality() });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to read settings' });
   }
 });
 
-/** PUT /api/recording/settings (admin) — body { retentionDays: 0|30|60|90 } */
+/** PUT /api/recording/settings (admin) — body { retentionDays?: 0|30|60|90, quality?: '480p'|'720p'|'1080p' } */
 router.put('/settings', requireAdmin, async (req: Request, res: Response) => {
-  const days = req.body?.retentionDays;
-  if (!Number.isInteger(days) || !RETENTION_VALUES.includes(days)) {
+  const { retentionDays: days, quality } = req.body ?? {};
+  if (days === undefined && quality === undefined) {
+    return res.status(400).json({ error: 'Provide retentionDays and/or quality' });
+  }
+  if (days !== undefined && (!Number.isInteger(days) || !RETENTION_VALUES.includes(days))) {
     return res.status(400).json({ error: 'retentionDays must be one of 0, 30, 60, 90' });
   }
+  if (quality !== undefined && !(QUALITY_VALUES as readonly string[]).includes(quality)) {
+    return res.status(400).json({ error: `quality must be one of ${QUALITY_VALUES.join(', ')}` });
+  }
   try {
-    await setRetentionDays(days, (req as any).adminUser.id);
-    res.json({ retentionDays: days });
+    const adminId = (req as any).adminUser.id;
+    if (days !== undefined) await setRetentionDays(days, adminId);
+    if (quality !== undefined) {
+      const changed = quality !== (await getRecordingQuality());
+      await setRecordingQuality(quality, adminId);
+      if (changed) await getGateway()?.pushRecordingSettings();
+    }
+    res.json({ retentionDays: await getRetentionDays(), quality: await getRecordingQuality() });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to save settings' });
   }

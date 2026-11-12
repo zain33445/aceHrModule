@@ -25,3 +25,18 @@ export function pickPrimarySource(sources, primaryDisplayId) {
   if (primaryDisplayId == null) return sources[0];
   return sources.find((s) => String(s.display_id) === String(primaryDisplayId)) ?? sources[0];
 }
+
+const QUALITIES = ['480p', '720p', '1080p'];
+const asQuality = (q) => (QUALITIES.includes(q) ? q : '720p');
+/**
+ * Quality is fixed for a recording day: a pin { userId, recordingDate, quality } for the same user+day wins over
+ * the server's current setting; otherwise the server value (unknown/missing -> '720p') becomes the new pin.
+ */
+export function pinnedQuality(pin, recordingDate, userId, serverQuality) {
+  if (pin && pin.recordingDate === recordingDate && String(pin.userId) === String(userId) && QUALITIES.includes(pin.quality)) {
+    return { quality: pin.quality, pin };
+  }
+  const quality = asQuality(serverQuality);
+  return { quality, pin: { userId: String(userId), recordingDate, quality } };
+}
+export { asQuality };

@@ -1,10 +1,13 @@
 // Pure helpers shared by live-renderer (require) and live-quality.check.mjs. No dependencies.
 
 /** Quality profile (docs/recording-v2.md §10) → RTCRtpEncodingParameters fields. */
-function qualityToEncoding(quality) {
+function qualityToEncoding(quality, trackWidth) {
   return quality === 'focus'
-    ? { scaleResolutionDownBy: 1, maxFramerate: 10, maxBitrate: 1_200_000 }
-    : { scaleResolutionDownBy: 2, maxFramerate: 5, maxBitrate: 250_000 }; // grid (default)
+    ? { scaleResolutionDownBy: 1, maxFramerate: 20, maxBitrate: 2_500_000, degradationPreference: 'maintain-framerate' }
+    : { // grid (default): ~640 px wide tiles
+      scaleResolutionDownBy: trackWidth > 0 ? Math.max(1, trackWidth / 640) : 2,
+      maxFramerate: 10, maxBitrate: 400_000, degradationPreference: 'balanced',
+    };
 }
 
 /** RTCIceCandidate has getters that IPC/JSON drop: copy the fields explicitly. */

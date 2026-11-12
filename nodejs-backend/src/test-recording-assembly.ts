@@ -12,6 +12,7 @@ import path from 'path';
 import assert from 'assert';
 import { spawnSync } from 'child_process';
 import { assembleChunkFiles } from './services/recording.service';
+import { probeDims, reencodeArgs } from './services/recording-v2.service';
 
 const ffmpeg: string = require('ffmpeg-static');
 
@@ -73,6 +74,24 @@ async function main() {
     const left = fs.readdirSync(outDir).sort();
     assert.strictEqual(left.length, 2, `unexpected leftovers: ${left.join(', ')}`);
 
+    // Codec/dims probing + normalising a mismatched clip to the reference (vp9 320x240) via reencodeArgs.
+    const gen = (out: string, size: string, v: string[]) => {
+      const r = spawnSync(ffmpeg, ['-y', '-f', 'lavfi', '-i', `testsrc=duration=2:size=${size}:rate=10`, ...v, out]);
+      assert.strictEqual(r.status, 0, `ffmpeg generate failed: ${r.stderr?.toString().slice(-300)}`);
+    };
+    const ref = path.join(srcDir, 'ref9.webm'), odd = path.join(srcDir, 'odd8.webm'), norm = path.join(srcDir, 'norm.webm');
+    gen(ref, '320x240', reencodeArgs('vp9'));
+    gen(odd, '160x120', reencodeArgs('vp8'));
+    const dRef = await probeDims(ref), dOdd = await probeDims(odd);
+    assert.deepStrictEqual([dRef?.codec, dRef?.width, dRef?.height], ['vp9', 320, 240]);
+    assert.deepStrictEqual([dOdd?.codec, dOdd?.width, dOdd?.height], ['vp8', 160, 120]);
+    const vf = 'scale=320:240:force_original_aspect_ratio=decrease,pad=320:240:(ow-iw)/2:(oh-ih)/2';
+    const rn = spawnSync(ffmpeg, ['-y', '-i', odd, '-vf', vf, ...reencodeArgs(dRef!.codec), '-f', 'webm', norm]);
+    assert.strictEqual(rn.status, 0, `normalise failed: ${rn.stderr?.toString().slice(-300)}`);
+    const dNorm = await probeDims(norm);
+    assert.deepStrictEqual([dNorm?.codec, dNorm?.width, dNorm?.height], ['vp9', 320, 240]);
+
+    console.log(`PASS probe+normalise vp8 160x120 -> vp9 320x240`);
     console.log(`PASS two-run: runs=2 duration=${d2.toFixed(2)}s | single-run: runs=1 duration=${d1.toFixed(2)}s`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

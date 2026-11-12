@@ -32,7 +32,7 @@ function getCapture(sourceId) {
   if (capturePromise) return capturePromise;
   capturePromise = navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxWidth: 1280, maxHeight: 720, maxFrameRate: 10 } },
+    video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 20 } },
   }).then((stream) => {
     const track = stream.getVideoTracks()[0];
     const c = { stream, track };
@@ -60,8 +60,13 @@ async function applyQuality(p, quality) {
   if (!p.sender) return;
   const params = p.sender.getParameters();
   if (!params.encodings || !params.encodings.length) params.encodings = [{}];
-  Object.assign(params.encodings[0], qualityToEncoding(quality));
-  await p.sender.setParameters(params);
+  const { degradationPreference, ...enc } = qualityToEncoding(quality, p.sender.track?.getSettings().width);
+  Object.assign(params.encodings[0], enc);
+  params.degradationPreference = degradationPreference;
+  try { await p.sender.setParameters(params); } catch {
+    delete params.degradationPreference; // older Chromium
+    await p.sender.setParameters(params);
+  }
 }
 
 function closePeer(streamId, { silent = false } = {}) {

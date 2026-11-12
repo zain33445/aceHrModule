@@ -321,10 +321,10 @@ export async function probeFile(file: string): Promise<Probe> {
 }
 
 /** Stream dimensions from the header only (`ffmpeg -i`, no decode). */
-async function probeDims(file: string): Promise<{ width: number; height: number } | null> {
+export async function probeDims(file: string): Promise<{ width: number; height: number; codec: string } | null> {
   const r = await runFfmpeg(['-hide_banner', '-i', file]);
-  const m = /Video:[^\n]*?,\s*(\d{2,5})x(\d{2,5})/.exec(r.stderr);
-  return m ? { width: +m[1], height: +m[2] } : null;
+  const m = /Video:\s*(\w+)[^\n]*?,\s*(\d{2,5})x(\d{2,5})/.exec(r.stderr);
+  return m ? { codec: m[1], width: +m[2], height: +m[3] } : null;
 }
 
 const pendingCleanup = new Set<string>(); // files whose deletion failed (EBUSY…); retried by the sweeper
@@ -391,7 +391,12 @@ export async function closeAbandonedSegments(sessionId?: string): Promise<number
   return n;
 }
 
-const REENCODE = ['-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '600k', '-an'];
+/** Quality-based (not realtime) encoder args for converting to a generation's codec. */
+export function reencodeArgs(codec: string): string[] {
+  return codec === 'vp9'
+    ? ['-c:v', 'libvpx-vp9', '-crf', '32', '-b:v', '0', '-deadline', 'good', '-cpu-used', '4', '-row-mt', '1', '-an']
+    : ['-c:v', 'libvpx', '-crf', '10', '-b:v', '3M', '-deadline', 'good', '-cpu-used', '4', '-an'];
+}
 
 export async function assembleSessionV2(sessionId: string): Promise<void> {
   try {
@@ -447,6 +452,7 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   let prevFile: string | null = null;
   let prevDuration = 0;
   let refSize: { w: number; h: number } | null = null;
+  let refCodec: string | null = null;
   if (session.generation > 0) {
     if (!session.file_path || !fs.existsSync(session.file_path)) {
       throw new Error(`generation ${session.generation} file missing on disk (${session.file_path}) — refusing to build over it`);
@@ -455,7 +461,7 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     const p = await probeFile(prevFile);
     prevDuration = session.duration_ms ?? p.durationMs;
     const d = await probeDims(prevFile);
-    if (d) refSize = { w: d.width, h: d.height };
+    if (d) { refSize = { w: d.width, h: d.height }; refCodec = d.codec; }
   }
 
   const next = session.generation + 1;
@@ -490,12 +496,13 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
       const dims = await probeDims(useFile);
       const sw = dims?.width ?? seg.width, sh = dims?.height ?? seg.height;
       if (!refSize && sw && sh) refSize = { w: sw, h: sh };
-      if (refSize && sw && sh && (sw !== refSize.w || sh !== refSize.h)) {
+      if (!refCodec && dims) refCodec = dims.codec;
+      if (refSize && sw && sh && (sw !== refSize.w || sh !== refSize.h || (dims && refCodec && dims.codec !== refCodec))) {
         const scaled = path.join(dir, `.tmp-${ts}-${seg.id}.scaled.webm`);
         temps.push(scaled);
         const vf = `scale=${refSize.w}:${refSize.h}:force_original_aspect_ratio=decrease,pad=${refSize.w}:${refSize.h}:(ow-iw)/2:(oh-ih)/2`;
-        console.log(`[Recording v2] Segment ${seg.id} is ${sw}x${sh}, generation is ${refSize.w}x${refSize.h} — re-encoding`);
-        if (!(await ffmpegOk(['-y', '-i', useFile, '-vf', vf, ...REENCODE, '-f', 'webm', scaled], scaled))) {
+        console.log(`[Recording v2] Segment ${seg.id} is ${dims?.codec ?? '?'} ${sw}x${sh}, generation is ${refCodec} ${refSize.w}x${refSize.h} — converting`);
+        if (!(await ffmpegOk(['-y', '-i', useFile, '-vf', vf, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', scaled], scaled))) {
           throw new Error(`re-encode of segment ${seg.id} to ${refSize.w}x${refSize.h} failed`);
         }
         useFile = scaled;
@@ -534,9 +541,9 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
       const base = ['-y', '-f', 'concat', '-safe', '0', '-i', list];
       if (await ffmpegOk([...base, '-c', 'copy', '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
       if (finalDuration === null) {
-        console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with re-encode`);
+        console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with LAST-RESORT full re-encode (${refCodec ?? 'vp8'})`);
         await rm(tmpFinal);
-        if (await ffmpegOk([...base, ...REENCODE, '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
+        if (await ffmpegOk([...base, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
       }
     }
     if (finalDuration === null) throw new Error('assembled generation failed verification');
@@ -680,8 +687,26 @@ export const RETENTION_VALUES = [0, 30, 60, 90];
 
 export async function getRetentionDays(): Promise<number> {
   const row = await prisma.appSetting.findUnique({ where: { key: RETENTION_KEY } });
-  const n = row ? parseInt(row.value, 10) : 0;
-  return RETENTION_VALUES.includes(n) ? n : 0;
+  if (!row) return 30; // never saved → 30 days; a saved 0 (forever) has a row and returns 0 below
+  const n = parseInt(row.value, 10);
+  return RETENTION_VALUES.includes(n) ? n : 30;
+}
+
+export const QUALITY_KEY = 'recording.quality';
+export const QUALITY_VALUES = ['480p', '720p', '1080p'] as const;
+export type RecordingQuality = (typeof QUALITY_VALUES)[number];
+
+export async function getRecordingQuality(): Promise<RecordingQuality> {
+  const row = await prisma.appSetting.findUnique({ where: { key: QUALITY_KEY } });
+  return (QUALITY_VALUES as readonly string[]).includes(row?.value ?? '') ? (row!.value as RecordingQuality) : '720p';
+}
+
+export async function setRecordingQuality(q: RecordingQuality, adminId: string): Promise<void> {
+  await prisma.appSetting.upsert({
+    where: { key: QUALITY_KEY },
+    create: { key: QUALITY_KEY, value: q, updated_by: adminId },
+    update: { value: q, updated_by: adminId },
+  });
 }
 
 export async function setRetentionDays(days: number, adminId: string): Promise<void> {
