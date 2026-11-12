@@ -104,6 +104,7 @@ No CI workflows, no tests (root `npm test` is stub).
 | `npm run test-absence` | `nodejs-backend/` | Test absence processing logic |
 | `npm run test-call-ws` | `nodejs-backend/` | Test call gateway upgrade routing (no DB needed) |
 | `npm run test-call-e2e` | `nodejs-backend/` | Live call test against a running server + DB (66 checks) |
+| `npm run test-chat-groups-e2e` | `nodejs-backend/` | Live custom chat groups test (create/add/remove/leave, WS events, privacy) against a running server + DB; `API_BASE` overrides the URL |
 | `npm run test-recording-assembly` | `nodejs-backend/` | Recording assembly (run splitting + ffmpeg join), no DB needed |
 | `npm run test-recording-e2e` | `nodejs-backend/` | Live screen-recording test against a running server + DB (45 checks). Start the server with `RECORDINGS_DIR` set to a scratch folder |
 | `npm run test-recording-v2-e2e` | `nodejs-backend/` | Live recording v2 test (131 checks); run with the server's `RECORDINGS_DIR` |

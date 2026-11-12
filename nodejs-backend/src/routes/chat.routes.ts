@@ -17,6 +17,10 @@ import {
   AttachmentMeta,
   getOrCreateDirect,
   createDepartmentGroup,
+  createCustomGroup,
+  addGroupMembers,
+  removeGroupMember,
+  leaveGroup,
   postMessage,
   listConversations,
   getMessages,
@@ -24,6 +28,7 @@ import {
   toggleMessageReaction,
   assertMemberAndGetParticipants,
 } from '../services/chat.service';
+import { requireUser } from '../middleware/requireUser';
 import { getChatGateway } from '../gateways/chat.gateway';
 import { createAndDeliver, NOTIFICATION_TYPES } from '../services/notification.service';
 
@@ -115,6 +120,48 @@ router.post('/groups', async (req, res) => {
   if (!userId || department_id == null) return res.status(400).json({ error: 'user_id and department_id required' });
   try {
     res.json(await createDepartmentGroup(userId, parseInt(department_id)));
+  } catch (err) {
+    handle(res, err);
+  }
+});
+
+// Custom groups: signed identity (req.user), not the unsigned X-User-Id.
+// Keep above any `/groups/:id` route. Each change tells affected users to reload their inbox.
+const me = (req: any): string => req.user.userId;
+const changed = (ids: string[]) => getChatGateway()?.broadcastConversationsChanged(ids);
+
+router.post('/groups/custom', requireUser, async (req, res) => {
+  try {
+    const { conversation, notifyIds } = await createCustomGroup(me(req), req.body?.title, req.body?.member_ids ?? []);
+    changed(notifyIds);
+    res.json(conversation);
+  } catch (err) {
+    handle(res, err);
+  }
+});
+
+router.post('/groups/:id/members', requireUser, async (req, res) => {
+  try {
+    changed(await addGroupMembers(me(req), String(req.params.id), req.body?.user_ids ?? []));
+    res.json({ ok: true });
+  } catch (err) {
+    handle(res, err);
+  }
+});
+
+router.delete('/groups/:id/members/:userId', requireUser, async (req, res) => {
+  try {
+    changed(await removeGroupMember(me(req), String(req.params.id), String(req.params.userId)));
+    res.json({ ok: true });
+  } catch (err) {
+    handle(res, err);
+  }
+});
+
+router.post('/groups/:id/leave', requireUser, async (req, res) => {
+  try {
+    changed(await leaveGroup(me(req), String(req.params.id)));
+    res.json({ ok: true });
   } catch (err) {
     handle(res, err);
   }

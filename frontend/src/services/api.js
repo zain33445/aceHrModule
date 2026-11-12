@@ -419,6 +419,14 @@ const api = {
     axios.post(`${API_BASE}/chat/direct`, { user_id: userId, other_user_id: otherUserId }),
   createDepartmentGroup: (userId, departmentId) =>
     axios.post(`${API_BASE}/chat/groups`, { user_id: userId, department_id: departmentId }),
+  // Custom groups (signed identity comes from the Bearer token, not X-User-Id)
+  createCustomGroup: (title, memberIds) =>
+    axios.post(`${API_BASE}/chat/groups/custom`, { title, member_ids: memberIds }),
+  addGroupMembers: (id, userIds) =>
+    axios.post(`${API_BASE}/chat/groups/${id}/members`, { user_ids: userIds }),
+  removeGroupMember: (id, userId) =>
+    axios.delete(`${API_BASE}/chat/groups/${id}/members/${userId}`),
+  leaveGroup: (id) => axios.post(`${API_BASE}/chat/groups/${id}/leave`),
   sendChatMessage: (userId, conversationId, text, attachments = []) =>
     axios.post(`${API_BASE}/chat/conversations/${conversationId}/messages`, { user_id: userId, text, attachments }),
   markChatRead: (userId, conversationId) =>

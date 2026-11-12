@@ -42,6 +42,14 @@ function timeAgo(date) {
   return `${days}d ago`;
 }
 
+/** Read a File into the attachment shape the send API expects. */
+const readAttachment = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve({ file_name: file.name, mime_type: file.type, data: reader.result });
+  reader.onerror = () => reject(reader.error || new Error('read failed'));
+  reader.readAsDataURL(file);
+});
+
 /**
  * ChatHub — department group chats + 1:1 direct messages.
  * Permission rules enforced server-side; this file mirrors them for the DM picker and + Group button:
@@ -56,11 +64,29 @@ export default function ChatHub({ user, fullHeight = false }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [attachments, setAttachments] = useState([]); // {file_name, mime_type, data}
+  const [dragging, setDragging] = useState(false);
+  const [pendingDrop, setPendingDrop] = useState(null); // File[] awaiting Attach / Send now / Cancel
+  const dragDepth = useRef(0);
+  useEffect(() => {
+    setPendingDrop(null); setDragging(false); dragDepth.current = 0;
+  }, [activeId]);
+  // A file dropped outside the thread would make Electron navigate to file:// and lose the app.
+  useEffect(() => {
+    const block = (e) => { if (Array.from(e.dataTransfer?.types || []).includes('Files')) e.preventDefault(); };
+    window.addEventListener('dragover', block);
+    window.addEventListener('drop', block);
+    return () => { window.removeEventListener('dragover', block); window.removeEventListener('drop', block); };
+  }, []);
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [typingIn, setTypingIn] = useState(null);
   const [showNew, setShowNew] = useState(false);
   const [showGroup, setShowGroup] = useState(false);
+  const [groupTab, setGroupTab] = useState('department'); // 'department' | 'custom'
+  const [groupName, setGroupName] = useState('');
+  const [groupSel, setGroupSel] = useState([]); // user ids picked for a new custom group
+  const [showMembers, setShowMembers] = useState(false);
+  const [addSel, setAddSel] = useState([]); // user ids picked to add to the open custom group
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [reactionFor, setReactionFor] = useState(null); // message id
   const [hoveredMessage, setHoveredMessage] = useState(null);
@@ -115,6 +141,8 @@ export default function ChatHub({ user, fullHeight = false }) {
         setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
         if (m.sender_user_id !== myId) sendReadRef.current?.(activeId);
       }
+      refreshConversations();
+    } else if (evt.type === 'CONVERSATIONS_CHANGED') {
       refreshConversations();
     } else if (evt.type === 'READ_RECEIPT' && evt.conversationId === activeId) {
       const now = new Date();
@@ -216,10 +244,10 @@ export default function ChatHub({ user, fullHeight = false }) {
   };
 
   // Send
-  const send = async () => {
-    if (!activeId || (!text.trim() && attachments.length === 0)) return;
+  const send = async (extra = []) => {
+    const payloadAtt = [...attachments, ...extra];
+    if (!activeId || (!text.trim() && payloadAtt.length === 0)) return;
     const payloadText = text;
-    const payloadAtt = attachments;
     setText(''); setAttachments([]);
     try {
       const { data: sent } = await api.sendChatMessage(myId, activeId, payloadText, payloadAtt);
@@ -235,12 +263,46 @@ export default function ChatHub({ user, fullHeight = false }) {
 
   const onPickFiles = (e) => {
     const files = Array.from(e.target.files || []);
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => setAttachments((prev) => [...prev, { file_name: file.name, mime_type: file.type, data: reader.result }]);
-      reader.readAsDataURL(file);
-    });
     e.target.value = '';
+    Promise.all(files.map(readAttachment))
+      .then((list) => setAttachments((p) => [...p, ...list]))
+      .catch(() => alert('Could not read file'));
+  };
+
+  // Drag & drop onto the thread: dropped files wait for Attach / Send now / Cancel.
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+  const onDragEnter = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragOver = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = activeId ? 'copy' : 'none';
+  };
+  const onDragLeave = (e) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!activeId) return;
+    const files = Array.from(e.dataTransfer.items || [])
+      .filter((it) => it.kind === 'file' && it.webkitGetAsEntry?.()?.isFile !== false)
+      .map((it) => it.getAsFile())
+      .filter((f) => f && f.size > 0);
+    if (files.length) setPendingDrop(files);
+  };
+  const readAll = () => {
+    const f = pendingDrop;
+    setPendingDrop(null);
+    return Promise.all(f.map(readAttachment));
   };
 
   // Who can I DM (client-side mirror of server canOpenDirect)
@@ -271,8 +333,27 @@ export default function ChatHub({ user, fullHeight = false }) {
     } catch (e) { alert(e?.response?.data?.error || 'Cannot create group'); }
   };  
 
+  const createCustomGroup = async () => {
+    try {
+      const { data } = await api.createCustomGroup(groupName.trim(), groupSel);
+      setShowGroup(false); setGroupName(''); setGroupSel([]);
+      await refreshConversations();
+      openConversation(data.id);
+    } catch (e) { alert(e?.response?.data?.error || 'Cannot create group'); }
+  };
+
+  /** Run a membership change, then reload the inbox. `leaving` also clears the open thread. */
+  const changeMembers = async (fn, leaving = false) => {
+    try {
+      await fn();
+      if (leaving) { setShowMembers(false); setActiveId(null); setMessages([]); }
+      setAddSel([]);
+      await refreshConversations();
+    } catch (e) { alert(e?.response?.data?.error || 'Could not update the group'); }
+  };
+
   const titleOf = (c) => {
-    if (c.type === 'group') return `# ${c.department?.name || 'Department'}`;
+    if (c.type === 'group') return `# ${c.title || c.department?.name || 'Department'}`;
     const other = c.participants?.find((p) => p.id !== myId);
     return other?.name || 'Direct message';
   };
@@ -288,6 +369,12 @@ export default function ChatHub({ user, fullHeight = false }) {
 
   const activeConversation = conversations.find((c) => c.id === activeId);
   const isDirectConversation = activeConversation?.type === 'direct';
+  const isCustomGroup = activeConversation?.type === 'group' && !activeConversation?.department;
+  const canManageMembers = isCustomGroup && (iAmAdmin || activeConversation.created_by_user_id === myId);
+  const activeEmployees = useMemo(
+    () => employees.filter((u) => u.id !== myId && (u.status ? u.status === 'active' : true)),
+    [employees, myId],
+  );
 
   // The floating Electron chat window owns no call socket, so a 1:1 call from
   // it is delegated to the main window (see the call:start IPC bridge).
@@ -347,11 +434,28 @@ export default function ChatHub({ user, fullHeight = false }) {
       </div>
 
       {/* Right: thread */}
-      <div style={S.thread}>
+      <div style={{ ...S.thread, position: 'relative' }}
+        onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+        {dragging && activeId && <div style={S.dropOverlay}>Drop to attach</div>}
+        {pendingDrop && (
+          <div style={S.dropCard}>
+            {pendingDrop.map((f, i) => <div key={i} style={{ fontSize: 13, padding: '2px 0' }}>📎 {f.name}</div>)}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button type="button" style={S.btn}
+                onClick={() => readAll().then((l) => setAttachments((p) => [...p, ...l])).catch(() => alert('Could not read file'))}>Attach</button>
+              <button type="button" style={S.btn}
+                onClick={() => readAll().then((l) => send(l)).catch(() => alert('Could not read file'))}>Send now</button>
+              <button type="button" style={S.btn} onClick={() => setPendingDrop(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
         {activeId ? (
           <>
             <div style={S.threadHeader}>
               <span style={{ flex: 1 }}>{titleOf(activeConversation || {})}</span>
+              {isCustomGroup && (
+                <button type="button" style={{ ...S.btn, flex: '0 0 auto' }} onClick={() => setShowMembers(true)}>Members</button>
+              )}
               {showCallButton && (
                 <button
                   type="button"
@@ -475,7 +579,7 @@ export default function ChatHub({ user, fullHeight = false }) {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
                   if (e.key === 'Escape') setShowEmojiPicker(false);
                 }} />
-              <button style={S.sendBtn} onClick={send}>Send</button>
+              <button style={S.sendBtn} onClick={() => send()}>Send</button>
             </div>
           </>
         ) : (
@@ -497,11 +601,63 @@ export default function ChatHub({ user, fullHeight = false }) {
 
       {/* New group modal */}
       {showGroup && (
-        <Modal onClose={() => setShowGroup(false)} title="Create a department group">
-          {deptsWithoutGroup.length === 0 && <div style={{ color: '#94a3b8' }}>Every department already has a group.</div>}
-          {deptsWithoutGroup.map((d) => (
-            <div key={d.id} style={S.pickRow} onClick={() => createGroup(d.id)}><span># {d.name}</span></div>
+        <Modal onClose={() => setShowGroup(false)} title="New group">
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            {[['department', 'Department group'], ['custom', 'Custom group']].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setGroupTab(k)}
+                style={{ ...S.btn, background: groupTab === k ? '#eef2ff' : '#f8fafc', fontWeight: groupTab === k ? 700 : 400 }}>{label}</button>
+            ))}
+          </div>
+          {groupTab === 'department' ? (
+            <>
+              {deptsWithoutGroup.length === 0 && <div style={{ color: '#94a3b8' }}>Every department already has a group.</div>}
+              {deptsWithoutGroup.map((d) => (
+                <div key={d.id} style={S.pickRow} onClick={() => createGroup(d.id)}><span># {d.name}</span></div>
+              ))}
+            </>
+          ) : (
+            <>
+              <input value={groupName} onChange={(e) => setGroupName(e.target.value)} maxLength={80}
+                placeholder="Group name" style={{ ...S.input, width: '100%', marginBottom: 8, boxSizing: 'border-box' }} />
+              <MemberPicker users={activeEmployees} deptNameOf={deptNameOf} selected={groupSel} onChange={setGroupSel} />
+              <button type="button" disabled={!groupName.trim() || groupSel.length === 0} onClick={createCustomGroup}
+                style={{ ...S.btn, width: '100%', marginTop: 10, background: '#4f46e5', color: '#fff',
+                  opacity: !groupName.trim() || groupSel.length === 0 ? 0.45 : 1 }}>
+                Create group ({groupSel.length})
+              </button>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {/* Custom group members */}
+      {showMembers && isCustomGroup && (
+        <Modal onClose={() => setShowMembers(false)} title={`Members (${activeConversation.participants?.length || 0})`}>
+          {(activeConversation.participants || []).map((p) => (
+            <div key={p.id} style={{ ...S.pickRow, cursor: 'default', alignItems: 'center' }}>
+              <span>{p.name}{p.id === activeConversation.created_by_user_id ? ' (creator)' : ''}{p.id === myId ? ' (you)' : ''}</span>
+              {canManageMembers && p.id !== activeConversation.created_by_user_id && (
+                <button type="button" style={{ ...S.btn, flex: '0 0 auto', color: '#dc2626' }}
+                  onClick={() => changeMembers(() => api.removeGroupMember(activeId, p.id))}>Remove</button>
+              )}
+            </div>
           ))}
+          {canManageMembers && (
+            <div style={{ marginTop: 12 }}>
+              <b style={{ fontSize: 13 }}>Add members</b>
+              <MemberPicker
+                users={activeEmployees.filter((u) => !(activeConversation.participants || []).some((p) => p.id === u.id))}
+                deptNameOf={deptNameOf} selected={addSel} onChange={setAddSel} />
+              <button type="button" disabled={addSel.length === 0}
+                onClick={() => changeMembers(() => api.addGroupMembers(activeId, addSel))}
+                style={{ ...S.btn, width: '100%', marginTop: 8, opacity: addSel.length === 0 ? 0.45 : 1 }}>
+                Add selected ({addSel.length})
+              </button>
+            </div>
+          )}
+          <button type="button"
+            onClick={() => window.confirm('Leave this group? You will no longer see its messages.') && changeMembers(() => api.leaveGroup(activeId), true)}
+            style={{ ...S.btn, width: '100%', marginTop: 14, color: '#dc2626' }}>Leave group</button>
         </Modal>
       )}
     </div>
@@ -526,6 +682,28 @@ function EmojiPicker({ onPick, compact = false }) {
             <button key={`${emoji}-${i}`} type="button" style={S.emojiBtn} onClick={() => onPick(emoji)}>{emoji}</button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Searchable checkbox list of users; `selected` is an array of ids. */
+function MemberPicker({ users, deptNameOf, selected, onChange }) {
+  const [q, setQ] = useState('');
+  const shown = users.filter((u) => (u.name || '').toLowerCase().includes(q.trim().toLowerCase()));
+  const toggle = (id) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  return (
+    <div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search people"
+        style={{ ...S.input, width: '100%', margin: '6px 0', boxSizing: 'border-box' }} />
+      <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid #f1f5f9', borderRadius: 8 }}>
+        {shown.length === 0 && <div style={{ padding: 10, color: '#94a3b8', fontSize: 13 }}>No one found.</div>}
+        {shown.map((u) => (
+          <label key={u.id} style={{ ...S.pickRow, alignItems: 'center' }}>
+            <span><input type="checkbox" checked={selected.includes(u.id)} onChange={() => toggle(u.id)} style={{ marginRight: 8 }} />{u.name}</span>
+            <span style={{ fontSize: 11, color: '#94a3b8' }}>{deptNameOf(u.department_id) || u.role}</span>
+          </label>
+        ))}
       </div>
     </div>
   );
@@ -563,6 +741,8 @@ const S = {
   attachBtn: { cursor: 'pointer', fontSize: 18, padding: '0 4px' },
   emojiToggle: { border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 20, lineHeight: 1, padding: '2px' },
   picker: { background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,0.16)', padding: 8 },
+  dropOverlay: { position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(79,70,229,0.08)', border: '2px dashed #4f46e5', borderRadius: 8, fontWeight: 700, color: '#4f46e5' },
+  dropCard: { position: 'absolute', left: 10, right: 10, bottom: 70, zIndex: 41, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, boxShadow: '0 12px 32px rgba(15,23,42,0.16)', padding: 8 },
   emojiGrid: { display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: 2, overflowY: 'auto' },
   emojiBtn: { border: 'none', background: 'transparent', borderRadius: 6, cursor: 'pointer', fontSize: 19, lineHeight: 1.2, padding: '3px 0' },
   reactTrigger: { flex: '0 0 auto', width: 24, height: 24, padding: 0, border: '1px solid #e2e8f0', borderRadius: 999, background: '#fff', color: '#475569', cursor: 'pointer', fontSize: 14, lineHeight: 1 },

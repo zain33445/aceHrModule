@@ -576,6 +576,7 @@ model ChatConversation {
   id                 String               @id @default(uuid())
   conversation_type  ChatConversationType
   department_id      Int?                 @unique // set for groups → one group per department; null for direct
+  title              String? // custom groups only; department groups use the department name
   created_by_user_id String
   created_at         DateTime             @default(now())
   last_message_at    DateTime             @default(now()) // sorts the inbox, newest first

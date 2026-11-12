@@ -17,6 +17,7 @@
     "test-recording-day": "ts-node src/test-recording-day.ts",
     "test-recording-v2-e2e": "ts-node src/test-recording-v2-e2e.ts",
     "test-recording-live-e2e": "ts-node src/test-recording-live-e2e.ts",
+    "test-chat-groups-e2e": "ts-node src/test-chat-groups-e2e.ts",
     "test-recording-edge-e2e": "ts-node src/test-recording-edge-e2e.ts"
   },
   "prisma": {

@@ -113,6 +113,11 @@ export class ChatGateway {
     this.broadcastToParticipants(participantIds, { type: 'REACTION', ...payload });
   }
 
+  /** Tell these users to reload their inbox (group created / members changed). */
+  broadcastConversationsChanged(userIds: string[]): void {
+    this.broadcastToParticipants(userIds, { type: 'CONVERSATIONS_CHANGED' });
+  }
+
   /** Push a notification event to all of a user's connected sockets. */
   notifyUser(userId: string, notification: unknown): void {
     const set = this.clients.get(userId);

@@ -28,6 +28,7 @@ import monitoringRoutes from './routes/monitoring.routes';
 import recordingRoutes from './routes/recording.routes';
 import recordingV2Routes from './routes/recording-v2.routes';
 import { ensureRecordingSchema } from './db/ensure-recording-schema';
+import { ensureChatSchema } from './db/ensure-chat-schema';
 import tabAccessRoutes from './routes/tab-access.routes';
 import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
@@ -152,6 +153,9 @@ initCallGateway(server);
 
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+
+  // Chat group-title column (idempotent); first so the inbox query never sees a missing column.
+  ensureChatSchema().catch((err) => console.error('[Chat Schema] FAILED:', err));
 
   // ── Recording v2 schema (idempotent DDL), then sweeper + retention. Until it succeeds the
   //    v2 routes answer 503; the rest of the HR server keeps running and the DDL is retried. ──

@@ -165,7 +165,7 @@ export async function createDepartmentGroup(creatorId: string, departmentId: num
 export async function ensureAdminHrInAllGroups(): Promise<number> {
   const [groups, adminHrIds] = await Promise.all([
     prisma.chatConversation.findMany({
-      where: { conversation_type: 'group' },
+      where: { conversation_type: 'group', department_id: { not: null } }, // custom groups stay private
       select: { id: true, participants: { select: { user_id: true, is_active: true } } },
     }),
     getAdminHrUserIds(),
@@ -232,6 +232,110 @@ export async function syncDepartmentGroupMembers(departmentId: number) {
     }
   }
   await Promise.all(ops);
+}
+
+// ── Custom groups (any members, no department) ───────────
+
+/** Create a custom group of hand-picked active users. Returns the creator's inbox row + ids to notify. */
+export async function createCustomGroup(creatorId: string, title: string, memberIds: string[]) {
+  const creator = await loadChatUser(creatorId);
+  if (!creator) throw new ChatError(404, 'User not found');
+  if (!canCreateGroup(creator)) throw new ChatError(403, 'Only admins and HR can create group chats');
+
+  const name = typeof title === 'string' ? title.trim() : '';
+  if (!name) throw new ChatError(400, 'Group name is required');
+  if (name.length > 80) throw new ChatError(400, 'Group name must be 80 characters or fewer');
+
+  if (!Array.isArray(memberIds)) throw new ChatError(400, 'member_ids must be an array');
+  const others = [...new Set(memberIds.map(String))].filter((id) => id !== creatorId);
+  if (others.length === 0) throw new ChatError(400, 'Pick at least one member');
+  const bad = await findInvalidUserIds(others);
+  if (bad.length) throw new ChatError(400, `Unknown or inactive users: ${bad.join(', ')}`);
+
+  const conv = await prisma.chatConversation.create({
+    data: {
+      conversation_type: 'group',
+      title: name,
+      created_by_user_id: creatorId,
+      participants: { create: [creatorId, ...others].map((user_id) => ({ user_id })) },
+    },
+    select: { id: true },
+  });
+  const conversation = (await listConversations(creatorId)).find((c) => c.id === conv.id);
+  return { conversation, notifyIds: [creatorId, ...others] };
+}
+
+async function findInvalidUserIds(ids: string[]): Promise<string[]> {
+  const ok = await prisma.user.findMany({ where: { id: { in: ids }, status: 'active' }, select: { id: true } });
+  const okSet = new Set(ok.map((u) => u.id));
+  return ids.filter((id) => !okSet.has(id));
+}
+
+/** Load a custom group (group, no department) with its active participant ids, or throw 404/400. */
+async function loadCustomGroup(conversationId: string) {
+  const c = await prisma.chatConversation.findUnique({
+    where: { id: conversationId },
+    select: {
+      conversation_type: true,
+      department_id: true,
+      created_by_user_id: true,
+      participants: { where: { is_active: true }, select: { user_id: true } },
+    },
+  });
+  if (!c) throw new ChatError(404, 'Conversation not found');
+  if (c.conversation_type !== 'group' || c.department_id != null) {
+    throw new ChatError(400, 'Only custom groups can be changed');
+  }
+  return { createdBy: c.created_by_user_id, activeIds: c.participants.map((p) => p.user_id) };
+}
+
+/** Creator (while still a member) or admin may manage members. */
+async function assertCanManage(actorId: string, g: { createdBy: string; activeIds: string[] }) {
+  if (actorId === g.createdBy && g.activeIds.includes(actorId)) return;
+  const actor = await loadChatUser(actorId);
+  if (!actor?.isAdmin) throw new ChatError(403, 'Only the group creator or an admin can do this');
+}
+
+/** Each of these returns the user ids to notify (everyone affected, old and new). */
+export async function addGroupMembers(actorId: string, conversationId: string, userIds: string[]): Promise<string[]> {
+  const g = await loadCustomGroup(conversationId);
+  await assertCanManage(actorId, g);
+  if (!Array.isArray(userIds)) throw new ChatError(400, 'user_ids must be an array');
+  const ids = [...new Set(userIds.map(String))];
+  if (ids.length === 0) throw new ChatError(400, 'user_ids required');
+  const bad = await findInvalidUserIds(ids);
+  if (bad.length) throw new ChatError(400, `Unknown or inactive users: ${bad.join(', ')}`);
+
+  for (const user_id of ids) {
+    await prisma.chatParticipant.upsert({
+      where: { conversation_id_user_id: { conversation_id: conversationId, user_id } },
+      create: { conversation_id: conversationId, user_id },
+      update: { is_active: true, last_read_at: new Date() },
+    });
+  }
+  return [...new Set([...g.activeIds, ...ids])];
+}
+
+export async function removeGroupMember(actorId: string, conversationId: string, userId: string): Promise<string[]> {
+  const g = await loadCustomGroup(conversationId);
+  await assertCanManage(actorId, g);
+  if (userId === g.createdBy) throw new ChatError(400, 'The group creator cannot be removed (they can leave)');
+  if (!g.activeIds.includes(userId)) throw new ChatError(404, 'User is not a member');
+  await prisma.chatParticipant.updateMany({
+    where: { conversation_id: conversationId, user_id: userId },
+    data: { is_active: false },
+  });
+  return g.activeIds;
+}
+
+export async function leaveGroup(userId: string, conversationId: string): Promise<string[]> {
+  const g = await loadCustomGroup(conversationId);
+  if (!g.activeIds.includes(userId)) throw new ChatError(403, 'You are not a member of this group');
+  await prisma.chatParticipant.updateMany({
+    where: { conversation_id: conversationId, user_id: userId },
+    data: { is_active: false },
+  });
+  return g.activeIds;
 }
 
 // ── Messages ──────────────────────────────────────────────
@@ -358,6 +462,8 @@ export async function listConversations(userId: string) {
         select: {
           id: true,
           conversation_type: true,
+          title: true,
+          created_by_user_id: true,
           last_message_at: true,
           department: { select: { id: true, name: true } },
           participants: {
@@ -397,6 +503,8 @@ export async function listConversations(userId: string) {
     result.push({
       id: c.id,
       type: c.conversation_type,
+      title: c.title,
+      created_by_user_id: c.created_by_user_id,
       department: c.department,
       last_message_at: c.last_message_at,
       last_message: c.messages[0] ?? null,
