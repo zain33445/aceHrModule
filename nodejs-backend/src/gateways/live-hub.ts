@@ -35,7 +35,10 @@ interface Stream { viewerId: string; userId: string; quality: string; createdAt:
 interface Seen { protocol: number; version: string | null; goneAt: number | null }
 interface UserInfo { name: string; department: string | null; admin: boolean }
 
-const QUALITIES = ['grid', 'focus'];
+// grid2/grid3 are sent by the 1.14+ viewer (2/3-column tiles). Older agents
+// treat any non-focus quality as grid; accept them here so a 1.14 viewer works
+// against this backend too.
+const QUALITIES = ['grid', 'grid2', 'grid3', 'focus'];
 const GONE_KEEP_MS = 60_000;
 const DEBOUNCE_MS = 250;
 const ACCESS_RECHECK_MS = 5 * 60_000; // S7: viewer access is re-checked this often
