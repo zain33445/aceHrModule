@@ -60,7 +60,7 @@ function dirOf(s: { dir_path: string | null; id: string; user_id: string; record
 // ─────────────────────────────────────────
 
 export interface RegisterBody {
-  startedAt?: unknown; mime?: unknown; width?: unknown; height?: unknown; deviceId?: unknown; recordingDate?: unknown;
+  startedAt?: unknown; mime?: unknown; width?: unknown; height?: unknown; deviceId?: unknown; recordingDate?: unknown; screen?: unknown;
 }
 
 const optStr = (v: unknown, max: number) => (typeof v === 'string' && v.length > 0 ? v.slice(0, max) : null);
@@ -79,6 +79,9 @@ export async function segmentExists(segmentId: string): Promise<boolean> {
   return !!(await prisma.recordingSegment.findUnique({ where: { id: segmentId }, select: { id: true } }));
 }
 
+/** Screen number 1..16, anything else -> null. */
+const optScreen = (v: unknown) => (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 16 ? (v as number) : null);
+
 const CLOCK_PAST_MS = 365 * 86_400_000;
 const CLOCK_FUTURE_MS = 86_400_000;
 
@@ -96,6 +99,8 @@ export async function registerSegment(userId: string, segmentId: string, body: R
   const existing = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, include: { session: true } });
   if (existing) {
     if (existing.user_id !== userId) throw new HttpError(403, 'Segment belongs to another user');
+    const scr = optScreen(body.screen);
+    if (scr !== null && scr !== existing.screen) await prisma.recordingSegment.update({ where: { id: segmentId }, data: { screen: scr } }); // never overwrite with null
     return { created: false, segmentId, sessionId: existing.session_id, recordingDate: dateStr(existing.session.recording_date ?? new Date()), state: existing.state };
   }
 
@@ -134,6 +139,7 @@ export async function registerSegment(userId: string, segmentId: string, body: R
         id: segmentId, session_id: session.id, user_id: userId,
         device_id: optStr(body.deviceId, 100), started_at: startedAt,
         mime: optStr(body.mime, 100), width: optDim(body.width), height: optDim(body.height),
+        screen: optScreen(body.screen),
       },
     });
   } catch (err: any) {

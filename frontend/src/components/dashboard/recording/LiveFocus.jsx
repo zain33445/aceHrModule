@@ -1,8 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import Overlay from './Overlay';
+import ScreenSwitch from './ScreenSwitch';
 
-/** Large view of an already-running stream; switches it to 'focus' quality while open. */
-export default function LiveFocus({ agent, stream, setQuality, onClose }) {
+/**
+ * Large view of an already-running stream; switches it to 'focus' quality while open.
+ * The tile (LiveCell) owns the stream and the screen choice; this view just shows/changes them.
+ */
+export default function LiveFocus({ agent, stream, setQuality, screen, setScreen, onClose }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -20,6 +24,12 @@ export default function LiveFocus({ agent, stream, setQuality, onClose }) {
 
   return (
     <Overlay title={agent.name} subtitle={agent.department || undefined} onClose={onClose}>
+      {(agent.screens ?? 1) > 1 && (
+        <div className="flex items-center gap-2 px-4 pb-2 text-xs text-neutral-300">
+          <span>Screen</span>
+          <ScreenSwitch screens={agent.screens} value={screen} onChange={setScreen} />
+        </div>
+      )}
       <div className="flex aspect-video w-full items-center justify-center bg-black">
         {stream ? (
           <video ref={videoRef} muted autoPlay playsInline className="h-full w-full object-contain" />

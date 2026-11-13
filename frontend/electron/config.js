@@ -100,3 +100,7 @@ export const RECORDING_RESTART_BACKOFF_CAP_MS = 5 * 60 * 1000;
 export const RECORDING_DISK_LOW_BYTES = 2 * 1024 ** 3;      // pause recording below this
 export const RECORDING_DISK_RESUME_BYTES = 2.5 * 1024 ** 3; // resume above this (hysteresis)
 export const RECORDING_STATUS_INTERVAL_MS = 60_000;
+
+// Multi-monitor: the recorder / live view follow the display under the cursor
+export const FOLLOW_POLL_MS = 2_000;
+export const FOLLOW_DELAY_MS = 10_000;  // cursor must stay on another display this long before switching

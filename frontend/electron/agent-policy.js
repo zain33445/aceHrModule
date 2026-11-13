@@ -40,3 +40,37 @@ export function pinnedQuality(pin, recordingDate, userId, serverQuality) {
   return { quality, pin: { userId: String(userId), recordingDate, quality } };
 }
 export { asQuality };
+
+/**
+ * Screen numbers (docs contract): Screen 1 = primary; the others sorted by bounds.x then bounds.y get 2..N.
+ * @returns {{displayId: string, screen: number}[]} in screen order
+ */
+export function numberScreens(displays, primaryId) {
+  const list = [...(displays || [])];
+  const pid = primaryId == null ? null : String(primaryId);
+  const primary = list.find((d) => String(d.id) === pid) ?? null;
+  const rest = list
+    .filter((d) => d !== primary)
+    .sort((a, b) => (a.bounds?.x ?? 0) - (b.bounds?.x ?? 0) || (a.bounds?.y ?? 0) - (b.bounds?.y ?? 0));
+  return [...(primary ? [primary] : []), ...rest].map((d, i) => ({ displayId: String(d.id), screen: i + 1 }));
+}
+
+/** Capture source of a display, else the primary one (fallback). */
+export function sourceForDisplay(sources, displayId, primaryDisplayId) {
+  const hit = displayId == null ? null : sources?.find((s) => String(s.display_id) === String(displayId));
+  return hit ?? pickPrimarySource(sources, primaryDisplayId);
+}
+
+/**
+ * Follow-the-cursor debounce. state = { current, candidate, since } (undefined at start: the first
+ * observed display becomes current without a switch). A different display must hold the cursor for
+ * delayMs without interruption before it becomes current; leaving it resets the timer.
+ */
+export function followStep(state, displayId, nowMs, delayMs) {
+  const id = String(displayId);
+  if (!state) return { state: { current: id, candidate: null, since: null }, switchTo: null };
+  if (id === state.current) return { state: { ...state, candidate: null, since: null }, switchTo: null };
+  if (state.candidate !== id) return { state: { ...state, candidate: id, since: nowMs }, switchTo: null };
+  if (nowMs - state.since >= delayMs) return { state: { current: id, candidate: null, since: null }, switchTo: id };
+  return { state, switchTo: null };
+}

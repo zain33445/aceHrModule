@@ -362,12 +362,13 @@ export class RecordingGateway {
         backlogBytes: num(msg.backlogBytes),
         diskFreeBytes: num(msg.diskFreeBytes),
         version: str(msg.version, 40),
+        screens: typeof msg.screens === 'number' && Number.isInteger(msg.screens) && msg.screens >= 1 && msg.screens <= 16 ? msg.screens : 1,
         liveViewers: num(msg.liveViewers), // agent's own count; informational, not authoritative
       },
       lastStatusAt: new Date().toISOString(),
     });
     const cur = this.v2Status.get(userId)!.status;
-    if (!prev || prev.state !== cur.state || prev.loggedIn !== cur.loggedIn || prev.version !== cur.version) this.hub.touch(userId);
+    if (!prev || prev.state !== cur.state || prev.loggedIn !== cur.loggedIn || prev.version !== cur.version || prev.screens !== cur.screens) this.hub.touch(userId);
   }
 
   /** Presence snapshot for the live grid (same data as LIVE_PRESENCE). */

@@ -28,10 +28,14 @@ export interface PresenceAgent {
   state: string | null;
   viewers: number;
   version: string | null;
+  screens: number;
 }
 
 interface Viewer { id: string; adminId: string; ws: WebSocket; streams: Set<string>; missed: number; seq: number }
-interface Stream { viewerId: string; userId: string; quality: string; createdAt: number }
+interface Stream { viewerId: string; userId: string; quality: string; screen: number; createdAt: number }
+
+/** 0 = follow the cursor, 1..16 = a fixed screen; anything else is invalid. */
+const validScreen = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 0 && (n as number) <= 16;
 interface Seen { protocol: number; version: string | null; goneAt: number | null }
 interface UserInfo { name: string; department: string | null; admin: boolean }
 
@@ -101,6 +105,7 @@ export class LiveHub {
       loggedIn: seen.protocol === 2 && typeof st?.loggedIn === 'boolean' ? st.loggedIn : null,
       state,
       viewers: this.streamCount(userId),
+      screens: typeof st?.screens === 'number' && st.screens >= 1 ? st.screens : 1,
       version: (typeof st?.version === 'string' ? st.version : null) ?? seen.version,
     };
   }
@@ -227,6 +232,7 @@ export class LiveHub {
       case 'PONG': v.missed = 0; return;
       case 'LIVE_SUBSCRIBE': return this.subscribe(v, msg);
       case 'LIVE_QUALITY':
+      case 'LIVE_SCREEN':
       case 'LIVE_UNSUBSCRIBE':
       case 'LIVE_SIGNAL': {
         const stream = typeof msg.streamId === 'string' ? this.streams.get(msg.streamId) : undefined;
@@ -240,6 +246,10 @@ export class LiveHub {
           if (!QUALITIES.includes(msg.quality)) return console.warn(`[LiveHub] dropped LIVE_QUALITY: bad quality`);
           stream.quality = msg.quality;
           if (agent) this.send(agent, { type: 'LIVE_QUALITY', streamId: msg.streamId, quality: msg.quality });
+        } else if (msg.type === 'LIVE_SCREEN') {
+          if (!validScreen(msg.screen)) return console.warn(`[LiveHub] dropped LIVE_SCREEN: bad screen`);
+          stream.screen = msg.screen;
+          if (agent) this.send(agent, { type: 'LIVE_SCREEN', streamId: msg.streamId, screen: msg.screen });
         } else if (agent) {
           this.send(agent, { type: 'LIVE_SIGNAL', streamId: msg.streamId, description: msg.description, candidate: msg.candidate });
         }
@@ -256,6 +266,8 @@ export class LiveHub {
   private async subscribe(v: Viewer, msg: any): Promise<void> {
     const userId = typeof msg.userId === 'string' ? msg.userId : '';
     if (!userId || !QUALITIES.includes(msg.quality)) return console.warn(`[LiveHub] dropped LIVE_SUBSCRIBE from ${v.id}: bad userId/quality`);
+    const screen = msg.screen === undefined || msg.screen === null ? 0 : msg.screen;
+    if (!validScreen(screen)) return console.warn(`[LiveHub] dropped LIVE_SUBSCRIBE from ${v.id}: bad screen`);
     const reject = (reason: string) => this.send(v.ws, { type: 'LIVE_REJECTED', userId, reason });
 
     if (!(await hasRecordingAccess(v.adminId))) return reject('not_allowed'); // S7: fresh check on every subscribe
@@ -268,11 +280,11 @@ export class LiveHub {
     if (v.ws.readyState !== WebSocket.OPEN) return;
 
     const streamId = crypto.randomUUID();
-    this.streams.set(streamId, { viewerId: v.id, userId, quality: msg.quality, createdAt: Date.now() });
+    this.streams.set(streamId, { viewerId: v.id, userId, quality: msg.quality, screen, createdAt: Date.now() });
     v.streams.add(streamId);
     const ice = getIceServers().iceServers; // fresh credentials per stream (S12)
-    this.send(agent, { type: 'LIVE_START', streamId, quality: msg.quality, iceServers: ice });
-    this.send(v.ws, { type: 'LIVE_SUBSCRIBED', streamId, userId, quality: msg.quality, iceServers: ice });
+    this.send(agent, { type: 'LIVE_START', streamId, quality: msg.quality, iceServers: ice, screen });
+    this.send(v.ws, { type: 'LIVE_SUBSCRIBED', streamId, userId, quality: msg.quality, iceServers: ice, screen });
     this.touch(userId);
   }
 

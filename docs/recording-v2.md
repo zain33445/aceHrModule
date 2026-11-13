@@ -74,6 +74,9 @@ produces the client.
 - `mime TEXT NULL`, `width INT NULL`, `height INT NULL`
 - `state TEXT NOT NULL DEFAULT 'open'` — `open | closed | complete | assembled | incomplete`
 - `generation INT NULL` (generation that included it)
+- `screen SMALLINT NULL` — multi-monitor: which screen the segment recorded
+  (1 = primary, 2..N = the others left to right; NULL = unknown/old agent).
+  Added by an idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` at the end of the migration.
 - `created_at`, `updated_at`; index `(session_id, state)`
 
 `recording_chunks` — new columns:
@@ -121,7 +124,8 @@ Server → agent:
   5 minutes before reconnecting (already implemented).
 - Agent → server `STATUS` (v2, every 60 s and on change):
   `{ type:'STATUS', state, segmentId, sessionId, loggedIn, backlogChunks,
-     backlogBytes, diskFreeBytes, version }` — server keeps the latest per user
+     backlogBytes, diskFreeBytes, version, screens }` — `screens` = number of
+  monitors on the agent (int 1..16; default 1 when missing = old agent). Server keeps the latest per user
   in memory and exposes it at `GET /api/recording/agents-status` (§7).
 - WebRTC live-view messages are unchanged in this phase.
 - Protocol-1 agents (no `protocol` field) keep the exact Phase 0 behaviour.
@@ -131,7 +135,9 @@ Server → agent:
 All idempotent. The segment's owner is the token's user; another user → 403.
 
 `PUT /api/recording/v2/segments/:segmentId`
-- body `{ startedAt, mime, width, height, deviceId, recordingDate }`
+- body `{ startedAt, mime, width, height, deviceId, recordingDate, screen? }`
+  (`screen` integer 1..16, anything else is stored as NULL; a re-PUT without a
+  valid `screen` never overwrites an existing value)
   (`recordingDate` is the agent's view, informational/logged only)
 - creates or returns the segment; finds/creates the session for
   `(user, recordingDateFor(startedAt, user's rule))` with an upsert (no
@@ -316,10 +322,11 @@ Server → viewer:
 - `LIVE_PRESENCE { agents: Agent[] }` — full snapshot right after CONNECTED.
 - `LIVE_PRESENCE_UPDATE { agent: Agent }` — on any change (connect, disconnect,
   STATUS change). `Agent = { userId, name, department, connected, liveCapable,
-  recording, loggedIn, state, viewers, version }`; `recording` = agent state is
+  recording, loggedIn, state, viewers, version, screens }`; `screens` = monitors
+  on the agent (from STATUS, default 1); `recording` = agent state is
   `recording`; `liveCapable` = protocol 2 and recording allowed; `viewers` =
   current stream count. Admin/superadmin agents are not listed.
-- `LIVE_SUBSCRIBED { streamId, userId, quality }`
+- `LIVE_SUBSCRIBED { streamId, userId, quality, screen }`
 - `LIVE_REJECTED { userId, reason }` — `viewer_limit | offline | not_live_capable | not_allowed`
 - `LIVE_SIGNAL { streamId, description?, candidate? }` (from the agent)
 - `LIVE_STATE { streamId, state, error? }` (agent: `connecting | connected | failed | closed`)
@@ -327,18 +334,21 @@ Server → viewer:
 - `PING` every 30 s; the viewer answers `PONG`; 2 missed → server closes.
 
 Viewer → server:
-- `LIVE_SUBSCRIBE { userId, quality }` → server allocates `streamId` (uuid),
+- `LIVE_SUBSCRIBE { userId, quality, screen? }` (`screen` integer 0..16, default 0;
+  0 = Follow the cursor, N = fixed screen N; invalid → dropped) → server allocates `streamId` (uuid),
   checks presence and cap, sends `LIVE_START` to the agent and
   `LIVE_SUBSCRIBED` to the viewer.
 - `LIVE_QUALITY { streamId, quality }` → forwarded to the agent.
+- `LIVE_SCREEN { streamId, screen }` → validated like `LIVE_QUALITY` (own stream
+  only, `screen` integer 0..16) and forwarded to the agent as `LIVE_SCREEN`.
 - `LIVE_UNSUBSCRIBE { streamId }` → `LIVE_STOP` to the agent.
 - `LIVE_SIGNAL { streamId, description?, candidate? }` → relayed to the agent.
 - `PONG`.
 The server checks that every `streamId` belongs to the sender (viewer or
 agent); anything else is dropped and logged.
 
-Server → agent: `LIVE_START { streamId, quality, iceServers }`,
-`LIVE_QUALITY { streamId, quality }`, `LIVE_STOP { streamId }`,
+Server → agent: `LIVE_START { streamId, quality, iceServers, screen }`,
+`LIVE_QUALITY { streamId, quality }`, `LIVE_SCREEN { streamId, screen }`, `LIVE_STOP { streamId }`,
 `LIVE_SIGNAL { streamId, description?, candidate? }` (from the viewer).
 
 Agent → server: `LIVE_SIGNAL { streamId, description?, candidate? }`,
@@ -377,7 +387,8 @@ Lifecycle:
   (recording access) → `{ items: Day[], total, page, pageSize }`,
   `Day = { sessionId, userId, name, department, recordingDate, createdAt,
   legacy, status, generation, durationMs, loggedOutMs, segments,
-  incompleteSegments, openSegments, assembling, lastChunkAt, hasFile }`,
+  screens, incompleteSegments, openSegments, assembling, lastChunkAt, hasFile }`
+  (`screens` = distinct non-null segment screens; 0/1 = single screen),
   newest first. Legacy sessions: `legacy:true`, `recordingDate:null`, filtered
   by `created_at`.
 - `POST /api/recording/sessions/:id/playback-token` (recording access) →
@@ -410,6 +421,18 @@ Lifecycle:
    Phase 0). Filters: date range (default last 7 days), employee. Legacy
    sessions carry a "legacy" tag.
 3. **Settings** (admins only) — retention (Forever / 30 / 60 / 90 days, default 30) and recording quality (480p / 720p / 1080p).
+
+**Multi-monitor.** Screen numbers: 1 = primary display, 2..N = the others left
+to right, 0 = Follow (live only). The recorder follows the monitor under the
+mouse cursor (polled every 2 s; it switches once the cursor has stayed on another
+screen for 10 s; the segment is cut when the screen changes;
+the output is letterboxed to the preset size) and each segment records its
+`screen`. In the Live grid, an agent with `screens > 1` shows a "Follow · 1 · 2 …"
+switch on tile hover/focus (`role=group`, `aria-label="Screen"`, `aria-pressed`);
+the choice lives in the tile's state, survives resubscribes, and the focus view
+shows the same switch bound to the tile's stream. In Recordings, a day with
+`screens > 1` shows an "N screens" badge that expands the segment list
+(`GET /sessions/:id`: time range, duration, "Screen N" or "—").
 
 The old Start/Stop buttons and LivePlayer modal are removed (recording is
 always-on). HR users with the `recording` grant get the same tab (Live +

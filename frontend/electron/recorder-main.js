@@ -29,7 +29,8 @@ import { pruneOldRecordings, pruneV2Spool, RECORDING_RETENTION_MS, V2_SWEEP_INTE
 import { recordingDateFor, nextBoundaryInstant, normalizeRule } from './recording-day.js';
 import * as spool from './spool-v2.js';
 import { initSyncV2, kickSync, getBacklog } from './sync-v2.js';
-import { pickPrimarySource, serverNow } from './agent-policy.js';
+import { pickPrimarySource, sourceForDisplay, serverNow } from './agent-policy.js';
+import { getActiveDisplayId, getScreens, onActiveDisplay } from './screen-watcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,6 +70,7 @@ let _lastChunkAt = 0;
 let _chunksInSeg = 0;
 let _rotateAt = Infinity;
 let _sourceId = null;
+let _followId = null;      // active display (cursor) the current segment was started for
 let _diskLow = false;
 let _diskLowFromWrite = false; // _diskLow was raised by an ENOSPC chunk write, not by statfs (A1)
 let _writeBlocked = null; // null | 'disk_low' | 'write_error': unwritten chunk bytes hit the cap, capture paused (A1)
@@ -109,6 +111,7 @@ export function initRecorderMain(getToken, onStateChange) {
   }, PARKED_RETRY_MS);
   if (typeof parkedTimer.unref === 'function') parkedTimer.unref();
 
+  onActiveDisplay(() => _maybeFollow());
   const tick = setInterval(_tick, 10_000);
   if (typeof tick.unref === 'function') tick.unref();
 
@@ -333,6 +336,9 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
 
     const startedAt = new Date(serverNow(_clockOffset)); // A12: server-corrected, the recording day follows server time
     const segmentId = crypto.randomUUID();
+    const followId = getActiveDisplayId();
+    const source = sourceForDisplay(sources, followId, screen.getPrimaryDisplay().id);
+    const screenNo = getScreens().find((x) => x.displayId === String(source.display_id))?.screen ?? null;
     const info = {
       segmentId,
       userId: _userId,
@@ -340,6 +346,7 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
       startedAt: startedAt.toISOString(),
       mime: null, width: null, height: null,
       deviceId: getDeviceId(),
+      screen: screenNo,
     };
     const dir = spool.segmentDir(_v2Root(), _userId, segmentId);
     await spool.createSegment(dir, info);
@@ -352,7 +359,8 @@ async function _beginSegment(reason, { newCapture = false } = {}) {
     _chunksInSeg = 0;
     _lastChunkAt = Date.now(); // watchdog clock restarts with the segment
     _rotateAt = _computeRotateAt(meta);
-    _sourceId = _primarySource(sources).id;
+    _sourceId = source.id;
+    _followId = followId;
 
     win.webContents.send('recording:begin', {
       segmentId,
@@ -516,6 +524,18 @@ async function _restartNow(reason, graceful) {
   if (_wantRecording()) await _beginSegment(reason, { newCapture: true });
 }
 
+/**
+ * The cursor moved to another display for long enough: start a new segment on it right away (no backoff).
+ * Only from a calm 'recording' state; anything else is skipped and the 10 s tick tries again.
+ */
+function _maybeFollow() {
+  const calm = () => _seg && _state === 'recording' && !_restartTimer && !_closing.size && !_quitting && _wantRecording();
+  if (!calm() || getActiveDisplayId() === _followId) return;
+  _serial(async () => {
+    if (calm() && getActiveDisplayId() !== _followId) await _beginSegment('screen switch');
+  });
+}
+
 function _tick() {
   if (_quitting) return;
   _tickCount++;
@@ -531,6 +551,7 @@ function _tick() {
     _requestReconcile('self-heal');
   }
   _checkWriteBackpressure();
+  _maybeFollow();
   if (_tickCount % 6 === 0) {
     _checkDisk();
     _checkSource();

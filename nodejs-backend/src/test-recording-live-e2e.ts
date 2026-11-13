@@ -129,6 +129,7 @@ async function main() {
     const ag = up1?.agent;
     check('LIVE_PRESENCE_UPDATE after STATUS: live-capable, recording, loggedIn=false', !!ag && ag.connected === true && ag.liveCapable === true && ag.recording === true && ag.loggedIn === false, JSON.stringify(ag));
     check('presence carries name, department key, viewers, version', !!ag && ag.name === emp.name && 'department' in ag && ag.viewers === 0 && typeof ag.version === 'string', JSON.stringify(ag));
+    check('presence screens defaults to 1 when STATUS has none (old agents)', ag?.screens === 1, JSON.stringify(ag));
 
     const adminAgent = await connectAgent(adminAgentTok, 2);
     sockets.push(adminAgent.ws);
@@ -146,7 +147,8 @@ async function main() {
     check('GET /live-presence without a token → 401', (await axios.get(`${API}/recording/live-presence`, noThrow)).status === 401);
     adminAgent.ws.close();
 
-    agent.send({ type: 'STATUS', state: 'recording', loggedIn: true, version: 'e2e-live' });
+    agent.send({ type: 'STATUS', state: 'recording', loggedIn: true, version: 'e2e-live', screens: 3 });
+    check('presence update carries screens from STATUS', !!(await A.waitFor((m) => m.type === 'LIVE_PRESENCE_UPDATE' && m.agent?.userId === empId && m.agent.screens === 3)));
     check('LIVE_PRESENCE_UPDATE when loggedIn changes', !!(await A.waitFor((m) => m.type === 'LIVE_PRESENCE_UPDATE' && m.agent?.userId === empId && m.agent.loggedIn === true)));
     check('…the other viewer gets it too', !!(await B.waitFor((m) => m.type === 'LIVE_PRESENCE_UPDATE' && m.agent?.userId === empId && m.agent.loggedIn === true)));
 
@@ -156,6 +158,7 @@ async function main() {
     const start1 = await agent.waitFor((m) => m.type === 'LIVE_START');
     const sub1 = await A.waitFor((m) => m.type === 'LIVE_SUBSCRIBED');
     check('agent gets LIVE_START with streamId, quality and iceServers', !!start1 && typeof start1.streamId === 'string' && start1.quality === 'grid' && Array.isArray(start1.iceServers), JSON.stringify(start1));
+    check('LIVE_START screen defaults to 0 (follow); LIVE_SUBSCRIBED echoes it', start1?.screen === 0 && sub1?.screen === 0, JSON.stringify([start1?.screen, sub1?.screen]));
     check('viewer gets LIVE_SUBSCRIBED with the same streamId', !!sub1 && sub1.streamId === start1?.streamId && sub1.userId === empId && sub1.quality === 'grid');
     const s1 = start1?.streamId as string;
     check('presence update shows viewers=1', !!(await B.waitFor((m) => m.type === 'LIVE_PRESENCE_UPDATE' && m.agent?.userId === empId && m.agent.viewers === 1)));
@@ -170,16 +173,19 @@ async function main() {
     agent.send({ type: 'LIVE_STATE', streamId: s1, state: 'connected' });
     check('agent LIVE_STATE reaches the owning viewer', !!(await A.waitFor((m) => m.type === 'LIVE_STATE' && m.streamId === s1 && m.state === 'connected')));
 
-    B.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'focus' });
+    B.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'focus', screen: 2 });
     const startB = await agent.waitFor((m) => m.type === 'LIVE_START' && m.streamId !== s1);
     check('second viewer gets its own stream', !!startB && startB.quality === 'focus');
+    check('LIVE_START carries the screen from LIVE_SUBSCRIBE', startB?.screen === 2, JSON.stringify(startB?.screen));
+    check('LIVE_SUBSCRIBED echoes the screen', (await B.waitFor((m) => m.type === 'LIVE_SUBSCRIBED' && m.streamId === startB?.streamId))?.screen === 2);
     const sB = startB?.streamId as string;
     const sigsBefore = agent.msgs.filter((m) => m.type === 'LIVE_SIGNAL').length;
     B.send({ type: 'LIVE_SIGNAL', streamId: s1, candidate: { candidate: 'candidate:intruder' } });
     B.send({ type: 'LIVE_QUALITY', streamId: s1, quality: 'focus' });
+    B.send({ type: 'LIVE_SCREEN', streamId: s1, screen: 2 });
     B.send({ type: 'LIVE_UNSUBSCRIBE', streamId: s1 });
     await sleep(600);
-    check('foreign streamId: LIVE_SIGNAL / LIVE_QUALITY / LIVE_UNSUBSCRIBE are dropped', agent.msgs.filter((m) => m.type === 'LIVE_SIGNAL').length === sigsBefore && !agent.msgs.some((m) => m.type === 'LIVE_QUALITY') && !agent.msgs.some((m) => m.type === 'LIVE_STOP'));
+    check('foreign streamId: LIVE_SIGNAL / LIVE_QUALITY / LIVE_UNSUBSCRIBE are dropped', agent.msgs.filter((m) => m.type === 'LIVE_SIGNAL').length === sigsBefore && !agent.msgs.some((m) => m.type === 'LIVE_QUALITY') && !agent.msgs.some((m) => m.type === 'LIVE_SCREEN') && !agent.msgs.some((m) => m.type === 'LIVE_STOP'));
     agent.send({ type: 'LIVE_SIGNAL', streamId: 'not-a-stream', description: { type: 'offer', sdp: 'x' } });
     await sleep(300);
     check('agent signal for an unknown stream goes nowhere', !A.msgs.some((m) => m.streamId === 'not-a-stream') && !B.msgs.some((m) => m.streamId === 'not-a-stream'));
@@ -207,6 +213,16 @@ async function main() {
     A.send({ type: 'LIVE_QUALITY', streamId: s1, quality: 'ultra' });
     await sleep(300);
     check('invalid quality is dropped', agent.msgs.filter((m) => m.type === 'LIVE_QUALITY').length === 1);
+    A.send({ type: 'LIVE_SCREEN', streamId: s1, screen: 2 });
+    const scr = await agent.waitFor((m) => m.type === 'LIVE_SCREEN' && m.streamId === s1);
+    check('LIVE_SCREEN forwarded to the agent', scr?.screen === 2, JSON.stringify(scr));
+    for (const bad of [17, -1, 1.5, '2', null]) A.send({ type: 'LIVE_SCREEN', streamId: s1, screen: bad });
+    A.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'grid', screen: 99 });
+    await sleep(400);
+    check('invalid LIVE_SCREEN values are dropped', agent.msgs.filter((m) => m.type === 'LIVE_SCREEN').length === 1);
+    check('LIVE_SUBSCRIBE with invalid screen is dropped', agent.msgs.filter((m) => m.type === 'LIVE_START').length === CAP);
+    A.send({ type: 'LIVE_SCREEN', streamId: s1, screen: 0 });
+    check('LIVE_SCREEN 0 (follow) is accepted', (await agent.waitFor((m) => m.type === 'LIVE_SCREEN' && m.streamId === s1 && m.screen === 0)) !== null);
     B.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'bogus' });
     await sleep(300);
     check('LIVE_SUBSCRIBE with invalid quality is dropped', agent.msgs.filter((m) => m.type === 'LIVE_START').length === CAP);

@@ -773,7 +773,7 @@ export async function getSession(sessionId: string) {
       chunks: { orderBy: { chunk_index: 'asc' }, select: { chunk_index: true, file_size: true, uploaded_at: true } },
       employee: { select: { id: true, name: true } },
       creator: { select: { id: true, name: true } },
-      segments: { orderBy: { started_at: 'asc' }, select: { id: true, state: true, started_at: true, ended_at: true, last_seq: true, lost_seqs: true, generation: true, width: true, height: true } },
+      segments: { orderBy: { started_at: 'asc' }, select: { id: true, state: true, started_at: true, ended_at: true, last_seq: true, lost_seqs: true, generation: true, width: true, height: true, screen: true } },
     },
   });
 }

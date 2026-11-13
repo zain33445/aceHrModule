@@ -187,6 +187,28 @@ async function main() {
     const dupCount = await prisma.recordingSession.count({ where: { user_id: empId, recording_date: (await sessionRow(oldSession))!.recording_date } });
     check('exactly one session row for that (user, day)', dupCount === 1, `${dupCount} rows`);
 
+    // ── Multi-monitor: segment screen ──────────────────────
+    console.log('Segment screen');
+    const scrDay = new Date(Date.now() - 50 * 86_400_000);
+    const segS1 = `e2e-segS1-${rid()}`, segS2 = `e2e-segS2-${rid()}`, segS3 = `e2e-segS3-${rid()}`, segS4 = `e2e-segS4-${rid()}`;
+    const rS1 = await register(agentTok, segS1, scrDay, { screen: 2 });
+    sessionIds.push(rS1.data.sessionId);
+    await register(agentTok, segS2, new Date(scrDay.getTime() + 1000), { screen: 99 });
+    await register(agentTok, segS3, new Date(scrDay.getTime() + 2000), { screen: 2.5 });
+    await register(agentTok, segS4, new Date(scrDay.getTime() + 3000), { screen: 1 });
+    const scr = async (id: string) => (await prisma.recordingSegment.findUnique({ where: { id } }))?.screen;
+    check('screen is stored on the segment', (await scr(segS1)) === 2 && (await scr(segS4)) === 1);
+    check('invalid screen (99, 2.5) -> null', (await scr(segS2)) === null && (await scr(segS3)) === null);
+    check('a segment registered without screen has null', (await scr(segB)) === null);
+    check('re-PUT without screen keeps the stored value', (await register(agentTok, segS1, scrDay)).status === 200 && (await scr(segS1)) === 2);
+    check('re-PUT with an invalid screen keeps the stored value', (await register(agentTok, segS1, scrDay, { screen: 0 })).status === 200 && (await scr(segS1)) === 2);
+    const dayList = await axios.get(`${API}/recording/days?from=${dayOf(scrDay)}&to=${dayOf(scrDay)}&userId=${empId}`, bearer(adminTok));
+    const dayItem = (dayList.data.items ?? []).find((i: any) => i.sessionId === rS1.data.sessionId);
+    check('/days item has screens = distinct non-null screens (2)', dayItem?.screens === 2, JSON.stringify(dayItem));
+    const sdet = await axios.get(`${API}/recording/sessions/${rS1.data.sessionId}`, bearer(adminTok));
+    const segScr = Object.fromEntries((sdet.data.segments ?? []).map((s: any) => [s.id, s.screen]));
+    check('/sessions/:id segments include screen', segScr[segS1] === 2 && segScr[segS2] === null && segScr[segS4] === 1, JSON.stringify(segScr));
+
     // ── Chunk ingest ───────────────────────────────────────
     console.log('Chunk ingest');
     const runA = makeRun(3, 3);

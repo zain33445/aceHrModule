@@ -1,6 +1,6 @@
 /**
  * useLiveStream — one recv-only WebRTC stream for one agent (docs/recording-v2.md §11).
- * Returns { stream, status, setQuality }.
+ * Returns { stream, status, setQuality, setScreen, screen }.
  * status: connecting | failed | live | busy | offline | unsupported | denied | idle.
  * Subscribes while `active` && agent connected && liveCapable && hub socket open;
  * everything is torn down (peer closed, subscription closed) otherwise or on unmount.
@@ -16,6 +16,8 @@ export default function useLiveStream(hub, agent, active = true) {
   const [status, setStatus] = useState('connecting');
   const subRef = useRef(null);
   const qualityRef = useRef('grid');
+  const screenRef = useRef(0); // 0 = follow; survives resubscribes
+  const [screen, setScreenState] = useState(0);
   const { userId, connected, liveCapable } = agent;
   const open = hub.connectionState === 'open';
   const { subscribe, getIceServers } = hub;
@@ -23,6 +25,12 @@ export default function useLiveStream(hub, agent, active = true) {
   const setQuality = useCallback((q) => {
     qualityRef.current = q;
     subRef.current?.setQuality(q);
+  }, []);
+
+  const setScreen = useCallback((n) => {
+    screenRef.current = n;
+    setScreenState(n);
+    subRef.current?.setScreen(n);
   }, []);
 
   useEffect(() => {
@@ -132,7 +140,7 @@ export default function useLiveStream(hub, agent, active = true) {
           }
         },
         onEnded: () => { if (pc === myPc) { sub = null; subRef.current = null; retry(); } },
-      });
+      }, screenRef.current);
       sub = s;
       subRef.current = s;
     }
@@ -146,5 +154,5 @@ export default function useLiveStream(hub, agent, active = true) {
   }, [active, open, connected, liveCapable, userId, subscribe, getIceServers]);
 
   const live = active && open && connected && liveCapable;
-  return { stream: live ? stream : null, status: live ? status : 'idle', setQuality };
+  return { stream: live ? stream : null, status: live ? status : 'idle', setQuality, setScreen, screen };
 }

@@ -258,6 +258,7 @@ async function _syncSegment({ dir, seg, pending, registered }) {
         width: seg.width ?? null,
         height: seg.height ?? null,
         deviceId: seg.deviceId ?? null,
+        screen: seg.screen ?? null,
         recordingDate: seg.recordingDate,
       }));
     if (res.status === 400) {

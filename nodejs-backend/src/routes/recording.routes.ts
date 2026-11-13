@@ -200,7 +200,7 @@ router.get('/days', requireRecordingAccess, async (req: Request, res: Response) 
     const ids = keys.slice((page - 1) * pageSize, page * pageSize).map((k) => k.id);
     const rows = await prisma.recordingSession.findMany({
       where: { id: { in: ids } },
-      include: { employee: { select: { name: true, department: { select: { name: true } } } }, segments: { select: { state: true } } },
+      include: { employee: { select: { name: true, department: { select: { name: true } } } }, segments: { select: { state: true, screen: true } } },
     });
     const byId = new Map(rows.map((r) => [r.id, r]));
     const items = await Promise.all(ids.map(async (id) => {
@@ -223,6 +223,7 @@ router.get('/days', requireRecordingAccess, async (req: Request, res: Response) 
         durationMs: legacy ? null : r.duration_ms,
         loggedOutMs: r.logged_out_ms,
         segments: r.segments.length,
+        screens: new Set(r.segments.map((x) => x.screen).filter((x) => x !== null)).size,
         incompleteSegments: st('incomplete'),
         openSegments: st('open'),
         assembling: !legacy && (RecordingService.isAssembling(r.id) || st('complete') + st('incomplete') > 0),

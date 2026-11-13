@@ -2,10 +2,12 @@
  * useLiveHub — ONE viewer WebSocket for a mounted Recording tab (docs/recording-v2.md §11).
  *
  * Returns { agents, connectionState, subscribe, getIceServers }.
+ *  - agents carry `screens` (monitors on the agent, 1 for old agents).
  *  - agents: array, one per userId. A disconnected agent is kept 60 s
  *    (connected:false → "Reconnecting") and then dropped.
  *  - connectionState: 'connecting' | 'open' | 'reconnecting' | 'denied' (terminal: no access).
- *  - subscribe(userId, quality, handlers) → { streamId, setQuality(q), signal(payload), close() }.
+ *  - subscribe(userId, quality, handlers, screen = 0) → { streamId, setQuality(q), setScreen(n), signal(payload), close() }.
+ *    screen: 0 = follow the cursor, 1..16 = fixed screen (LIVE_SCREEN switches it live).
  *    handlers: onSubscribed({streamId, iceServers}), onRejected(reason), onSignal(msg),
  *    onState(state, error), onEnded(reason).
  *    When the socket drops every stream is gone: handlers get onEnded('socket_closed')
@@ -39,14 +41,17 @@ export default function useLiveHub() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }, []);
 
-  const subscribe = useCallback((userId, quality, handlers) => {
+  const subscribe = useCallback((userId, quality, handlers, screen = 0) => {
     const sub = { userId, handlers, streamId: null, closed: false };
     pending.current.push(sub);
-    send({ type: 'LIVE_SUBSCRIBE', userId, quality });
+    send({ type: 'LIVE_SUBSCRIBE', userId, quality, screen });
     return {
       get streamId() { return sub.streamId; },
       setQuality(q) {
         if (sub.streamId && !sub.closed) send({ type: 'LIVE_QUALITY', streamId: sub.streamId, quality: q });
+      },
+      setScreen(n) {
+        if (sub.streamId && !sub.closed) send({ type: 'LIVE_SCREEN', streamId: sub.streamId, screen: n });
       },
       signal(payload) {
         if (sub.streamId && !sub.closed) send({ type: 'LIVE_SIGNAL', streamId: sub.streamId, ...payload });

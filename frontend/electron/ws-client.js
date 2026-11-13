@@ -12,6 +12,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
 import { randomUUID } from 'crypto';
+import { getScreens } from './screen-watcher.js';
 import { WS_ENDPOINT, AGENT_AUTH_ENDPOINT, AGENT_TOKEN_FILE, RECORDING_PROTOCOL, RECORDING_STATUS_INTERVAL_MS } from './config.js';
 import { handleWebRtcMessage, setRecordPolicy, getRecorderStatus, addStatusListener } from './recorder-main.js';
 import { handleLiveMessage, getLiveViewerCount, addLiveCountListener, closeAllLive } from './live-main.js';
@@ -423,6 +424,7 @@ function _handleMessage(msg) {
 
     case 'LIVE_START':
     case 'LIVE_QUALITY':
+    case 'LIVE_SCREEN':
     case 'LIVE_STOP':
     case 'LIVE_SIGNAL':
       handleLiveMessage(msg);
@@ -509,6 +511,7 @@ function _sendStatus() {
     type: 'STATUS',
     ...getRecorderStatus(),
     liveViewers: getLiveViewerCount(),
+    screens: getScreens().length,
     userId: _currentUserId,
     version: app.getVersion(),
   });

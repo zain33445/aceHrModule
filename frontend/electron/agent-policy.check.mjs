@@ -79,4 +79,69 @@ await check('pinnedQuality: same day keeps pin; new day/other user takes server;
   assert.strictEqual(pq(null, 'd', 'u1', '4k').quality, '720p');
 });
 
+const disp = (id, x, y = 0) => ({ id, bounds: { x, y, width: 1920, height: 1080 } });
+
+await check('numberScreens: primary is Screen 1, others left-to-right (then top-to-bottom) as 2..N', async () => {
+  const [numberScreens] = await fns('numberScreens');
+  const r = numberScreens([disp(7, 0), disp(3, 1920), disp(9, -1920), disp(5, 1920, 1080)], 7);
+  assert.deepStrictEqual(r, [
+    { displayId: '7', screen: 1 }, { displayId: '9', screen: 2 }, { displayId: '3', screen: 3 }, { displayId: '5', screen: 4 },
+  ]);
+});
+
+await check('numberScreens: string/number ids mix, primary on the right still Screen 1, single display', async () => {
+  const [numberScreens] = await fns('numberScreens');
+  assert.deepStrictEqual(numberScreens([disp('1', 0), disp(2, 1920)], 2), [{ displayId: '2', screen: 1 }, { displayId: '1', screen: 2 }]);
+  assert.deepStrictEqual(numberScreens([disp(4, 0)], '4'), [{ displayId: '4', screen: 1 }]);
+  assert.deepStrictEqual(numberScreens([], 1), []);
+});
+
+await check('sourceForDisplay: matching display_id, else primary source, else first, else null', async () => {
+  const [sourceForDisplay] = await fns('sourceForDisplay');
+  const src = [{ id: 'screen:0', display_id: '11' }, { id: 'screen:1', display_id: '22' }];
+  assert.strictEqual(sourceForDisplay(src, 22, 11).id, 'screen:1');
+  assert.strictEqual(sourceForDisplay(src, '99', 22).id, 'screen:1');
+  assert.strictEqual(sourceForDisplay(src, null, 99).id, 'screen:0');
+  assert.strictEqual(sourceForDisplay([], 1, 1), null);
+});
+
+await check('followStep: no switch before 10 s, switch at 10 s, then the new display is current', async () => {
+  const [followStep] = await fns('followStep');
+  let r = followStep(undefined, 'A', 0, 10_000);
+  assert.strictEqual(r.switchTo, null);
+  for (let t = 2000; t < 10_000; t += 2000) { r = followStep(r.state, 'B', t, 10_000); assert.strictEqual(r.switchTo, null, `t=${t}`); }
+  r = followStep(r.state, 'B', 10_000, 10_000); // first poll on B was t=2000 -> 8 s: still no
+  assert.strictEqual(r.switchTo, null);
+  r = followStep(r.state, 'B', 12_000, 10_000);
+  assert.strictEqual(r.switchTo, 'B');
+  r = followStep(r.state, 'B', 14_000, 10_000);
+  assert.strictEqual(r.switchTo, null);
+  assert.strictEqual(r.state.current, 'B');
+});
+
+await check('followStep: exactly 10 s on the other display switches', async () => {
+  const [followStep] = await fns('followStep');
+  let r = followStep(undefined, 1, 0, 10_000);
+  r = followStep(r.state, 2, 1000, 10_000);
+  assert.strictEqual(followStep(r.state, '2', 10_999, 10_000).switchTo, null);
+  assert.strictEqual(followStep(r.state, '2', 11_000, 10_000).switchTo, '2');
+});
+
+await check('followStep: returning to the current display resets the timer; flapping never switches', async () => {
+  const [followStep] = await fns('followStep');
+  let r = followStep(undefined, 'A', 0, 10_000);
+  r = followStep(r.state, 'B', 2000, 10_000);
+  r = followStep(r.state, 'B', 8000, 10_000);
+  r = followStep(r.state, 'A', 10_000, 10_000); // back: timer reset
+  r = followStep(r.state, 'B', 12_000, 10_000);
+  assert.strictEqual(followStep(r.state, 'B', 20_000, 10_000).switchTo, null, 'only 8 s since it came back to B');
+  assert.strictEqual(followStep(r.state, 'B', 22_000, 10_000).switchTo, 'B');
+  let f = followStep(undefined, 'A', 0, 10_000);
+  for (let t = 2000; t <= 120_000; t += 2000) {
+    f = followStep(f.state, (t / 2000) % 2 ? 'B' : 'A', t, 10_000);
+    assert.strictEqual(f.switchTo, null, `flap t=${t}`);
+  }
+  assert.strictEqual(f.state.current, 'A');
+});
+
 finish('agent-policy');

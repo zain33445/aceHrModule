@@ -357,6 +357,7 @@ const api = {
     );
     return axios.get(`${API_BASE}/recording/days`, { params: clean });
   },
+  recordingGetSession: (sessionId) => axios.get(`${API_BASE}/recording/sessions/${sessionId}`),
   recordingPlaybackToken: (sessionId) =>
     axios.post(`${API_BASE}/recording/sessions/${sessionId}/playback-token`, {}),
   recordingGetLivePresence: () => axios.get(`${API_BASE}/recording/live-presence`),

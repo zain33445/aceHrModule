@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useLiveStream from '../../../hooks/useLiveStream';
 import LiveFocus from './LiveFocus';
+import ScreenSwitch from './ScreenSwitch';
 
 const BADGES = {
   live: { label: 'Live', cls: 'bg-red-600 text-white' },
@@ -30,7 +31,7 @@ function badgeFor(agent, status) {
 }
 
 export default function LiveCell({ hub, agent }) {
-  const { stream, status, setQuality } = useLiveStream(hub, agent, true);
+  const { stream, status, setQuality, screen, setScreen } = useLiveStream(hub, agent, true);
   const [focused, setFocused] = useState(false);
   const videoRef = useRef(null);
 
@@ -47,6 +48,7 @@ export default function LiveCell({ hub, agent }) {
   return (
     <>
       <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white shadow-sm">
+        <div className="group relative">
         <button
           type="button"
           onClick={() => setFocused(true)}
@@ -59,6 +61,15 @@ export default function LiveCell({ hub, agent }) {
             {badge.label}
           </span>
         </button>
+        {(agent.screens ?? 1) > 1 && (
+          <ScreenSwitch
+            screens={agent.screens}
+            value={screen}
+            onChange={setScreen}
+            className="absolute bottom-2 right-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+          />
+        )}
+        </div>
         <div className="px-2.5 py-1.5">
           <p className="truncate text-xs font-semibold text-neutral-900" title={agent.name}>{agent.name}</p>
           <p className="truncate text-[11px] text-neutral-500">{agent.department || 'No department'}</p>
@@ -68,7 +79,7 @@ export default function LiveCell({ hub, agent }) {
         </div>
       </div>
       {focused && (
-        <LiveFocus agent={agent} stream={stream} setQuality={setQuality} onClose={() => setFocused(false)} />
+        <LiveFocus agent={agent} stream={stream} setQuality={setQuality} screen={screen} setScreen={setScreen} onClose={() => setFocused(false)} />
       )}
     </>
   );

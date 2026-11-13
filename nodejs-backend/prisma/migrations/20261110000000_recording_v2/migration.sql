@@ -86,3 +86,7 @@ BEGIN
       FOREIGN KEY ("segment_id") REFERENCES "recording_segments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
+
+-- statement
+-- Multi-monitor: which screen (1 = primary, 2..N left-to-right) a segment recorded.
+ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS screen SMALLINT;

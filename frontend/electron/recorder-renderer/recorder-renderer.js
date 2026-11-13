@@ -99,7 +99,11 @@ async function acquireCapture({ sourceId, maxWidth, maxHeight, maxFps }) {
       mandatory: {
         chromeMediaSource: 'desktop',
         chromeMediaSourceId: sourceId,
+        // min = max: Chromium's desktop capturer then letterboxes to this fixed size on every monitor
+        // (verified by letterbox.check.cjs), so a screen switch never changes the frame size.
+        minWidth: maxWidth || 1280,
         maxWidth: maxWidth || 1280,
+        minHeight: maxHeight || 720,
         maxHeight: maxHeight || 720,
         maxFrameRate: maxFps || 15,
       },
@@ -130,8 +134,9 @@ function stopRecorder(rec) {
 async function begin(p) {
   const { segmentId, timesliceMs, videoBitsPerSecond } = p;
   try {
-    // A new recording day may bring a different quality preset: constraints are fixed at capture time.
-    const changed = capture && (capture.maxWidth !== p.maxWidth || capture.maxHeight !== p.maxHeight || capture.maxFps !== p.maxFps);
+    // A new recording day may bring a different quality preset, and a screen switch a different source:
+    // constraints are fixed at capture time.
+    const changed = capture && (capture.sourceId !== p.sourceId || capture.maxWidth !== p.maxWidth || capture.maxHeight !== p.maxHeight || capture.maxFps !== p.maxFps);
     if (changed && current && current.recorder.state !== 'inactive') {
       // Flush the old recorder's last chunk before its tracks are stopped.
       stopRecorder(current);

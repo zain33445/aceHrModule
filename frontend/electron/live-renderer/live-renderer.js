@@ -4,6 +4,7 @@
  * one RTCPeerConnection per streamId, the agent is the offerer.
  *
  * Received:  'live:start' {streamId, quality, iceServers, sourceId}, 'live:quality' {streamId, quality},
+ *            'live:source' {streamId, sourceId} (switch monitor in place: replaceTrack, no renegotiation),
  *            'live:stop' {streamId}, 'live:stop-all' (socket lost; closes silently), 'live:signal' {streamId, description?, candidate?}
  * Sent:      'live:signal-out' {streamId, description?|candidate?}, 'live:state' {streamId, state, error?},
  *            'live:count' <number of open peers>
@@ -16,8 +17,9 @@ const RELEASE_DELAY_MS = 30_000;
 const ICE_RESTART_WAIT_MS = 10_000;
 
 const peers = new Map(); // streamId → { pc, sender, pending, hasRemote, restarted, timer, lastState }
-let capture = null;         // { stream, track }
-let capturePromise = null;  // single in-flight getUserMedia
+const captures = new Map(); // sourceId → { stream, track } (shared by every stream on that screen)
+const capturing = new Map(); // sourceId → in-flight getUserMedia
+const wantSource = new Map(); // streamId → {sourceId} requested before its peer existed
 let releaseTimer = null;
 
 const state = (streamId, s, error) => ipcRenderer.send('live:state', { streamId, state: s, ...(error ? { error } : {}) });
@@ -28,36 +30,44 @@ const errMsg = (e) => (e && e.message) || String(e);
 const registry = createRegistry({ onClosed: (id) => state(id, 'closed') });
 
 function getCapture(sourceId) {
-  if (capture && capture.track.readyState === 'live') return Promise.resolve(capture);
-  if (capturePromise) return capturePromise;
-  capturePromise = navigator.mediaDevices.getUserMedia({
+  const have = captures.get(sourceId);
+  if (have && have.track.readyState === 'live') return Promise.resolve(have);
+  if (capturing.has(sourceId)) return capturing.get(sourceId);
+  const pr = navigator.mediaDevices.getUserMedia({
     audio: false,
     video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 20 } },
   }).then((stream) => {
     const track = stream.getVideoTracks()[0];
-    const c = { stream, track };
-    capture = c;
+    const c = { stream, track, sourceId };
+    captures.set(sourceId, c);
     track.addEventListener('ended', () => {
-      if (capture !== c) return;
-      capture = null; // display gone: fail the streams; viewers resubscribe and capture restarts
-      for (const id of [...peers.keys()]) { state(id, 'failed', 'capture ended'); closePeer(id, { silent: true }); }
+      if (captures.get(sourceId) !== c) return;
+      captures.delete(sourceId); // display gone: fail the streams on it; viewers resubscribe and capture restarts
+      for (const [id, p] of [...peers]) if (p.sourceId === sourceId) { state(id, 'failed', 'capture ended'); closePeer(id, { silent: true }); }
     });
     return c;
-  }).finally(() => { capturePromise = null; });
-  return capturePromise;
+  }).finally(() => { capturing.delete(sourceId); });
+  capturing.set(sourceId, pr);
+  return pr;
 }
 
+/** Stops every capture no stream uses any more (after a grace period, so a reconnect can reuse it). */
 function scheduleRelease() {
-  if (peers.size || releaseTimer) return;
+  if (releaseTimer) return;
   releaseTimer = setTimeout(() => {
     releaseTimer = null;
-    if (peers.size) return;
-    if (capture) { capture.stream.getTracks().forEach((t) => t.stop()); capture = null; }
+    const used = new Set([...peers.values()].map((p) => p.sourceId));
+    for (const [id, c] of [...captures]) {
+      if (used.has(id) || capturing.has(id)) continue;
+      c.stream.getTracks().forEach((t) => t.stop());
+      captures.delete(id);
+    }
   }, RELEASE_DELAY_MS);
 }
 
 async function applyQuality(p, quality) {
   if (!p.sender) return;
+  p.quality = quality;
   const params = p.sender.getParameters();
   if (!params.encodings || !params.encodings.length) params.encodings = [{}];
   const { degradationPreference, ...enc } = qualityToEncoding(quality, p.sender.track?.getSettings().width);
@@ -73,6 +83,7 @@ function closePeer(streamId, { silent = false } = {}) {
   const p = peers.get(streamId);
   if (!p) return;
   peers.delete(streamId);
+  wantSource.delete(streamId);
   registry.release(streamId);
   clearTimeout(p.timer);
   try { p.pc.close(); } catch { /* already closed */ }
@@ -96,14 +107,13 @@ async function sendOffer(streamId, p, opts) {
 /** Opens the peer; resolves with a handle for the registry (throws on failure after reporting it). */
 async function startPeer({ streamId, quality, iceServers, sourceId }) {
   if (peers.has(streamId)) closePeer(streamId, { silent: true });
-  if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = null; }
   state(streamId, 'connecting');
   let c;
   try { c = await getCapture(sourceId); }
   catch (e) { state(streamId, 'failed', `capture failed: ${errMsg(e)}`); scheduleRelease(); throw e; }
   try {
     const pc = new RTCPeerConnection({ iceServers: Array.isArray(iceServers) ? iceServers : [] });
-    const p = { pc, sender: null, pending: [], hasRemote: false, restarted: false, timer: null, lastState: 'connecting' };
+    const p = { pc, sourceId, quality, sender: null, pending: [], hasRemote: false, restarted: false, timer: null, lastState: 'connecting' };
     peers.set(streamId, p);
     sendCount();
     pc.onicecandidate = (ev) => {
@@ -131,11 +141,27 @@ async function startPeer({ streamId, quality, iceServers, sourceId }) {
     p.sender = pc.addTrack(c.track, c.stream);
     await applyQuality(p, quality);
     await sendOffer(streamId, p);
+    if (wantSource.has(streamId)) { const w = wantSource.get(streamId); switchSource(streamId, w.sourceId); } // asked to move while starting
     return { close: () => closePeer(streamId, { silent: true }) };
   } catch (e) { fail(streamId, e); throw e; }
 }
 
 const start = (m) => registry.start(m.streamId, () => startPeer(m)).catch(() => { /* already reported as failed */ });
+
+/** Move a stream to another screen without renegotiating: replaceTrack, then re-apply its quality. */
+async function switchSource(streamId, sourceId) {
+  wantSource.delete(streamId);
+  const p = peers.get(streamId);
+  if (!p || p.sourceId === sourceId) return;
+  try {
+    const c = await getCapture(sourceId);
+    if (peers.get(streamId) !== p) return;
+    await p.sender.replaceTrack(c.track);
+    p.sourceId = sourceId;
+    await applyQuality(p, p.quality);
+  } catch (e) { console.warn('[Live] screen switch failed', errMsg(e)); }
+  scheduleRelease(); // the old screen's capture may be unused now
+}
 
 async function signal({ streamId, description, candidate }) {
   const p = peers.get(streamId);
@@ -152,6 +178,10 @@ async function signal({ streamId, description, candidate }) {
 }
 
 ipcRenderer.on('live:start', (_e, m) => { start(m || {}); });
+ipcRenderer.on('live:source', (_e, { streamId, sourceId } = {}) => {
+  if (!streamId || !sourceId) return;
+  if (peers.has(streamId)) switchSource(streamId, sourceId); else wantSource.set(streamId, { sourceId });
+});
 ipcRenderer.on('live:quality', (_e, { streamId, quality } = {}) => {
   const p = peers.get(streamId);
   if (p) applyQuality(p, quality).catch((e) => fail(streamId, e));

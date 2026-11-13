@@ -402,6 +402,7 @@ model RecordingSegment {
   height      Int?
   state       String           @default("open")
   generation  Int?
+  screen      Int?             @db.SmallInt
   created_at  DateTime         @default(now())
   updated_at  DateTime         @updatedAt
   session     RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)

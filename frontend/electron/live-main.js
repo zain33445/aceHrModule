@@ -5,7 +5,7 @@
  * desktop capture and one RTCPeerConnection per stream. It is fully
  * independent of the recorder window — nothing here touches recording state.
  *
- * Server → agent (via ws-client): LIVE_START / LIVE_QUALITY / LIVE_STOP / LIVE_SIGNAL
+ * Server → agent (via ws-client): LIVE_START / LIVE_QUALITY / LIVE_SCREEN / LIVE_STOP / LIVE_SIGNAL
  * Agent → server (via sendWsMessage): LIVE_SIGNAL / LIVE_STATE
  */
 import electronPkg from 'electron';
@@ -13,7 +13,8 @@ const { BrowserWindow, desktopCapturer, ipcMain, app, screen } = electronPkg;
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { pickPrimarySource } from './agent-policy.js';
+import { sourceForDisplay } from './agent-policy.js';
+import { getActiveDisplayId, getScreens, onActiveDisplay } from './screen-watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +23,7 @@ let _winPromise = null;       // single in-flight window creation
 let _inited = false;
 let _shuttingDown = false;
 let _count = 0;               // open peers, reported by the renderer
-const _streams = new Set();   // streamIds the server believes are live
+const _streams = new Map();   // streamId -> pinned screen (0 = follow the cursor) the server believes is live
 const _countListeners = new Set();
 
 function _send(msg) {
@@ -52,6 +53,11 @@ export function initLiveMain() {
     _send({ type: 'LIVE_STATE', streamId: m.streamId, state: m.state, ...(m.error ? { error: m.error } : {}) });
   });
 
+  // Follow-mode streams move with the shared cursor watcher (also used by the recorder).
+  onActiveDisplay(() => {
+    for (const [streamId, screenNo] of _streams) if (!screenNo) _pushSource(streamId, 0);
+  });
+
   ipcMain.on('live:count', (_e, n) => _setCount(Number(n) || 0));
   logger.info('[Live] Initialized');
 }
@@ -61,11 +67,29 @@ export function getLiveViewerCount() { return _count; }
 /** fn(count) is called whenever the number of open live peers changes. */
 export function addLiveCountListener(fn) { _countListeners.add(fn); }
 
+/** Capture source for a pinned screen (1..N); 0, missing or nonexistent = follow the cursor display. */
+function _resolveSource(sources, screenNo) {
+  const primaryId = screen.getPrimaryDisplay().id;
+  const pinned = screenNo >= 1 ? getScreens().find((x) => x.screen === screenNo) : null;
+  const src = sourceForDisplay(sources, pinned ? pinned.displayId : getActiveDisplayId(), primaryId);
+  return { sourceId: src.id };
+}
+
+async function _pushSource(streamId, screenNo) {
+  try {
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+    const src = sources?.length ? _resolveSource(sources, screenNo) : null;
+    if (src && _streams.has(streamId) && _streams.get(streamId) === screenNo && _windowAlive()) _win.webContents.send('live:source', { streamId, ...src });
+  } catch (err) {
+    logger.warn(`[Live] Screen switch failed for ${streamId}: ${err.message}`);
+  }
+}
+
 function _windowAlive() { return !!_win && !_win.isDestroyed(); }
 
 /** The window is gone: tell the server each stream ended (viewers resubscribe). */
 function _onWindowLost(why) {
-  const ids = [..._streams];
+  const ids = [..._streams.keys()];
   _streams.clear();
   _win = null;
   _setCount(0);
@@ -119,12 +143,20 @@ export async function handleLiveMessage(msg) {
   if (!streamId) return;
   try {
     if (msg.type === 'LIVE_START') {
-      _streams.add(streamId);
+      const screenNo = Number.isInteger(msg.screen) && msg.screen > 0 ? msg.screen : 0;
+      _streams.set(streamId, screenNo);
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
       if (!sources?.length) throw new Error('No screen sources found');
       const win = await _ensureWindow();
       if (!_streams.has(streamId)) return; // stopped while the window was starting
-      win.webContents.send('live:start', { streamId, quality: msg.quality, iceServers: msg.iceServers || [], sourceId: pickPrimarySource(sources, screen.getPrimaryDisplay().id).id }); // A14: primary display
+      win.webContents.send('live:start', { streamId, quality: msg.quality, iceServers: msg.iceServers || [], ..._resolveSource(sources, screenNo) }); // A14: primary display fallback
+      return;
+    }
+    if (msg.type === 'LIVE_SCREEN') {
+      if (!_streams.has(streamId)) return;
+      const screenNo = Number.isInteger(msg.screen) && msg.screen > 0 ? msg.screen : 0;
+      _streams.set(streamId, screenNo);
+      await _pushSource(streamId, screenNo);
       return;
     }
     if (msg.type === 'LIVE_STOP') _streams.delete(streamId);

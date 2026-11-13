@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Loader2, Play } from 'lucide-react';
+import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, Download, Loader2, Play } from 'lucide-react';
 import api from '../../../services/api';
 import { API_BASE } from '../../../services/endpoints';
 import Overlay from './Overlay';
@@ -44,6 +44,45 @@ const STATUS_CLS = {
   Waiting: 'bg-slate-100 text-slate-600',
   'No video': 'bg-slate-100 text-slate-500',
 };
+
+const fmtClock = (iso) => (iso ? new Date(iso).toLocaleTimeString('en-GB', { hour12: false }) : '—');
+function fmtDur(a, b) {
+  if (!a || !b) return '—';
+  const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ${s % 60}s`;
+}
+
+// Segment list of one day (shows which monitor each segment recorded). Loaded on first expand.
+function SegmentList({ sessionId }) {
+  const [state, setState] = useState({ loading: true, segments: [], error: '' });
+  useEffect(() => {
+    let stale = false;
+    api.recordingGetSession(sessionId).then(
+      (res) => { if (!stale) setState({ loading: false, segments: res.data?.segments ?? [], error: '' }); },
+      (err) => { if (!stale) setState({ loading: false, segments: [], error: err.response?.data?.error ?? err.message }); }
+    );
+    return () => { stale = true; };
+  }, [sessionId]);
+  if (state.loading) return <p className="text-xs text-neutral-500"><Loader2 size={12} className="mr-1 inline animate-spin" />Loading segments…</p>;
+  if (state.error) return <p role="alert" className="text-xs text-red-700">{state.error}</p>;
+  if (state.segments.length === 0) return <p className="text-xs text-neutral-500">No segments</p>;
+  return (
+    <table className="text-xs">
+      <thead className="text-neutral-500">
+        <tr><th className="pr-6 text-left font-medium">Time</th><th className="pr-6 text-left font-medium">Duration</th><th className="text-left font-medium">Screen</th></tr>
+      </thead>
+      <tbody>
+        {state.segments.map((s) => (
+          <tr key={s.id} className="text-neutral-700">
+            <td className="pr-6 whitespace-nowrap">{fmtClock(s.started_at)}–{fmtClock(s.ended_at)}</td>
+            <td className="pr-6 whitespace-nowrap">{fmtDur(s.started_at, s.ended_at)}</td>
+            <td>{s.screen ? `Screen ${s.screen}` : '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 function dayLabel(d) {
   return d.recordingDate || (d.createdAt ? ymd(new Date(d.createdAt)) : '—');
@@ -146,6 +185,7 @@ export default function RecordingsByDay({ employees = [] }) {
   const [data, setData] = useState({ items: [], total: 0, key: null });
   const [errorState, setErrorState] = useState(null); // { key, msg } — hidden once a newer request starts
   const [player, setPlayer] = useState(null); // { day, url? , error? }
+  const [open, setOpen] = useState({}); // sessionId -> segment list expanded
   const playReq = useRef(0); // ignores token responses of a closed modal / superseded Play
 
   const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
@@ -257,7 +297,8 @@ export default function RecordingsByDay({ employees = [] }) {
             {data.items.map((d) => {
               const st = dayStatus(d);
               return (
-                <tr key={d.sessionId}>
+                <Fragment key={d.sessionId}>
+                <tr>
                   <td className="px-4 py-2.5">
                     <p className="font-medium text-neutral-900">{d.name}</p>
                     <p className="text-xs text-neutral-500">{d.department || ''}</p>
@@ -265,6 +306,13 @@ export default function RecordingsByDay({ employees = [] }) {
                   <td className="px-4 py-2.5 whitespace-nowrap">
                     {dayLabel(d)}
                     {d.legacy && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600">legacy</span>}
+                    {d.screens > 1 && (
+                      <button type="button" aria-expanded={!!open[d.sessionId]} aria-label={`Segments of ${d.name} on ${dayLabel(d)}`}
+                        onClick={() => setOpen((o) => ({ ...o, [d.sessionId]: !o[d.sessionId] }))}
+                        className="ml-2 inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                        {open[d.sessionId] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{d.screens} screens
+                      </button>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 whitespace-nowrap">
                     {fmtHms(d.durationMs)}
@@ -290,6 +338,10 @@ export default function RecordingsByDay({ employees = [] }) {
                     </div>
                   </td>
                 </tr>
+                {open[d.sessionId] && (
+                  <tr className="bg-neutral-50"><td colSpan={5} className="px-4 py-3"><SegmentList sessionId={d.sessionId} /></td></tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>
