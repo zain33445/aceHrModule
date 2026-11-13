@@ -4,6 +4,8 @@ import LiveCell from './LiveCell';
 
 const PAGE_SIZE = 16;
 const COLS_KEY = 'liveGridCols';
+// Tile sharpness follows the column choice (docs/recording-v2.md §10); 'grid' is the 4-column level.
+const GRID_QUALITY = { 2: 'grid2', 3: 'grid3', 4: 'grid' };
 const COLS_CLS = {
   2: 'sm:grid-cols-2',
   3: 'sm:grid-cols-2 lg:grid-cols-3',
@@ -147,7 +149,7 @@ export default function LiveGrid({ hub }) {
         </div>
       ) : (
         <div className={`grid grid-cols-1 gap-3 ${COLS_CLS[cols]}`}>
-          {visible.map((a) => <LiveCell key={a.userId} hub={hub} agent={a} />)}
+          {visible.map((a) => <LiveCell key={a.userId} hub={hub} agent={a} gridQuality={GRID_QUALITY[cols]} />)}
         </div>
       )}
     </div>

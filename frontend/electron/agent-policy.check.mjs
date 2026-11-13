@@ -144,4 +144,13 @@ await check('followStep: returning to the current display resets the timer; flap
   assert.strictEqual(f.state.current, 'A');
 });
 
+await check('nativeCaptureSize: physical size, fitted to 4K, even, 1080p fallback', async () => {
+  const [n] = await fns('nativeCaptureSize');
+  assert.deepStrictEqual(n({ bounds: { width: 1536, height: 864 }, scaleFactor: 1.25 }), { width: 1920, height: 1080 });
+  assert.deepStrictEqual(n({ bounds: { width: 2560, height: 1440 }, scaleFactor: 1 }), { width: 2560, height: 1440 });
+  assert.deepStrictEqual(n({ bounds: { width: 3840, height: 2160 }, scaleFactor: 2 }), { width: 3840, height: 2160 });
+  assert.deepStrictEqual(n({ bounds: { width: 5120, height: 1440 }, scaleFactor: 1 }), { width: 3840, height: 1080 });
+  assert.deepStrictEqual(n(null), { width: 1920, height: 1080 });
+});
+
 finish('agent-policy');

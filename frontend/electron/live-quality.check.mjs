@@ -3,12 +3,20 @@ import assert from 'assert';
 import { createRequire } from 'module';
 const { qualityToEncoding, serializeCandidate, mapConnectionState } = createRequire(import.meta.url)('./live-quality.cjs');
 
-const grid = { maxFramerate: 10, maxBitrate: 400000, degradationPreference: 'balanced' };
-assert.deepStrictEqual(qualityToEncoding('grid'), { scaleResolutionDownBy: 2, ...grid });
-assert.deepStrictEqual(qualityToEncoding('grid', 1920), { scaleResolutionDownBy: 3, ...grid });
-assert.deepStrictEqual(qualityToEncoding('grid', 480), { scaleResolutionDownBy: 1, ...grid });
-assert.deepStrictEqual(qualityToEncoding('focus', 1920), { scaleResolutionDownBy: 1, maxFramerate: 20, maxBitrate: 2500000, degradationPreference: 'maintain-framerate' });
-assert.deepStrictEqual(qualityToEncoding('bogus'), qualityToEncoding('grid'));
+const mk = (down, fps, br) => ({ scaleResolutionDownBy: down, maxFramerate: fps, maxBitrate: br, degradationPreference: 'maintain-resolution' });
+assert.deepStrictEqual(qualityToEncoding('grid'), mk(2, 10, 600000));
+assert.deepStrictEqual(qualityToEncoding('grid', 1920), mk(3, 10, 600000));
+assert.deepStrictEqual(qualityToEncoding('grid', 480), mk(1, 10, 600000));
+assert.deepStrictEqual(qualityToEncoding('grid2'), mk(2, 10, 1500000));
+assert.deepStrictEqual(qualityToEncoding('grid2', 2560), mk(2, 10, 1500000));
+assert.deepStrictEqual(qualityToEncoding('grid2', 1920), mk(1.5, 10, 1500000));
+assert.deepStrictEqual(qualityToEncoding('grid2', 1000), mk(1, 10, 1500000));
+assert.deepStrictEqual(qualityToEncoding('grid3', 1920), mk(2, 10, 1000000));
+assert.deepStrictEqual(qualityToEncoding('grid3', 800), mk(1, 10, 1000000));
+assert.deepStrictEqual(qualityToEncoding('focus', 1920), mk(1, 15, 4000000));
+assert.deepStrictEqual(qualityToEncoding('focus', 3840), mk(1, 15, 4000000));
+assert.deepStrictEqual(qualityToEncoding('bogus', 1920), qualityToEncoding('grid', 1920));
+assert.deepStrictEqual(qualityToEncoding(undefined), qualityToEncoding('grid'));
 
 // Getters live on the prototype, like RTCIceCandidate: JSON.stringify would drop them.
 class Cand {

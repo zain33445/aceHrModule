@@ -74,3 +74,13 @@ export function followStep(state, displayId, nowMs, delayMs) {
   if (nowMs - state.since >= delayMs) return { state: { current: id, candidate: null, since: null }, switchTo: id };
   return { state, switchTo: null };
 }
+
+/** Native physical capture size of a display (bounds x scaleFactor), fitted into 3840x2160, even numbers; 1920x1080 when unknown. */
+export function nativeCaptureSize(display) {
+  const w = Number(display?.bounds?.width), h = Number(display?.bounds?.height), f = Number(display?.scaleFactor) || 1;
+  if (!(w > 0 && h > 0)) return { width: 1920, height: 1080 };
+  let pw = Math.round(w * f), ph = Math.round(h * f);
+  const k = Math.min(1, 3840 / pw, 2160 / ph);
+  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
+  return { width: even(pw * k), height: even(ph * k) };
+}

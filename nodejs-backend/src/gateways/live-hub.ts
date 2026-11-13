@@ -39,7 +39,7 @@ const validScreen = (n: unknown): n is number => Number.isInteger(n) && (n as nu
 interface Seen { protocol: number; version: string | null; goneAt: number | null }
 interface UserInfo { name: string; department: string | null; admin: boolean }
 
-const QUALITIES = ['grid', 'focus'];
+const QUALITIES = ['grid', 'grid2', 'grid3', 'focus']; // grid = 4 columns (old agents treat any non-focus as grid)
 const GONE_KEEP_MS = 60_000;
 const DEBOUNCE_MS = 250;
 const ACCESS_RECHECK_MS = 5 * 60_000; // S7: viewer access is re-checked this often

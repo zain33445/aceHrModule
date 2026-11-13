@@ -13,7 +13,7 @@ const { BrowserWindow, desktopCapturer, ipcMain, app, screen } = electronPkg;
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
-import { sourceForDisplay } from './agent-policy.js';
+import { sourceForDisplay, nativeCaptureSize } from './agent-policy.js';
 import { getActiveDisplayId, getScreens, onActiveDisplay } from './screen-watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,7 +72,8 @@ function _resolveSource(sources, screenNo) {
   const primaryId = screen.getPrimaryDisplay().id;
   const pinned = screenNo >= 1 ? getScreens().find((x) => x.screen === screenNo) : null;
   const src = sourceForDisplay(sources, pinned ? pinned.displayId : getActiveDisplayId(), primaryId);
-  return { sourceId: src.id };
+  const display = screen.getAllDisplays().find((d) => String(d.id) === String(src?.display_id));
+  return { sourceId: src.id, ...nativeCaptureSize(display) }; // capture at the screen's own physical size (fixed)
 }
 
 async function _pushSource(streamId, screenNo) {

@@ -210,9 +210,13 @@ async function main() {
     A.send({ type: 'LIVE_QUALITY', streamId: s1, quality: 'focus' });
     const q = await agent.waitFor((m) => m.type === 'LIVE_QUALITY' && m.streamId === s1);
     check('LIVE_QUALITY forwarded to the agent', q?.quality === 'focus');
+    for (const gq of ['grid2', 'grid3']) {
+      A.send({ type: 'LIVE_QUALITY', streamId: s1, quality: gq });
+      check(`LIVE_QUALITY ${gq} forwarded to the agent`, !!(await agent.waitFor((m) => m.type === 'LIVE_QUALITY' && m.streamId === s1 && m.quality === gq)));
+    }
     A.send({ type: 'LIVE_QUALITY', streamId: s1, quality: 'ultra' });
     await sleep(300);
-    check('invalid quality is dropped', agent.msgs.filter((m) => m.type === 'LIVE_QUALITY').length === 1);
+    check('invalid quality is dropped', agent.msgs.filter((m) => m.type === 'LIVE_QUALITY').length === 3);
     A.send({ type: 'LIVE_SCREEN', streamId: s1, screen: 2 });
     const scr = await agent.waitFor((m) => m.type === 'LIVE_SCREEN' && m.streamId === s1);
     check('LIVE_SCREEN forwarded to the agent', scr?.screen === 2, JSON.stringify(scr));
@@ -231,8 +235,8 @@ async function main() {
       A.send({ type: 'LIVE_UNSUBSCRIBE', streamId: extra[0] });
       check('LIVE_UNSUBSCRIBE → LIVE_STOP to the agent', !!(await agent.waitFor((m) => m.type === 'LIVE_STOP' && m.streamId === extra[0])));
     }
-    B.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'grid' });
-    check('a freed slot can be taken again', !!(await B.waitFor((m) => m.type === 'LIVE_SUBSCRIBED' && m.streamId !== sB)));
+    B.send({ type: 'LIVE_SUBSCRIBE', userId: empId, quality: 'grid2' });
+    check('a freed slot can be taken again (grid2 accepted on subscribe)', !!(await B.waitFor((m) => m.type === 'LIVE_SUBSCRIBED' && m.streamId !== sB && m.quality === 'grid2')));
     const bStreams = B.msgs.filter((m) => m.type === 'LIVE_SUBSCRIBED').map((m) => m.streamId as string);
     B.ws.close();
     const stops = await Promise.all(bStreams.map((id) => agent.waitFor((m) => m.type === 'LIVE_STOP' && m.streamId === id)));

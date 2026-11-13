@@ -30,8 +30,8 @@ function badgeFor(agent, status) {
   return 'connecting';
 }
 
-export default function LiveCell({ hub, agent }) {
-  const { stream, status, setQuality, screen, setScreen } = useLiveStream(hub, agent, true);
+export default function LiveCell({ hub, agent, gridQuality = 'grid' }) {
+  const { stream, status, setQuality, screen, setScreen } = useLiveStream(hub, agent, true, gridQuality);
   const [focused, setFocused] = useState(false);
   const videoRef = useRef(null);
 
@@ -79,7 +79,7 @@ export default function LiveCell({ hub, agent }) {
         </div>
       </div>
       {focused && (
-        <LiveFocus agent={agent} stream={stream} setQuality={setQuality} screen={screen} setScreen={setScreen} onClose={() => setFocused(false)} />
+        <LiveFocus agent={agent} stream={stream} setQuality={setQuality} gridQuality={gridQuality} screen={screen} setScreen={setScreen} onClose={() => setFocused(false)} />
       )}
     </>
   );

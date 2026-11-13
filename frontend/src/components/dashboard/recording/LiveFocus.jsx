@@ -6,13 +6,13 @@ import ScreenSwitch from './ScreenSwitch';
  * Large view of an already-running stream; switches it to 'focus' quality while open.
  * The tile (LiveCell) owns the stream and the screen choice; this view just shows/changes them.
  */
-export default function LiveFocus({ agent, stream, setQuality, screen, setScreen, onClose }) {
+export default function LiveFocus({ agent, stream, setQuality, gridQuality, screen, setScreen, onClose }) {
   const videoRef = useRef(null);
 
   useEffect(() => {
     setQuality('focus');
-    return () => setQuality('grid');
-  }, [setQuality]);
+    return () => setQuality(gridQuality);
+  }, [setQuality]); // eslint-disable-line react-hooks/exhaustive-deps -- gridQuality is read at close; the column choice cannot change while focused
 
   useEffect(() => {
     const v = videoRef.current;

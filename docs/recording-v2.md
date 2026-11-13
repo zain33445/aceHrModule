@@ -304,9 +304,17 @@ Live view and recording are separate failure domains on the agent.
 - Viewer cap: **4 concurrent streams per agent** (`LIVE_MAX_VIEWERS_PER_AGENT`,
   default 4). Extra subscribers get `LIVE_REJECTED reason:'viewer_limit'`.
 - Quality profiles, applied by the agent with `RTCRtpSender.setParameters` (no
-  renegotiation): `grid` = ~640 px wide, maxFramerate 10,
-  maxBitrate 400 kbps, degradationPreference `balanced`; `focus` = full resolution,
-  maxFramerate 20, maxBitrate 2.5 Mbps, `maintain-framerate`.
+  renegotiation); `scaleResolutionDownBy = max(1, trackWidth / target)`:
+
+  | quality | target width | fps | maxBitrate | used for |
+  |---|---|---|---|---|
+  | `grid2` | 1280 px | 10 | 1.5 Mbps | grid, 2 columns (default) |
+  | `grid3` | 960 px | 10 | 1.0 Mbps | grid, 3 columns |
+  | `grid` | 640 px | 10 | 600 kbps | grid, 4 columns (old agents treat any non-`focus` value as this) |
+  | `focus` | native | 15 | 4 Mbps | focus view |
+
+  Every level uses degradationPreference `maintain-resolution` (under load drop
+  frames, keep text sharp), and the capture track gets `contentHint = 'text'`.
 - Protocol-1 (old) agents cannot do LIVE_*. They are listed in presence with
   `liveCapable:false` (UI: "Update app for live view"). The legacy
   WEBRTC_OFFER/ANSWER relay stays in the gateway for old admin UIs.
@@ -334,7 +342,7 @@ Server → viewer:
 - `PING` every 30 s; the viewer answers `PONG`; 2 missed → server closes.
 
 Viewer → server:
-- `LIVE_SUBSCRIBE { userId, quality, screen? }` (`screen` integer 0..16, default 0;
+- `LIVE_SUBSCRIBE { userId, quality, screen? }` (`quality` = `grid | grid2 | grid3 | focus`; `screen` integer 0..16, default 0;
   0 = Follow the cursor, N = fixed screen N; invalid → dropped) → server allocates `streamId` (uuid),
   checks presence and cap, sends `LIVE_START` to the agent and
   `LIVE_SUBSCRIBED` to the viewer.
@@ -367,8 +375,9 @@ Lifecycle:
 ## 12. Agent live engine (separate process)
 
 - A second hidden BrowserWindow (`electron/live-renderer/`) owns live view,
-  independent of the recorder window: its own desktop `getUserMedia` (up to
-  1920×1080 @ 20 fps), started on the first `LIVE_START`, released 30 s after
+  independent of the recorder window: its own desktop `getUserMedia` (15 fps at the screen's own
+  physical size, fixed via min=max constraints and capped to 3840×2160 — main computes it from the display's bounds × scaleFactor and sends it
+  with `live:start`/`live:source`; without fixed min the capturer follows the encoder's downscale and focus got stuck at 1280×720), started on the first `LIVE_START`, released 30 s after
   the last stream closes. A crash of either window never affects the other;
   main recreates the live window on `render-process-gone`.
 - One `RTCPeerConnection` per streamId; the agent creates the offer, sends
@@ -405,14 +414,14 @@ Lifecycle:
 `RecordingTab` becomes three tabs:
 1. **Live** — 4×4 grid (16 cells), one cell per unique user, pages of 16
    sorted by name, department filter and name search. Only users on the
-   visible page are subscribed (`grid` quality); changing page or filter
+   visible page are subscribed (`grid2`/`grid3`/`grid` quality chosen by the 2/3/4-column switch; a column change re-applies it live); changing page or filter
    unsubscribes the rest. One viewer socket for the whole tab (hook
    `useLiveHub`) with reconnect/backoff and PONG. A cell shows the name,
    department, a badge (`Live`, `Connecting`, `Reconnecting`, `Not recording`,
    `Offline`, `Busy`, `Update app`), and the subtext **"currently logged
    out"** when `loggedIn === false`. A disconnected user stays 60 s as
    `Reconnecting`, then leaves the grid. Clicking a cell opens a focus view
-   (same stream switched to `focus`; back to `grid` on close). Empty state when
+   (same stream switched to `focus`; back to the tile's current grid level on close). Empty state when
    nobody is live.
 2. **Recordings** — table from `GET /days`: employee, day, duration,
    "includes Xh Ym logged out" when `loggedOutMs > 0`, status (`Recording`,

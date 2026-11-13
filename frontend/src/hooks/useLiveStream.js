@@ -11,11 +11,11 @@ const CONNECT_TIMEOUT_MS = 15_000;
 const BUSY_RETRY_MS = 30_000;
 const OFFLINE_RETRY_MS = 10_000;
 
-export default function useLiveStream(hub, agent, active = true) {
+export default function useLiveStream(hub, agent, active = true, gridQuality = 'grid') {
   const [stream, setStream] = useState(null);
   const [status, setStatus] = useState('connecting');
   const subRef = useRef(null);
-  const qualityRef = useRef('grid');
+  const qualityRef = useRef(gridQuality);
   const screenRef = useRef(0); // 0 = follow; survives resubscribes
   const [screen, setScreenState] = useState(0);
   const { userId, connected, liveCapable } = agent;
@@ -26,6 +26,11 @@ export default function useLiveStream(hub, agent, active = true) {
     qualityRef.current = q;
     subRef.current?.setQuality(q);
   }, []);
+
+  // Column choice changed: move live tiles to the new grid level (a focused tile stays 'focus' until it closes).
+  useEffect(() => {
+    if (qualityRef.current !== 'focus') setQuality(gridQuality);
+  }, [gridQuality, setQuality]);
 
   const setScreen = useCallback((n) => {
     screenRef.current = n;

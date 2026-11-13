@@ -3,8 +3,8 @@
  * docs/recording-v2.md §12. Independent of the recorder window: own capture,
  * one RTCPeerConnection per streamId, the agent is the offerer.
  *
- * Received:  'live:start' {streamId, quality, iceServers, sourceId}, 'live:quality' {streamId, quality},
- *            'live:source' {streamId, sourceId} (switch monitor in place: replaceTrack, no renegotiation),
+ * Received:  'live:start' {streamId, quality, iceServers, sourceId, width, height}, 'live:quality' {streamId, quality},
+ *            'live:source' {streamId, sourceId, width, height} (switch monitor in place: replaceTrack, no renegotiation),
  *            'live:stop' {streamId}, 'live:stop-all' (socket lost; closes silently), 'live:signal' {streamId, description?, candidate?}
  * Sent:      'live:signal-out' {streamId, description?|candidate?}, 'live:state' {streamId, state, error?},
  *            'live:count' <number of open peers>
@@ -19,7 +19,7 @@ const ICE_RESTART_WAIT_MS = 10_000;
 const peers = new Map(); // streamId → { pc, sender, pending, hasRemote, restarted, timer, lastState }
 const captures = new Map(); // sourceId → { stream, track } (shared by every stream on that screen)
 const capturing = new Map(); // sourceId → in-flight getUserMedia
-const wantSource = new Map(); // streamId → {sourceId} requested before its peer existed
+const wantSource = new Map(); // streamId → {sourceId,width,height} requested before its peer existed
 let releaseTimer = null;
 
 const state = (streamId, s, error) => ipcRenderer.send('live:state', { streamId, state: s, ...(error ? { error } : {}) });
@@ -29,15 +29,16 @@ const errMsg = (e) => (e && e.message) || String(e);
 // Stream lifecycle (A10): a LIVE_STOP that arrives while start() is still pending closes the peer as soon as it exists.
 const registry = createRegistry({ onClosed: (id) => state(id, 'closed') });
 
-function getCapture(sourceId) {
+function getCapture(sourceId, width = 1920, height = 1080) {
   const have = captures.get(sourceId);
   if (have && have.track.readyState === 'live') return Promise.resolve(have);
   if (capturing.has(sourceId)) return capturing.get(sourceId);
   const pr = navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, maxWidth: 1920, maxHeight: 1080, maxFrameRate: 20 } },
+    video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sourceId, minWidth: width, maxWidth: width, minHeight: height, maxHeight: height, maxFrameRate: 15 } },
   }).then((stream) => {
     const track = stream.getVideoTracks()[0];
+    try { track.contentHint = 'text'; } catch { /* unsupported: keep default */ }
     const c = { stream, track, sourceId };
     captures.set(sourceId, c);
     track.addEventListener('ended', () => {
@@ -105,11 +106,11 @@ async function sendOffer(streamId, p, opts) {
 }
 
 /** Opens the peer; resolves with a handle for the registry (throws on failure after reporting it). */
-async function startPeer({ streamId, quality, iceServers, sourceId }) {
+async function startPeer({ streamId, quality, iceServers, sourceId, width, height }) {
   if (peers.has(streamId)) closePeer(streamId, { silent: true });
   state(streamId, 'connecting');
   let c;
-  try { c = await getCapture(sourceId); }
+  try { c = await getCapture(sourceId, width, height); }
   catch (e) { state(streamId, 'failed', `capture failed: ${errMsg(e)}`); scheduleRelease(); throw e; }
   try {
     const pc = new RTCPeerConnection({ iceServers: Array.isArray(iceServers) ? iceServers : [] });
@@ -141,7 +142,7 @@ async function startPeer({ streamId, quality, iceServers, sourceId }) {
     p.sender = pc.addTrack(c.track, c.stream);
     await applyQuality(p, quality);
     await sendOffer(streamId, p);
-    if (wantSource.has(streamId)) { const w = wantSource.get(streamId); switchSource(streamId, w.sourceId); } // asked to move while starting
+    if (wantSource.has(streamId)) { const w = wantSource.get(streamId); switchSource(streamId, w.sourceId, w.width, w.height); } // asked to move while starting
     return { close: () => closePeer(streamId, { silent: true }) };
   } catch (e) { fail(streamId, e); throw e; }
 }
@@ -149,12 +150,12 @@ async function startPeer({ streamId, quality, iceServers, sourceId }) {
 const start = (m) => registry.start(m.streamId, () => startPeer(m)).catch(() => { /* already reported as failed */ });
 
 /** Move a stream to another screen without renegotiating: replaceTrack, then re-apply its quality. */
-async function switchSource(streamId, sourceId) {
+async function switchSource(streamId, sourceId, width, height) {
   wantSource.delete(streamId);
   const p = peers.get(streamId);
   if (!p || p.sourceId === sourceId) return;
   try {
-    const c = await getCapture(sourceId);
+    const c = await getCapture(sourceId, width, height);
     if (peers.get(streamId) !== p) return;
     await p.sender.replaceTrack(c.track);
     p.sourceId = sourceId;
@@ -178,9 +179,9 @@ async function signal({ streamId, description, candidate }) {
 }
 
 ipcRenderer.on('live:start', (_e, m) => { start(m || {}); });
-ipcRenderer.on('live:source', (_e, { streamId, sourceId } = {}) => {
+ipcRenderer.on('live:source', (_e, { streamId, sourceId, width, height } = {}) => {
   if (!streamId || !sourceId) return;
-  if (peers.has(streamId)) switchSource(streamId, sourceId); else wantSource.set(streamId, { sourceId });
+  if (peers.has(streamId)) switchSource(streamId, sourceId, width, height); else wantSource.set(streamId, { sourceId, width, height });
 });
 ipcRenderer.on('live:quality', (_e, { streamId, quality } = {}) => {
   const p = peers.get(streamId);
