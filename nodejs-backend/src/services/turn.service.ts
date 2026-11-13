@@ -18,6 +18,10 @@
  * Configuration (nodejs-backend/.env):
  *   STUN_URLS=stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302
  *   TURN_URLS=turn:turn.example.com:3478?transport=udp,turns:turn.example.com:5349?transport=tcp
+ *     # optional override. When unset, URLs are built from the hosts below (LAN first, then Tailscale):
+ *   TURN_TS_HOST=100.125.119.28          # default; Tailscale address of the coturn box
+ *   TURN_LAN_HOST=192.168.18.170         # no default
+ *   TURN_PORT=3478
  *   TURN_USERNAME=acehrm
  *   TURN_SHARED_SECRET=<shared secret>   # ephemeral credentials (preferred)
  *   TURN_CREDENTIAL=<static credential>  # alternative: static credentials
@@ -37,7 +41,18 @@ const STUN_URLS = splitList(
   process.env.STUN_URLS || 'stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302'
 );
 
-const TURN_URLS = splitList(process.env.TURN_URLS || '');
+/** TURN_URLS wins when set; otherwise udp+tcp URLs for TURN_LAN_HOST then TURN_TS_HOST. */
+export function buildTurnUrls(env: Record<string, string | undefined>): string[] {
+  const explicit = splitList(env.TURN_URLS);
+  if (explicit.length > 0) return explicit;
+  const port = env.TURN_PORT || '3478';
+  const hosts = [env.TURN_LAN_HOST, env.TURN_TS_HOST || '100.125.119.28']
+    .map((h) => (h || '').trim())
+    .filter(Boolean);
+  return hosts.flatMap((h) => ['udp', 'tcp'].map((t) => `turn:${h}:${port}?transport=${t}`));
+}
+
+const TURN_URLS = buildTurnUrls(process.env);
 const TURN_USERNAME = process.env.TURN_USERNAME || 'acehrm';
 const TURN_SHARED_SECRET = process.env.TURN_SHARED_SECRET || '';
 const TURN_STATIC_CREDENTIAL = process.env.TURN_CREDENTIAL || '';

@@ -22,6 +22,9 @@ const fieldCls =
 
 export default function LiveGrid({ hub }) {
   const { agents, connectionState } = hub;
+  // The hub's CONNECTED message already carries the iceServers: a relay exists when one is turn:/turns:.
+  const noRelay = connectionState === 'open' && !hub.getIceServers().some((s) =>
+    [].concat(s.urls || s.url || []).some((u) => /^turns?:/.test(u)));
   const [dept, setDept] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -66,6 +69,12 @@ export default function LiveGrid({ hub }) {
           <WifiOff size={16} />
           {connectionState === 'connecting' ? 'Connecting to live view…' : 'Live connection lost — reconnecting…'}
         </div>
+      )}
+
+      {noRelay && (
+        <p className="text-xs text-neutral-500">
+          Remote viewing (outside the office) needs the TURN relay — see docs/live-view-turn.md.
+        </p>
       )}
 
       <div className="flex flex-wrap items-center gap-3">

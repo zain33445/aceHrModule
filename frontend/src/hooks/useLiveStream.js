@@ -1,7 +1,7 @@
 /**
  * useLiveStream — one recv-only WebRTC stream for one agent (docs/recording-v2.md §11).
  * Returns { stream, status, setQuality }.
- * status: connecting | live | busy | offline | unsupported | denied | idle.
+ * status: connecting | failed | live | busy | offline | unsupported | denied | idle.
  * Subscribes while `active` && agent connected && liveCapable && hub socket open;
  * everything is torn down (peer closed, subscription closed) otherwise or on unmount.
  */
@@ -84,10 +84,10 @@ export default function useLiveStream(hub, agent, active = true) {
         mine.onconnectionstatechange = () => {
           if (pc !== mine) return;
           if (mine.connectionState === 'connected') markLive();
-          else if (mine.connectionState === 'failed') retry();
+          else if (mine.connectionState === 'failed') retry(undefined, 'failed');
         };
       };
-      connTimer = setTimeout(() => { if (!dead) retry(); }, CONNECT_TIMEOUT_MS);
+      connTimer = setTimeout(() => { if (!dead) retry(undefined, 'failed'); }, CONNECT_TIMEOUT_MS);
 
       const s = subscribe(userId, qualityRef.current, {
         onSubscribed: ({ iceServers }) => { if (!myPc && pc === null) makePc(iceServers); },
@@ -117,7 +117,7 @@ export default function useLiveStream(hub, agent, active = true) {
         onState: (state) => {
           if (pc !== myPc) return;
           if (state === 'connected') markLive();
-          else if (state === 'failed') retry();
+          else if (state === 'failed') retry(undefined, 'failed');
         },
         onRejected: (reason) => {
           if (pc !== myPc) return;
