@@ -36,6 +36,8 @@ import { initChatGateway } from './gateways/chat.gateway';
 import chatRoutes from './routes/chat.routes';
 import callRoutes from './routes/call.routes';
 import { initCallGateway } from './gateways/call.gateway';
+import { initDeviceGateway } from './gateways/device.gateway';
+import { adminRouter as deviceAdminRouter, agentRouter as deviceAgentRouter } from './routes/device.routes';
 import { ensureAdminHrInAllGroups } from './services/chat.service';
 import { cleanupExpiredRecordings } from './services/callrecording.service';
 import { startAssemblySweeper } from './services/recording.service';
@@ -84,8 +86,13 @@ app.use(async (req, res, next) => {
   res.on('finish', async () => {
     if (['POST', 'PUT', 'DELETE'].includes(req.method) && res.statusCode >= 200 && res.statusCode < 300) {
       // v2 chunk PUTs arrive every ~10 s per employee; they are not audit events.
-      const v2Chunk = /^\/api\/recording\/v2\/segments\/[^/]+\/chunks\//.test(req.path);
-      if (!v2Chunk && !req.path.includes('/auth/login') && !req.path.includes('/auth/refresh') && !req.path.includes('/webhooks')) {
+      // originalUrl, not path: inside a mounted router req.path has lost its
+      // mount prefix by the time the response finishes.
+      const fullPath = req.originalUrl.split('?')[0];
+      const v2Chunk = /^\/api\/recording\/v2\/segments\/[^/]+\/chunks\//.test(fullPath);
+      // Device enrollment secrets, login grants and BitLocker recovery keys never go in the audit log.
+      const skip = ['/auth/login', '/auth/refresh', '/webhooks', '/device/enroll', '/device/user-login', '/device/recovery-key'];
+      if (!v2Chunk && !skip.some((p) => fullPath.includes(p))) {
         try {
           await prisma.auditLog.create({
             data: {
@@ -133,6 +140,8 @@ app.use('/api/tab-access', tabAccessRoutes);
 app.use('/api/overtime', overtimeRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/call', callRoutes);
+app.use('/api/devices', deviceAdminRouter);
+app.use('/api/device', deviceAgentRouter);
 
 
 app.get('/', (req, res) => {
@@ -150,6 +159,9 @@ initChatGateway(server);
 
 // Initialize WebSocket gateway for calls (registered last; recording yields /call-ws)
 initCallGateway(server);
+
+// Device gateways (recording yields /device-ws and /device-admin-ws)
+initDeviceGateway(server);
 
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
