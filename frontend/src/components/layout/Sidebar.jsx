@@ -20,6 +20,8 @@ import {
   Camera,
   Video,
   ShieldCheck,
+  Monitor,
+  PackagePlus,
   Timer,
   BookOpen,
   CalendarCheck,
@@ -66,6 +68,9 @@ const adminNavGroups = [
     items: [
       { id: 'screenshots', label: 'Screenshots', icon: Camera },
       { id: 'recording', label: 'Recording', icon: Video },
+      { id: 'devices', label: 'Devices', icon: Monitor },
+      { id: 'device-policies', label: 'Device Policies', icon: ShieldCheck },
+      { id: 'device-software', label: 'Device Software', icon: PackagePlus },
     ],
   },
   {

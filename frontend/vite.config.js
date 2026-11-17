@@ -34,6 +34,8 @@ export default defineConfig({
       '/api': { target: BACKEND, changeOrigin: true, ws: true },
       // The WebSocket gateways live at the root of the backend.
       '/call-ws': { target: BACKEND, ws: true },
+      '/device-ws': { target: BACKEND, ws: true },
+      '/device-admin-ws': { target: BACKEND, ws: true },
       '/chat-ws': { target: BACKEND, ws: true },
       '/recording-ws': { target: BACKEND, ws: true },
       '/admin-recording-ws': { target: BACKEND, ws: true },
