@@ -1,0 +1,28 @@
+{
+  "name": "acehrm-device-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "aceHRM Windows device service (Phase 0): enrollment, heartbeat, inventory, device WebSocket and local named-pipe bridge.",
+  "main": "src/service.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/service.js --console",
+    "start:service": "node src/service.js",
+    "check": "node scripts/check.js",
+    "build-payload": "node scripts/build-payload.js",
+    "test-policy": "node scripts/test-policy.js",
+    "test-software": "node scripts/test-software.js",
+    "test-ws-client": "node scripts/test-ws-client.js",
+    "test-install": "node scripts/test-install.js",
+    "test-sandbox": "node scripts/test-sandbox.js",
+    "install-service": "node src/install.js install",
+    "uninstall-service": "node src/install.js uninstall"
+  },
+  "dependencies": {
+    "node-windows": "^1.0.0-beta.8",
+    "ws": "^8.22.0"
+  }
+}
