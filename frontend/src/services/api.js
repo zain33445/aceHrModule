@@ -464,6 +464,86 @@ const api = {
     }),
   getCallRecordings: (callId) => axios.get(`${API_BASE}/call/recordings/call/${callId}`),
   callRecordingUrl: (callId) => `${API_BASE}/call/recordings/call/${callId}/play`,
+
+  getDeviceLoginGrant: () => axios.post(`${API_BASE}/device/login-grant`),
+  // ── Device control (Phases 1–2) ─────────────────────────
+  // These do not send X-Admin-Id: the backend authenticates the admin with
+  // the signed session token attached by the interceptor above.
+  getDevices: (params = {}) => {
+    const query = {};
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '' && value !== 'all') {
+        query[key] = value;
+      }
+    });
+    return axios.get(`${API_BASE}/devices`, { params: query });
+  },
+  getDevice: (id) => axios.get(`${API_BASE}/devices/${id}`),
+  getDeviceRecoveryKeys: (id) =>
+    axios.get(`${API_BASE}/devices/${id}/recovery-keys`),
+  updateDevice: (id, data) => axios.patch(`${API_BASE}/devices/${id}`, data),
+  createDeviceEnrollmentToken: (data) =>
+    axios.post(`${API_BASE}/devices/enrollment-tokens`, data),
+  getDeviceGroups: () => axios.get(`${API_BASE}/devices/groups`),
+  createDeviceGroup: (data) =>
+    axios.post(`${API_BASE}/devices/groups`, data),
+  updateDeviceGroup: (id, data) =>
+    axios.patch(`${API_BASE}/devices/groups/${id}`, data),
+  deleteDeviceGroup: (id) =>
+    axios.delete(`${API_BASE}/devices/groups/${id}`),
+  sendDeviceCommand: (id, data) =>
+    axios.post(`${API_BASE}/devices/${id}/commands`, data),
+  startDeviceRemoteControl: (id, data) =>
+    axios.post(`${API_BASE}/devices/${id}/remote-control`, {
+      action: 'start',
+      ...(data || {}),
+    }),
+  stopDeviceRemoteControl: (id, data) =>
+    axios.post(`${API_BASE}/devices/${id}/remote-control`, {
+      action: 'stop',
+      ...(data || {}),
+    }),
+  getDeviceSoftware: () => axios.get(`${API_BASE}/devices/software`),
+  uploadDeviceSoftware: (file, { name, silentArgs }, onUploadProgress) =>
+    axios.post(`${API_BASE}/devices/software`, file, {
+      params: { name, filename: file.name, silent_args: silentArgs },
+      headers: { 'Content-Type': 'application/octet-stream' },
+      maxBodyLength: Infinity,
+      onUploadProgress,
+    }),
+  deleteDeviceSoftware: (id) =>
+    axios.delete(`${API_BASE}/devices/software/${id}`),
+  installDeviceSoftware: (id, data) =>
+    axios.post(`${API_BASE}/devices/software/${id}/install`, data),
+  getDeviceSoftwareInstalls: () =>
+    axios.get(`${API_BASE}/devices/software/installs`),
+  getDevicePolicies: () => axios.get(`${API_BASE}/devices/policies`),
+  getDevicePolicy: (id) => axios.get(`${API_BASE}/devices/policies/${id}`),
+  createDevicePolicy: (data) =>
+    axios.post(`${API_BASE}/devices/policies`, data),
+  updateDevicePolicy: (id, data) =>
+    axios.patch(`${API_BASE}/devices/policies/${id}`, data),
+  deleteDevicePolicy: (id) =>
+    axios.delete(`${API_BASE}/devices/policies/${id}`),
+  createDevicePolicyAssignment: (policyId, data) =>
+    axios.post(`${API_BASE}/devices/policies/${policyId}/assignments`, data),
+  deleteDevicePolicyAssignment: (policyId, assignmentId) =>
+    axios.delete(
+      `${API_BASE}/devices/policies/${policyId}/assignments/${assignmentId}`,
+    ),
+  getDevicePolicyStatuses: (policyId, params = {}) =>
+    axios.get(`${API_BASE}/devices/policies/${policyId}/statuses`, { params }),
+  getDeviceAudit: (params = {}) => {
+    const query = {};
+    Object.entries(params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        query[key] = value;
+      }
+    });
+    return axios.get(`${API_BASE}/devices/audit`, { params: query });
+  },
+  getDeviceAdminWsToken: () =>
+    axios.post(`${API_BASE}/devices/admin-ws-token`),
 };
 
 

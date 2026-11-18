@@ -15,6 +15,8 @@ import {
   MessageSquare,
   History,
   ShieldCheck,
+  PackagePlus,
+  Monitor,
   XCircle,
   ChevronRight,
   UserCheck,
@@ -42,6 +44,9 @@ import { AuditLogTab } from "./audit/AuditLogTab";
 import { DataExportPanel } from "./export/DataExportPanel";
 import ScreenshotsTab from "./dashboard/ScreenshotsTab";
 import RecordingTab from "./dashboard/RecordingTab";
+import DevicesTab from "./devices/DevicesTab";
+import DevicePoliciesTab from "./devices/DevicePoliciesTab";
+import DeviceSoftwareTab from "./devices/DeviceSoftwareTab";
 import ChatHub from "./chat/ChatHub";
 import CallsTab from "./calls/CallsTab";
 import { PayrollTab } from "./salary/PayrollTab";
@@ -466,6 +471,9 @@ function AdminDashboardNew({
       export: "Data Export",
       audit: "Audit Logs",
       recording: "Recording",
+      devices: "Devices",
+      "device-policies": "Device Policies",
+      "device-software": "Device Software",
       settings: "Settings",
       "feature-access": "Feature Access",
     };
@@ -606,6 +614,24 @@ function AdminDashboardNew({
         label: "Recording",
         icon: Video,
         content: <RecordingTab adminId={user?.user_id} employees={employees} isAdmin={true} />,
+      },
+      {
+        id: "devices",
+        label: "Devices",
+        icon: Monitor,
+        content: <DevicesTab user={user} />,
+      },
+      {
+        id: "device-policies",
+        label: "Device Policies",
+        icon: ShieldCheck,
+        content: <DevicePoliciesTab />,
+      },
+      {
+        id: "device-software",
+        label: "Device Software",
+        icon: PackagePlus,
+        content: <DeviceSoftwareTab />,
       },
       {
         id: "holidays",

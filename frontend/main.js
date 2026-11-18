@@ -25,6 +25,7 @@ import { initLiveMain, shutdownLive } from './electron/live-main.js';
 import { initWsClient, setWsUserId, setSessionToken, shutdownWsClient, getAgentToken } from './electron/ws-client.js';
 import { stopScheduler } from './electron/scheduler.js';
 import { initNotificationClient, setNotificationUserId, shutdownNotificationClient } from './electron/notification-client.js';
+import { startDevicePipe, stopDevicePipe, sendAgentLogin } from './electron/device-pipe.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -533,6 +534,17 @@ function setupAutoUpdater() {
 // 4. App Lifecycle
 // ─────────────────────────────────────────
 app.whenReady().then(() => {
+  try {
+    startDevicePipe({
+      onRemoteControlStart: (m) => console.log('[DevicePipe] remote control start', m),
+      onRemoteControlStop: (m) => console.log('[DevicePipe] remote control stop', m),
+      onConnected: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('device:pipe-connected');
+      },
+    });
+  } catch (e) {
+    console.error('[DevicePipe] start failed', e);
+  }
   // Set the AppUserModelId for Windows taskbar icon grouping
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.ace.app');
@@ -586,6 +598,11 @@ app.whenReady().then(() => {
   initWsClient(null).catch((err) => logger.error(`[Main] WS client init error: ${err.message}`));
 
   // Listen for the frontend sending the user's ID
+  // A signed-in user's device login grant, handed to the Windows service
+  ipcMain.on('device:login', (event, grant) => {
+    if (typeof grant === 'string' && grant) sendAgentLogin(grant);
+  });
+
   ipcMain.on('set-user-id', (event, userId) => {
     setUserId(userId);
     setWsUserId(userId); // Also update the recording WS client
@@ -700,6 +717,7 @@ app.on('activate', () => {
 let quitFlushed = false;
 app.on('before-quit', (event) => {
   app.isQuitting = true;
+  try { stopDevicePipe(); } catch { /* best-effort */ }
   if (!quitFlushed) {
     quitFlushed = true;
     event.preventDefault();

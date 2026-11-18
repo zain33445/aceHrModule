@@ -3,6 +3,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   // Existing: send authenticated userId to main process
   setUserId: (userId) => ipcRenderer.send('set-user-id', String(userId)),
+  // Hands a signed-in user's device login grant to the Windows service
+  deviceLogin: (grant) => ipcRenderer.send('device:login', String(grant)),
+  // Fires whenever the device service pipe connects, so the app can send a fresh grant
+  onDevicePipeConnected: (cb) => {
+    const h = () => cb();
+    ipcRenderer.on('device:pipe-connected', h);
+    return () => ipcRenderer.removeListener('device:pipe-connected', h);
+  },
 
   // Logged-in flag (false on logout; set-user-id means true) — recorded per chunk
   setLoggedIn: (loggedIn) => ipcRenderer.send('set-logged-in', !!loggedIn),

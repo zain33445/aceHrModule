@@ -772,3 +772,227 @@ model CallLog {
   @@index([started_at])
   @@map("call_logs")
 }
+
+// ─────────────────────────────────────────
+// Device control (Phase 0)
+// ─────────────────────────────────────────
+
+model Device {
+  id                String    @id @default(uuid())
+  device_key        String    @unique
+  hostname          String
+  machine_guid_hash String    @unique
+  os_name           String?
+  os_version        String?
+  agent_version     String?
+  status            String    @default("pending")
+  assigned_user_id  String?
+  last_user_id      String?
+  last_seen         DateTime?
+  last_ip           String?
+  public_key        String?
+  group_id          String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  group              DeviceGroup?             @relation(fields: [group_id], references: [id], onDelete: SetNull)
+  commands           DeviceCommand[]
+  inventory          DeviceInventory[]
+  remote_sessions    DeviceRemoteSession[]
+  audit_logs         DeviceAuditLog[]
+  policy_assignments DevicePolicyAssignment[]
+  policy_statuses    DevicePolicyStatus[]
+  recovery_keys      DeviceRecoveryKey[]
+
+  @@index([last_seen])
+  @@index([status])
+  @@map("devices")
+}
+
+model DeviceEnrollmentToken {
+  id                String    @id @default(uuid())
+  token_hash        String    @unique
+  created_by        String
+  expires_at        DateTime
+  max_uses          Int       @default(1)
+  used_count        Int       @default(0)
+  revoked_at        DateTime?
+  created_at        DateTime  @default(now())
+  used_by_device_id String?
+
+  @@index([expires_at])
+  @@map("device_enrollment_tokens")
+}
+
+model DeviceGroup {
+  id                 String                   @id @default(uuid())
+  name               String                   @unique
+  description        String?
+  created_at         DateTime                 @default(now())
+  devices            Device[]
+  policy_assignments DevicePolicyAssignment[]
+
+  @@map("device_groups")
+}
+
+model DevicePolicy {
+  id          String                   @id @default(uuid())
+  name        String
+  version     Int                      @default(1)
+  type        String
+  config      Json
+  status      String                   @default("draft")
+  created_by  String?
+  approved_by String?
+  created_at  DateTime                 @default(now())
+  updated_at  DateTime                 @updatedAt
+  assignments DevicePolicyAssignment[]
+  statuses    DevicePolicyStatus[]
+
+  @@index([type, status])
+  @@map("device_policies")
+}
+
+model DevicePolicyAssignment {
+  id         String   @id @default(uuid())
+  policy_id  String
+  group_id   String?
+  device_id  String?
+  priority   Int      @default(100)
+  enabled    Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  policy DevicePolicy @relation(fields: [policy_id], references: [id], onDelete: Cascade)
+  group  DeviceGroup? @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  device Device?      @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@index([policy_id])
+  @@map("device_policy_assignments")
+}
+
+model DevicePolicyStatus {
+  id             String   @id @default(uuid())
+  device_id      String
+  policy_id      String?
+  policy_version Int
+  status         String
+  applied        Boolean  @default(false)
+  checks         Json?
+  errors         Json?
+  checked_at     DateTime @default(now())
+
+  device Device        @relation(fields: [device_id], references: [id], onDelete: Cascade)
+  policy DevicePolicy? @relation(fields: [policy_id], references: [id], onDelete: SetNull)
+
+  @@unique([device_id, policy_id])
+  @@index([policy_id, checked_at])
+  @@map("device_policy_statuses")
+}
+
+model DeviceRecoveryKey {
+  id            String   @id @default(uuid())
+  device_id     String
+  protector_id  String
+  encrypted_key String
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  device Device @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@unique([device_id, protector_id])
+  @@map("device_recovery_keys")
+}
+
+model DeviceSoftwarePackage {
+  id          String   @id @default(uuid())
+  name        String
+  filename    String
+  kind        String
+  sha256      String
+  size_bytes  BigInt
+  silent_args String   @default("")
+  created_by  String?
+  created_at  DateTime @default(now())
+
+  @@map("device_software_packages")
+}
+
+model DeviceScript {
+  id          String   @id @default(uuid())
+  name        String
+  version     Int
+  sha256      String
+  signature   String?
+  content     String
+  status      String   @default("draft")
+  created_by  String?
+  approved_by String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([name, version])
+  @@map("device_scripts")
+}
+
+model DeviceCommand {
+  id         String    @id @default(uuid())
+  device_id  String
+  type       String
+  payload    Json?
+  status     String    @default("queued")
+  created_by String?
+  signature  String?
+  result     Json?
+  created_at DateTime  @default(now())
+  sent_at    DateTime?
+  ack_at     DateTime?
+
+  device Device @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([device_id, status])
+  @@map("device_commands")
+}
+
+model DeviceInventory {
+  id           String   @id @default(uuid())
+  device_id    String
+  snapshot     Json
+  collected_at DateTime @default(now())
+
+  device Device @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@index([device_id, collected_at])
+  @@map("device_inventory")
+}
+
+model DeviceRemoteSession {
+  id         String    @id @default(uuid())
+  device_id  String
+  admin_id   String
+  status     String    @default("requested")
+  started_at DateTime?
+  ended_at   DateTime?
+  reason     String?
+  created_at DateTime  @default(now())
+
+  device Device @relation(fields: [device_id], references: [id], onDelete: Cascade)
+
+  @@index([device_id, status])
+  @@map("device_remote_sessions")
+}
+
+model DeviceAuditLog {
+  id         String   @id @default(uuid())
+  actor_id   String?
+  device_id  String?
+  action     String
+  details    Json?
+  ip         String?
+  created_at DateTime @default(now())
+
+  device Device? @relation(fields: [device_id], references: [id], onDelete: SetNull)
+
+  @@index([device_id, created_at])
+  @@map("device_audit_logs")
+}

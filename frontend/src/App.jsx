@@ -78,6 +78,27 @@ function App() {
     }
   }, [auth, fetchData]);
 
+  // Signing in enrolls this PC to the user, or records them on an enrolled one.
+  // Runs on restored sessions too, and again whenever the device pipe connects,
+  // so a PC whose service starts after sign-in enrolls then (grants expire in 5 min).
+  const signedInUserId = auth?.user_id;
+  useEffect(() => {
+    if (!signedInUserId || !window.electronAPI?.deviceLogin) return;
+    // A grant requested for a previous user must not reach the service after sign-out/in.
+    let cancelled = false;
+    const link = () =>
+      api
+        .getDeviceLoginGrant()
+        .then(({ data }) => { if (!cancelled) window.electronAPI.deviceLogin(data.grant); })
+        .catch((err) => console.warn('Could not link this device to the user:', err?.message));
+    link();
+    const unsubscribe = window.electronAPI.onDevicePipeConnected?.(link);
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [signedInUserId]);
+
   const handleLoginSuccess = (authData) => {
     setAuth(authData);
     localStorage.setItem('bio_auth', JSON.stringify(authData));
