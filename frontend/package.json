@@ -1,7 +1,7 @@
 {
   "name": "acehrm",
   "private": true,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "type": "module",
   "description": "aceHRM desktop monitoring agent",
   "author": "ACE HRM <theaceservices.site>",
@@ -87,12 +87,16 @@
         {
           "from": "../windows-service/dist-service",
           "to": "windows-service",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         },
         {
           "from": "../windows-service/dist-service/node_modules",
           "to": "windows-service/node_modules",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
       ]
     },
