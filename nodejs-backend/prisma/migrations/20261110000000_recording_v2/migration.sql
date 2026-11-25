@@ -90,3 +90,11 @@ END $$;
 -- statement
 -- Multi-monitor: which screen (1 = primary, 2..N left-to-right) a segment recorded.
 ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS screen SMALLINT;
+
+-- statement
+-- Why a segment's chunks are not (fully) in the video (state 'unreadable' or short coverage).
+ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS "problem" TEXT;
+
+-- statement
+-- Earliest next assembly attempt of a session (failure backoff; NULL = due now).
+ALTER TABLE "recording_sessions" ADD COLUMN IF NOT EXISTS "assembly_next_at" TIMESTAMP(3);

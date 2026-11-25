@@ -33,6 +33,7 @@ const LIVE_WINDOW_MS = 10 * 60_000;
 const STUCK_SEGMENT_MS = 48 * 3600_000;
 const PREBOOT_GRACE_MS = 2 * 3600_000;
 const MAX_CONCURRENT_ASSEMBLIES = 1;
+const COPY_TIMEOUT_MS = 20 * 60_000; // copy / probe: a hung ffmpeg must not hold the queue forever
 const ASSEMBLABLE = ['complete', 'incomplete'];
 const PROCESS_STARTED_AT = Date.now();
 const preBootDeferred = new Set<string>();
@@ -278,6 +279,8 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
       where: { id: session.id },
       data: {
         last_chunk_at: new Date(),
+        assembly_next_at: null, // new data is worth a fresh assembly try
+        assembly_attempts: 0,
         ...(lateTail ? {} : { status: 'recording', ended_at: null, ...(session.status === 'pending' ? { started_at: new Date() } : {}) }),
       },
     });
@@ -285,6 +288,7 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
       try { await reopenAssembledSegment(segmentId, 'late chunk'); }
       catch (err: any) { console.error(`[Recording v2] Could not re-open assembled segment ${segmentId}: ${err.message}`); }
     }
+    if (seg.state === 'unreadable') await reviveSegment(segmentId);
   }
   // Always recompute (also after a duplicate: a healed row may complete the segment). Only touches open-ish states.
   if (!result.conflict && seg.state !== 'assembled') await recomputeSegmentState(segmentId);
@@ -346,21 +350,61 @@ export async function segmentManifest(userId: string, segmentId: string) {
 // Assembly (generations)
 // ─────────────────────────────────────────
 
-interface Probe { ok: boolean; durationMs: number; width: number | null; height: number | null }
+interface Probe { ok: boolean; durationMs: number; packets: number | null; width: number | null; height: number | null }
 
-/** Full demux pass (-c copy to null). Duration = last `time=` the demuxer reached. */
+/**
+ * CERTAIN infrastructure failure: says nothing about the media (binary missing / spawn error, killed, Windows CTRL_C
+ * exit, disk full). It always throws so the session backs off and retries, and never flags a segment. A timeout is
+ * not listed: the caller treats it as a failure of that input.
+ */
+export function isInfraFailure(r: { code: number | null; stderr: string }): boolean {
+  if (r.code === -1) return r.stderr !== 'timeout';
+  if (r.code === null || r.code === 0xC000013A || r.code === -1073741510) return true;
+  return /No space left/i.test(r.stderr);
+}
+
+/** AMBIGUOUS: ffmpeg prints these for corrupt media too (truncated EBML, bogus sizes), so they are not proof of infrastructure. */
+export function isAmbiguousFailure(r: { code: number | null; stderr: string }): boolean {
+  return r.code !== null && r.code !== 0 && !isInfraFailure(r) && /Cannot allocate memory|Input\/output error|Permission denied/i.test(r.stderr);
+}
+
+/** Ambiguous failures throw for the first 3 attempts of a session; from the 4th run they are that segment's problem. */
+export const ambiguousIsTransient = (attempts: number) => attempts < 3;
+
+class AmbiguousFfmpegError extends Error {}
+
+/** Runs ffmpeg; certain infrastructure failures and ambiguous ones throw (the latter as AmbiguousFfmpegError). */
+async function runChecked(args: string[], timeoutMs: number) {
+  const fake = testHooks.ffmpegFault?.(args);
+  const r = fake ? { code: 1, stderr: fake } : await runFfmpeg(args, { timeoutMs });
+  if (isInfraFailure(r)) throw new Error(`ffmpeg infrastructure failure (code ${r.code}): ${r.stderr.slice(-200)}`);
+  if (isAmbiguousFailure(r)) throw new AmbiguousFfmpegError(`ffmpeg: ${/Cannot allocate memory|Input\/output error|Permission denied/i.exec(r.stderr)![0]} (code ${r.code})`);
+  return r;
+}
+
+async function probeRun(args: string[]) {
+  return runChecked(args, COPY_TIMEOUT_MS);
+}
+
+/** Video packets muxed, from `ffmpeg -v verbose` ("Output stream #0:0 (video): N packets muxed"); null when absent. */
+export function videoPackets(stderr: string): number | null {
+  const all = [...stderr.matchAll(/Output stream #\d+:\d+ \(video\): (\d+) packets muxed/g)];
+  return all.length ? all.reduce((a, m) => a + +m[1], 0) : null;
+}
+
+/** Full demux pass (-c copy to null). Duration = last `time=` the demuxer reached; packets = video packets muxed. */
 export async function probeFile(file: string): Promise<Probe> {
-  const r = await runFfmpeg(['-v', 'info', '-i', file, '-c', 'copy', '-f', 'null', '-']);
+  const r = await probeRun(['-v', 'verbose', '-i', file, '-c', 'copy', '-f', 'null', '-']);
   const times = [...r.stderr.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];
   const t = times.length ? times[times.length - 1] : null;
   const durationMs = t ? Math.round((+t[1] * 3600 + +t[2] * 60 + +t[3]) * 1000) : 0;
   const dim = /Video:[^\n]*?,\s*(\d{2,5})x(\d{2,5})/.exec(r.stderr);
-  return { ok: r.code === 0, durationMs, width: dim ? +dim[1] : null, height: dim ? +dim[2] : null };
+  return { ok: r.code === 0, durationMs, packets: videoPackets(r.stderr), width: dim ? +dim[1] : null, height: dim ? +dim[2] : null };
 }
 
 /** Stream dimensions from the header only (`ffmpeg -i`, no decode). */
 export async function probeDims(file: string): Promise<{ width: number; height: number; codec: string } | null> {
-  const r = await runFfmpeg(['-hide_banner', '-i', file]);
+  const r = await probeRun(['-hide_banner', '-i', file]);
   const m = /Video:\s*(\w+)[^\n]*?,\s*(\d{2,5})x(\d{2,5})/.exec(r.stderr);
   return m ? { codec: m[1], width: +m[2], height: +m[3] } : null;
 }
@@ -379,18 +423,6 @@ async function deleteFile(p: string) {
 async function fsyncFile(p: string) {
   const fh = await fs.promises.open(p, 'r+');
   try { await fh.sync(); } finally { await fh.close(); }
-}
-
-async function ffmpegOk(args: string[], out: string): Promise<boolean> {
-  const r = await runFfmpeg(args);
-  let size = 0;
-  try { size = (await fs.promises.stat(out)).size; } catch { /* missing */ }
-  if (r.code !== 0 || size <= 0) {
-    console.warn(`[Recording v2] ffmpeg failed (code ${r.code}): ${r.stderr.slice(-300)}`);
-    await rm(out);
-    return false;
-  }
-  return true;
 }
 
 const ABANDONED_SEGMENT_MS = 30 * 60_000;
@@ -450,17 +482,140 @@ export function reencodeArgs(codec: string): string[] {
     : ['-c:v', 'libvpx', '-crf', '10', '-b:v', '3M', '-deadline', 'good', '-cpu-used', '4', '-an'];
 }
 
+/** Test seams (never set in production): S22 injects a chunk between the assembly snapshot and its commit; S24/S27 make chosen joins fail; S29 fakes ffmpeg output. */
+export const testHooks: {
+  afterSnapshot?: () => Promise<void>;
+  failJoin?: (group: { id: string; reencoded: boolean }[]) => boolean;
+  ffmpegFault?: (args: string[]) => string | null; // S29: pretend ffmpeg printed this text and failed
+} = {};
+
+interface SegChunk { id: string; seq: number | null; file_path: string; duration_ms: number | null; logged_out: boolean }
+interface SegInfo { id: string; started_at: Date; width: number | null; height: number | null; chunks: SegChunk[] }
+interface Item { seg: SegInfo; file: string; durationMs: number; packets: number | null; reencoded: boolean; short: string | null }
+interface Ref { size: { w: number; h: number } | null; codec: string | null }
+interface Problem { seg: SegInfo; problem: string }
+
+const reencodeTimeoutMs = (durationMs: number) => Math.min(3 * 3600_000, Math.max(10 * 60_000, 6 * durationMs));
+const scaleFilter = (r: { w: number; h: number }) => `scale=${r.w}:${r.h}:force_original_aspect_ratio=decrease,pad=${r.w}:${r.h}:(ow-iw)/2:(oh-ih)/2`;
+const minutes = (ms: number) => (ms / 60_000).toFixed(1);
+const MAX_JOIN_STRIKES = 3; // single-segment join failures handled (re-encode / flag) per run; beyond it the rest waits for a retry
+
+/** How much video the chunks claim: each chunk's duration_ms (null = 10 s), capped at 60 s so a PC sleep is no false alarm. */
+export function expectedMs(chunks: { duration_ms: number | null }[]): number {
+  return chunks.reduce((a, c) => a + Math.min(c.duration_ms ?? 10_000, 60_000), 0);
+}
+
+/** Playing less than expected − max(15 s, 1 %) is flagged (the files are then kept). Playing longer is fine. */
+export function shortProblem(playableMs: number, expected: number): string | null {
+  return playableMs < expected - Math.max(15_000, expected * 0.01) ? `only ${minutes(playableMs)} of ${minutes(expected)} min readable` : null;
+}
+
+/** A re-encode must not silently shorten the video. */
+export const reencodeKeptVideo = (origMs: number, newMs: number) => newMs >= origMs - 5000;
+
+/**
+ * A join is good only if the output is not shorter than its inputs (concat adds a little per segment, hence 2 s of
+ * slack) AND holds at least as many video packets (ffmpeg can skip an input and still exit 0). Unknown packet counts
+ * fall back to the duration check.
+ */
+export function joinVerified(want: { ms: number; packets: number | null }, got: { ms: number; packets: number | null }): boolean {
+  if (got.ms < want.ms - 2000) return false;
+  if (want.packets !== null && got.packets !== null && got.packets < want.packets) return false;
+  if (want.packets === null || got.packets === null) console.warn('[Recording v2] packet count unavailable: join verified by duration only');
+  return true;
+}
+
+/** ffmpeg + non-empty output. Infrastructure failures (see isInfraFailure) throw; everything else is the media's. */
+async function ffmpegRun(args: string[], out: string, timeoutMs: number): Promise<{ ok: boolean; timedOut: boolean }> {
+  const r = await runChecked(args, timeoutMs).catch(async (err) => { await rm(out); throw err; });
+  let size = 0;
+  try { size = (await fs.promises.stat(out)).size; } catch { /* missing */ }
+  if (r.code !== 0 || size <= 0) {
+    console.warn(`[Recording v2] ffmpeg failed (code ${r.code}): ${r.stderr.slice(-300)}`);
+    await rm(out);
+    return { ok: false, timedOut: r.stderr === 'timeout' };
+  }
+  return { ok: true, timedOut: false };
+}
+
+/** A failed attempt: counts, and the next try waits assemblyBackoffMs(attempts). */
+async function recordFailure(sessionId: string, message: string) {
+  const s = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { assembly_attempts: true } });
+  const attempts = (s?.assembly_attempts ?? 0) + 1;
+  await prisma.recordingSession.update({
+    where: { id: sessionId },
+    data: { assembly_error: message.slice(0, 1000), assembly_attempts: attempts, assembly_next_at: new Date(Date.now() + assemblyBackoffMs(attempts)) },
+  });
+}
+
 export async function assembleSessionV2(sessionId: string): Promise<void> {
   try {
     await assembleSessionV2Inner(sessionId);
   } catch (err: any) {
     console.error(`[Recording v2] Assembly failed for ${sessionId}: ${err.message}`);
-    await prisma.recordingSession.update({
-      where: { id: sessionId },
-      data: { assembly_error: String(err.message).slice(0, 1000), assembly_attempts: { increment: 1 } },
-    }).catch(() => {});
+    await recordFailure(sessionId, String(err.message)).catch(() => {});
     throw err;
   }
+}
+
+/**
+ * The segment's chunks → one remuxed WebM (`-c copy`). Never falls back to raw bytes: nothing readable → null.
+ * If the plain remux plays less than the chunks claim, the tolerant remux is tried too and the longer one is kept.
+ */
+async function remuxSegment(seg: SegInfo, dir: string, ts: number, temps: string[]): Promise<{ file: string; probe: Probe } | null> {
+  const raw = path.join(dir, `.tmp-${ts}-${seg.id}.raw.webm`);
+  temps.push(raw);
+  await concatFiles(seg.chunks.map((c) => c.file_path), raw);
+  const expected = expectedMs(seg.chunks);
+  const tries: string[][] = [[], ['-fflags', '+genpts+discardcorrupt', '-err_detect', 'ignore_err']];
+  let best: { file: string; probe: Probe } | null = null;
+  for (const [i, input] of tries.entries()) {
+    const out = path.join(dir, `.tmp-${ts}-${seg.id}.r${i}.webm`);
+    temps.push(out);
+    if (!(await ffmpegRun(['-y', ...input, '-i', raw, '-c', 'copy', '-f', 'webm', out], out, COPY_TIMEOUT_MS)).ok) continue;
+    const probe = await probeFile(out);
+    if (!probe.ok || probe.durationMs === 0) continue; // exit 0 with zero packets is not readable
+    if (!best || probe.durationMs > best.probe.durationMs) best = { file: out, probe };
+    if (!shortProblem(best.probe.durationMs, expected)) break; // plays what the chunks claim: no need to try harder
+  }
+  return best;
+}
+
+/** One segment → a playable file in the generation's codec/size, or the reason it cannot be used. Never throws for bad media. */
+async function prepareSegment(seg: SegInfo, dir: string, ts: number, temps: string[], ref: Ref, attempts: number): Promise<Item | { problem: string }> {
+  try {
+    return await prepareSegmentInner(seg, dir, ts, temps, ref);
+  } catch (err) {
+    // Ambiguous ffmpeg text (Input/output error, …): retried 3 times as infrastructure, then it is this segment's problem.
+    if (err instanceof AmbiguousFfmpegError && !ambiguousIsTransient(attempts)) return { problem: err.message };
+    throw err;
+  }
+}
+
+async function prepareSegmentInner(seg: SegInfo, dir: string, ts: number, temps: string[], ref: Ref): Promise<Item | { problem: string }> {
+  if (seg.chunks[0].seq !== 0) return { problem: `late chunks without their header (first stored chunk is seq ${seg.chunks[0].seq})` };
+  const rx = await remuxSegment(seg, dir, ts, temps);
+  if (!rx) return { problem: 'no readable video' };
+  let { file, probe } = rx;
+  // Coverage: the chunks say how much was recorded. Playing less than that is kept visible and the files are kept.
+  const short = shortProblem(probe.durationMs, expectedMs(seg.chunks));
+  const dims = await probeDims(file);
+  const sw = dims?.width ?? seg.width, sh = dims?.height ?? seg.height;
+  if (!ref.size && sw && sh) ref.size = { w: sw, h: sh };
+  if (!ref.codec && dims) ref.codec = dims.codec;
+  let reencoded = false;
+  if (ref.size && sw && sh && (sw !== ref.size.w || sh !== ref.size.h || (dims && ref.codec && dims.codec !== ref.codec))) {
+    const scaled = path.join(dir, `.tmp-${ts}-${seg.id}.scaled.webm`);
+    temps.push(scaled);
+    console.log(`[Recording v2] Segment ${seg.id} is ${dims?.codec ?? '?'} ${sw}x${sh}, generation is ${ref.codec} ${ref.size.w}x${ref.size.h} — converting`);
+    const enc = await ffmpegRun(['-y', '-i', file, '-vf', scaleFilter(ref.size), ...reencodeArgs(ref.codec ?? 'vp8'), '-f', 'webm', scaled], scaled, reencodeTimeoutMs(probe.durationMs));
+    const back = enc.ok ? await probeFile(scaled) : null;
+    if (!back || !back.ok || !reencodeKeptVideo(probe.durationMs, back.durationMs)) return { problem: `re-encode to ${ref.size.w}x${ref.size.h} failed` };
+    file = scaled;
+    probe = back;
+    reencoded = true;
+  }
+  return { seg, file, durationMs: probe.durationMs, packets: probe.packets, reencoded, short };
 }
 
 async function assembleSessionV2Inner(sessionId: string): Promise<void> {
@@ -473,23 +628,19 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     include: { chunks: { where: { purged_at: null }, orderBy: { seq: 'asc' } } },
   });
   if (all.length === 0) return;
+  await testHooks.afterSnapshot?.();
 
-  // S2: never commit (and so never purge) a segment whose stored chunk file is missing. It stays as it is;
-  // healthy segments of the same session are still assembled.
+  // S2: never commit (and so never purge) a segment whose stored chunk file is missing. It stays as it is
+  // (transient: the session backs off and retries); healthy segments of the same session are still assembled.
   const broken: string[] = [];
-  const skipped: string[] = [];
   const segments = all.filter((seg) => {
     const miss = seg.chunks.find((c) => !fs.existsSync(c.file_path));
     if (miss) broken.push(`segment ${seg.id} seq ${miss.seq} (${miss.file_path})`);
     return !miss;
   });
   const brokenMsg = () => `chunk file missing on disk: ${broken.join('; ')}`.slice(0, 900);
-  const issueMsg = () => [...broken, ...skipped].join('; ').slice(0, 900);
   if (broken.length) console.error(`[Recording v2] Session ${sessionId}: ${brokenMsg()}`);
   if (segments.length === 0) throw new Error(brokenMsg());
-  const keepError = () => (broken.length || skipped.length)
-    ? prisma.recordingSession.update({ where: { id: sessionId }, data: { assembly_error: issueMsg(), assembly_attempts: { increment: 1 } } })
-    : null;
 
   const dir = dirOf(session);
   await fs.promises.mkdir(dir, { recursive: true });
@@ -505,192 +656,203 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   // Current generation file (must exist when generation > 0, otherwise earlier video would be dropped).
   let prevFile: string | null = null;
   let prevDuration = 0;
-  let refSize: { w: number; h: number } | null = null;
-  let refCodec: string | null = null;
+  let prevPackets: number | null = 0;
+  const ref: Ref = { size: null, codec: null };
   if (session.generation > 0) {
     if (!session.file_path || !fs.existsSync(session.file_path)) {
       throw new Error(`generation ${session.generation} file missing on disk (${session.file_path}) — refusing to build over it`);
     }
     prevFile = session.file_path;
     const p = await probeFile(prevFile);
-    prevDuration = session.duration_ms ?? p.durationMs;
+    if (!p.ok || p.durationMs === 0) throw new Error(`generation ${session.generation} file is not readable (${prevFile}) — refusing to build over it`);
+    prevDuration = p.durationMs; // measured: a stale duration_ms in the DB must not make every join look short
+    prevPackets = p.packets;
     const d = await probeDims(prevFile);
-    if (d) { refSize = { w: d.width, h: d.height }; refCodec = d.codec; }
+    if (d) { ref.size = { w: d.width, h: d.height }; ref.codec = d.codec; }
   }
 
   const next = session.generation + 1;
   const ts = Date.now();
   const temps: string[] = [];
   const finalPath = path.join(dir, `recording-g${next}.webm`);
-  const tmpFinal = `${finalPath}.tmp`;
-  temps.push(tmpFinal);
 
   try {
-    // 1. remux every segment (chunks in seq order → one WebM), re-encode on size mismatch
-    const segFiles: string[] = [];
-    const usedSegments: typeof segments = [];
-    let newDuration = 0;
+    // 1. prepare every segment on its own; a bad one is flagged (chunks untouched) and the others carry on
+    const items: Item[] = [];
+    const empty: SegInfo[] = [];
+    const problems: Problem[] = [];
     for (const seg of segments) {
-      const files = seg.chunks.filter((c) => fs.existsSync(c.file_path));
-      if (files.length === 0) {
-        console.warn(`[Recording v2] Segment ${seg.id} has no chunk files on disk — marking assembled without content`);
-        usedSegments.push(seg);
-        continue;
-      }
-      if (files.length !== seg.chunks.length) console.warn(`[Recording v2] Segment ${seg.id}: ${seg.chunks.length - files.length} chunk file(s) missing on disk`);
-      if (files[0].seq !== 0) {
-        // A late chunk whose earlier chunks are already inside the generation. Without the segment's
-        // first chunk it has no WebM header and cannot be assembled on its own; keep it on disk so
-        // the data is not lost and let the rest of the session assemble.
-        skipped.push(`segment ${seg.id} starts at seq ${files[0].seq}; earlier chunks are already in the generation`);
-        console.warn(`[Recording v2] Segment ${seg.id}: first unpurged chunk is seq ${files[0].seq}, not standalone — keeping on disk`);
-        continue;
-      }
-      const raw = path.join(dir, `.tmp-${ts}-${seg.id}.raw.webm`);
-      const remuxed = path.join(dir, `.tmp-${ts}-${seg.id}.webm`);
-      temps.push(raw, remuxed);
-      await concatFiles(files.map((c) => c.file_path), raw);
-      let useFile = raw;
-      if (await ffmpegOk(['-y', '-i', raw, '-c', 'copy', '-f', 'webm', remuxed], remuxed)) useFile = remuxed;
-      else console.warn(`[Recording v2] Segment ${seg.id}: remux failed, using raw bytes`);
-
-      let probe = await probeFile(useFile);
-      const dims = await probeDims(useFile);
-      const sw = dims?.width ?? seg.width, sh = dims?.height ?? seg.height;
-      if (!refSize && sw && sh) refSize = { w: sw, h: sh };
-      if (!refCodec && dims) refCodec = dims.codec;
-      if (refSize && sw && sh && (sw !== refSize.w || sh !== refSize.h || (dims && refCodec && dims.codec !== refCodec))) {
-        const scaled = path.join(dir, `.tmp-${ts}-${seg.id}.scaled.webm`);
-        temps.push(scaled);
-        const vf = `scale=${refSize.w}:${refSize.h}:force_original_aspect_ratio=decrease,pad=${refSize.w}:${refSize.h}:(ow-iw)/2:(oh-ih)/2`;
-        console.log(`[Recording v2] Segment ${seg.id} is ${dims?.codec ?? '?'} ${sw}x${sh}, generation is ${refCodec} ${refSize.w}x${refSize.h} — converting`);
-        if (!(await ffmpegOk(['-y', '-i', useFile, '-vf', vf, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', scaled], scaled))) {
-          skipped.push(`re-encode of segment ${seg.id} to ${refSize.w}x${refSize.h} failed`);
-          console.warn(`[Recording v2] Segment ${seg.id}: re-encode failed — keeping its chunks on disk and continuing`);
-          continue;
-        }
-        useFile = scaled;
-        probe = await probeFile(useFile);
-      }
-      newDuration += probe.durationMs;
-      segFiles.push(useFile);
-      usedSegments.push(seg);
-    }
-    if (segFiles.length === 0) {
-      // Nothing playable in these segments: close them so they stop being retried; generation unchanged.
-      await commitGeneration(session, usedSegments, null, session.duration_ms ?? 0, 0, session.generation, null);
-      await keepError();
-      return;
+      if (seg.chunks.length === 0) { empty.push(seg); continue; } // nothing unpurged left in it
+      const r = await prepareSegment(seg, dir, ts, temps, ref, session.assembly_attempts);
+      if ('problem' in r) {
+        problems.push({ seg, problem: r.problem });
+        console.warn(`[Recording v2] Segment ${seg.id} unreadable: ${r.problem} — chunks kept on disk`);
+      } else items.push(r);
     }
 
-    // 2. join [previous generation, new segments…]
-    const inputs = [...(prevFile ? [prevFile] : []), ...segFiles];
-    const minDuration = prevDuration + newDuration - 2000;
-    const verify = async (minMs = minDuration): Promise<number | null> => {
-      const p = await probeFile(tmpFinal);
-      if (!p.ok || p.durationMs < minMs) {
-        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${minMs}ms`);
-        return null;
-      }
-      return p.durationMs;
-    };
-    let finalDuration: number | null = null;
-    if (inputs.length === 1) {
-      await fs.promises.copyFile(inputs[0], tmpFinal);
-      finalDuration = await verify();
-    } else {
-      const list = path.join(dir, `.tmp-${ts}-list.txt`);
-      temps.push(list);
+    // 2. join [previous generation, new segments…], copy only. If the whole list will not join, split it in halves
+    //    on top of the last good file so one bad segment cannot hold back the others. A lone culprit gets one
+    //    per-segment re-encode to the generation's codec/size and one more try before it is flagged. At most
+    //    MAX_JOIN_STRIKES such culprits per run: beyond that the rest is left assemblable (a retry with backoff),
+    //    never mass-flagged.
+    const state = { file: prevFile, dur: prevDuration, packets: prevPackets };
+    const joined: Item[] = [];
+    const joinBad: Problem[] = [];
+    const deferred: SegInfo[] = [];
+    const joinOutputs = new Set<string>(); // each is a whole copy of the day: drop the superseded one at once (disk)
+    let joins = 0;
+    let strikes = 0;
+    const tryJoin = async (group: Item[]): Promise<boolean> => {
+      const inputs = [...(state.file ? [state.file] : []), ...group.map((i) => i.file)];
+      const want = {
+        ms: state.dur + group.reduce((a, i) => a + i.durationMs, 0),
+        packets: state.packets !== null && group.every((i) => i.packets !== null) ? state.packets + group.reduce((a, i) => a + i.packets!, 0) : null,
+      };
+      if (inputs.length === 1) { state.file = inputs[0]; state.dur = want.ms; state.packets = want.packets; joined.push(...group); return true; }
+      if (testHooks.failJoin?.(group.map((i) => ({ id: i.seg.id, reencoded: i.reencoded })))) return false;
+      const out = path.join(dir, `.tmp-${ts}-join${joins++}.webm`);
+      const list = `${out}.txt`;
+      temps.push(out, list);
       await fs.promises.writeFile(list, inputs.map(concatListEntry).join('\n') + '\n');
-      const base = ['-y', '-f', 'concat', '-safe', '0', '-i', list];
-      if (await ffmpegOk([...base, '-c', 'copy', '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
-      if (finalDuration === null && prevFile && segFiles.length > 0) {
-        console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with tail-only re-encode`);
-        const tailList = path.join(dir, `.tmp-${ts}-tail-list.txt`);
-        const tailFile = path.join(dir, `.tmp-${ts}-tail.webm`);
-        temps.push(tailList, tailFile);
-        await fs.promises.writeFile(tailList, segFiles.map(concatListEntry).join('\n') + '\n');
-        const tailArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', tailList];
-        if (refSize) {
-          tailArgs.push('-vf', `scale=${refSize.w}:${refSize.h}:force_original_aspect_ratio=decrease,pad=${refSize.w}:${refSize.h}:(ow-iw)/2:(oh-ih)/2`);
-        }
-        if (await ffmpegOk([...tailArgs, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', tailFile], tailFile)) {
-          const tail = await probeFile(tailFile);
-          if (tail.ok && tail.durationMs > 0) {
-            const mergedList = path.join(dir, `.tmp-${ts}-merged-list.txt`);
-            temps.push(mergedList);
-            await fs.promises.writeFile(mergedList, [prevFile, tailFile].map(concatListEntry).join('\n') + '\n');
-            await rm(tmpFinal);
-            if (await ffmpegOk(['-y', '-f', 'concat', '-safe', '0', '-i', mergedList, '-c', 'copy', '-f', 'webm', tmpFinal], tmpFinal)) {
-              finalDuration = await verify(prevDuration + tail.durationMs - 2000);
-            }
-          }
-        }
+      const r = await ffmpegRun(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-f', 'webm', out], out, COPY_TIMEOUT_MS);
+      if (r.timedOut) throw new Error('ffmpeg concat timed out');
+      if (!r.ok) return false;
+      const p = await probeFile(out);
+      if (!p.ok || !joinVerified(want, { ms: p.durationMs, packets: p.packets })) {
+        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${want.ms - 2000}ms packets=${p.packets} need>=${want.packets}`);
+        await rm(out);
+        return false;
       }
-      if (finalDuration === null && !prevFile) {
-        console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with LAST-RESORT full re-encode (${refCodec ?? 'vp8'})`);
-        await rm(tmpFinal);
-        if (await ffmpegOk([...base, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
+      if (state.file && joinOutputs.has(state.file)) await rm(state.file);
+      joinOutputs.add(out);
+      state.file = out;
+      state.dur = p.durationMs;
+      state.packets = p.packets;
+      joined.push(...group);
+      return true;
+    };
+    const joinInto = async (group: Item[]): Promise<void> => {
+      if (await tryJoin(group)) return;
+      if (group.length > 1) {
+        const mid = group.length >> 1;
+        await joinInto(group.slice(0, mid));
+        await joinInto(group.slice(mid));
+        return;
       }
+      const [it] = group;
+      if (strikes >= MAX_JOIN_STRIKES) { deferred.push(it.seg); return; }
+      strikes++;
+      if (!it.reencoded && ref.size) {
+        const fixed = path.join(dir, `.tmp-${ts}-${it.seg.id}.fix.webm`);
+        temps.push(fixed);
+        const enc = await ffmpegRun(['-y', '-i', it.file, '-vf', scaleFilter(ref.size), ...reencodeArgs(ref.codec ?? 'vp8'), '-f', 'webm', fixed], fixed, reencodeTimeoutMs(it.durationMs));
+        const p = enc.ok ? await probeFile(fixed) : null;
+        if (p?.ok && reencodeKeptVideo(it.durationMs, p.durationMs) && (await tryJoin([{ ...it, file: fixed, durationMs: p.durationMs, packets: p.packets, reencoded: true }]))) return;
+      }
+      joinBad.push({ seg: it.seg, problem: 'could not be joined onto the video (ffmpeg concat failed)' });
+    };
+    if (items.length) await joinInto(items);
+    if (!prevFile && items.length > 1 && joined.length === 1) {
+      // Nothing joined onto the first segment: it is the odd one out, not all the others. Publish the LONGEST segment
+      // alone (normal commit: only its own chunks are marked / purged) and do not flag the rest: they stay assemblable
+      // (the run ends in recordFailure) and the next run joins them on top of it.
+      const keep = items.reduce((a, b) => (b.durationMs > a.durationMs ? b : a));
+      for (const i of items) if (i !== keep && !deferred.includes(i.seg)) deferred.push(i.seg);
+      const k = deferred.indexOf(keep.seg);
+      if (k >= 0) deferred.splice(k, 1);
+      joinBad.length = 0;
+      state.file = keep.file;
+      state.dur = keep.durationMs;
+      state.packets = keep.packets;
+      joined.length = 0;
+      joined.push(keep);
     }
-    if (finalDuration === null) {
-      if (prevFile) console.warn(`[Recording v2] tail-only assembly unusable for ${sessionId}; refusing full-session re-encode`);
-      throw new Error('assembled generation failed verification');
-    }
+    problems.push(...joinBad);
 
-    // 3. publish: fsync + rename, then one DB transaction
-    await fsyncFile(tmpFinal);
-    await fs.promises.rename(tmpFinal, finalPath);
-    const loggedOutAdd = usedSegments.flatMap((s) => s.chunks).reduce((a, c) => a + (c.logged_out ? (c.duration_ms ?? 0) : 0), 0);
-    await commitGeneration(session, usedSegments, finalPath, finalDuration, loggedOutAdd, next, prevFile);
-    await keepError(); // the commit cleared assembly_error; a skipped broken segment must stay visible
-    console.log(`[Recording v2] Session ${sessionId} g${next}: +${usedSegments.length} segment(s), ${Math.round(finalDuration / 1000)}s`);
+    // 3. publish: fsync + rename, then one DB transaction (only what really went into the video is marked / purged)
+    let published: string | null = null;
+    if (joined.length) {
+      await fsyncFile(state.file!);
+      await fs.promises.rename(state.file!, finalPath);
+      published = finalPath;
+    }
+    const short = joined.filter((i) => i.short).map((i) => ({ seg: i.seg, problem: i.short! }));
+    const full = [...joined.filter((i) => !i.short).map((i) => i.seg), ...empty];
+    const issues = [...broken, ...problems.map((p) => `segment ${p.seg.id}: ${p.problem}`), ...short.map((s) => `segment ${s.seg.id}: ${s.problem}`),
+      ...deferred.map((d) => `segment ${d.id}: not joined this run, will retry`)];
+    const error = issues.length ? issues.join('; ').slice(0, 900) : null;
+    const loggedOutAdd = joined.flatMap((i) => i.seg.chunks).reduce((a, c) => a + (c.logged_out ? (c.duration_ms ?? 0) : 0), 0);
+    await commitGeneration({
+      session, generation: published ? next : session.generation, finalPath: published, durationMs: state.dur,
+      loggedOutAdd, full, short, unreadable: problems, prevFile, error,
+    });
+    if (broken.length || deferred.length) await recordFailure(sessionId, error!); // transient (missing chunk file / join budget used up): retry later with backoff
+    console.log(published
+      ? `[Recording v2] Session ${sessionId} g${next}: +${joined.length} segment(s), ${Math.round(state.dur / 1000)}s${problems.length ? `, ${problems.length} unreadable` : ''}`
+      : `[Recording v2] Session ${sessionId}: nothing new to publish${problems.length ? `, ${problems.length} segment(s) unreadable` : ''}`);
   } finally {
     for (const t of temps) await rm(t);
   }
 }
 
-/** DB commit, then purge (after commit only). */
-async function commitGeneration(
-  session: { id: string; logged_out_ms: number },
-  segs: { id: string; chunks: { id: string; file_path: string }[] }[],
-  finalPath: string | null,
-  durationMs: number,
-  loggedOutAdd: number,
-  generation: number,
-  prevFile: string | null
-) {
-  const segIds = segs.map((s) => s.id);
-  const chunkIds = segs.flatMap((s) => s.chunks.map((c) => c.id));
+/** DB commit, then purge (after commit only). Chunk files go only for segments whose frames are in the committed video. */
+async function commitGeneration(c: {
+  session: { id: string; logged_out_ms: number };
+  generation: number;
+  finalPath: string | null; // null: this run added no video — generation, duration and the retry counters stay as they are
+  durationMs: number;
+  loggedOutAdd: number;
+  full: SegInfo[]; // fully covered: rows purged, files deleted
+  short: Problem[]; // in the video but short: rows purged (not pending again), files KEPT
+  unreadable: Problem[]; // not in the video: state 'unreadable', chunks untouched
+  prevFile: string | null;
+  error: string | null;
+}) {
+  const included = [...c.full, ...c.short.map((s) => s.seg)];
+  const chunkIds = included.flatMap((s) => s.chunks.map((x) => x.id));
+  const pending = { in: ASSEMBLABLE };
   await prisma.$transaction([
     prisma.recordingSession.update({
-      where: { id: session.id },
-      data: {
-        generation,
-        ...(finalPath ? { file_path: finalPath } : {}),
-        duration_ms: durationMs,
-        logged_out_ms: session.logged_out_ms + loggedOutAdd,
-        assembly_error: null,
-        assembly_attempts: 0,
-      },
+      where: { id: c.session.id },
+      data: c.finalPath
+        ? {
+            generation: c.generation, file_path: c.finalPath, duration_ms: c.durationMs, logged_out_ms: c.session.logged_out_ms + c.loggedOutAdd,
+            assembly_error: c.error, assembly_attempts: 0, assembly_next_at: null,
+          }
+        : { assembly_error: c.error },
     }),
-    prisma.recordingSegment.updateMany({ where: { id: { in: segIds }, state: { in: ASSEMBLABLE } }, data: { state: 'assembled', generation } }),
+    prisma.recordingSegment.updateMany({ where: { id: { in: c.full.map((s) => s.id) }, state: pending }, data: { state: 'assembled', generation: c.generation, problem: null } }),
+    ...c.short.map((s) => prisma.recordingSegment.updateMany({ where: { id: s.seg.id, state: pending }, data: { state: 'assembled', generation: c.generation, problem: s.problem } })),
+    ...c.unreadable.map((u) => prisma.recordingSegment.updateMany({ where: { id: u.seg.id, state: pending }, data: { state: 'unreadable', problem: u.problem } })),
     prisma.recordingChunk.updateMany({ where: { id: { in: chunkIds } }, data: { purged_at: new Date() } }),
   ]);
 
-  // Purge only after the commit. Only the chunks that went into this generation.
-  for (const s of segs) for (const c of s.chunks) await deleteFile(c.file_path);
-  for (const s of segs) if (s.chunks.length) await fs.promises.rmdir(path.dirname(s.chunks[0].file_path)).catch(() => {});
-  if (prevFile && prevFile !== finalPath) await deleteFile(prevFile);
+  // Purge only after the commit. Only the chunks that went into this generation and are fully covered by it.
+  for (const s of c.full) for (const ch of s.chunks) await deleteFile(ch.file_path);
+  for (const s of c.full) if (s.chunks.length) await fs.promises.rmdir(path.dirname(s.chunks[0].file_path)).catch(() => {});
+  if (c.prevFile && c.finalPath && c.prevFile !== c.finalPath) await deleteFile(c.prevFile);
 
+  // Chunks that arrived after the snapshot were not purged: their segment is pending again.
   const leftovers = await prisma.recordingSegment.findMany({
-    where: { id: { in: segIds }, state: 'assembled', chunks: { some: { purged_at: null } } },
+    where: { id: { in: included.map((s) => s.id) }, state: 'assembled', chunks: { some: { purged_at: null } } },
     select: { id: true },
   });
   for (const l of leftovers) {
     try { await reopenAssembledSegment(l.id, 'chunks arrived during assembly'); }
     catch (err: any) { console.error(`[Recording v2] Could not re-open assembled segment ${l.id}: ${err.message}`); }
   }
+  const seen = [...included, ...c.unreadable.map((u) => u.seg)].flatMap((s) => s.chunks.map((x) => x.id));
+  const fresh = await prisma.recordingSegment.findMany({
+    where: { id: { in: c.unreadable.map((u) => u.seg.id) }, state: 'unreadable', chunks: { some: { purged_at: null, id: { notIn: seen } } } },
+    select: { id: true },
+  });
+  for (const f of fresh) await reviveSegment(f.id);
+}
+
+/** New data arrived for an unreadable segment: it gets another try. */
+async function reviveSegment(segmentId: string) {
+  await prisma.recordingSegment.updateMany({ where: { id: segmentId, state: 'unreadable' }, data: { state: 'closed', problem: null } });
+  await recomputeSegmentState(segmentId);
 }
 
 // ─────────────────────────────────────────
@@ -702,14 +864,72 @@ export function assemblyBackoffMs(attempts: number): number {
   return Math.min(Math.pow(2, attempts) * 5 * 60_000, 6 * 3600_000);
 }
 
+export interface AssemblyCandidate { id: string; attempts: number; nextAt: Date | null; lastChunkAt: Date }
+
+/**
+ * Which due sessions to start now. Fewest failed attempts first (an untried day always beats a failing one, so a
+ * few doomed sessions cannot own the queue), then the oldest data. Sessions still in backoff are skipped.
+ */
+export function pickAssemblies(candidates: AssemblyCandidate[], now: number, freeSlots: number): string[] {
+  return candidates
+    .filter((c) => !c.nextAt || c.nextAt.getTime() <= now)
+    .sort((a, b) => a.attempts - b.attempts || a.lastChunkAt.getTime() - b.lastChunkAt.getTime())
+    .slice(0, Math.max(0, freeSlots))
+    .map((c) => c.id);
+}
+
+async function pumpOnce(): Promise<number> {
+  const { requestAssembly, isAssembling, activeAssemblyCount } = await import('./recording.service');
+  const free = (Number(process.env.RECORDING_MAX_CONCURRENT_ASSEMBLIES ?? MAX_CONCURRENT_ASSEMBLIES) || 1) - activeAssemblyCount();
+  if (free <= 0) return 0;
+  const now = Date.now();
+  const rows = await prisma.recordingSession.findMany({
+    where: { recording_date: { not: null }, segments: { some: { state: { in: ASSEMBLABLE } } } },
+    select: { id: true, user_id: true, recording_date: true, last_chunk_at: true, created_at: true, assembly_attempts: true, assembly_next_at: true },
+  });
+  const due: AssemblyCandidate[] = [];
+  for (const s of rows) {
+    if (isAssembling(s.id) || (s.assembly_next_at && s.assembly_next_at.getTime() > now)) continue;
+    const lastChunkAt = s.last_chunk_at ?? s.created_at;
+    // idle >= 30 min, or the recording day is over + 30 min
+    const ready = now - lastChunkAt.getTime() >= IDLE_ASSEMBLE_MS
+      || now >= recordingDayEndsAt(dateStr(s.recording_date!), await ruleForUser(s.user_id)).getTime() + DAY_OVER_GRACE_MS;
+    if (ready) due.push({ id: s.id, attempts: s.assembly_attempts, nextAt: s.assembly_next_at, lastChunkAt });
+  }
+  const ids = pickAssemblies(due, now, free);
+  for (const id of ids) requestAssembly(id).catch((err) => console.error(`[Recording v2] assembly request failed for ${id}: ${err.message}`));
+  return ids.length;
+}
+
+let pumping = false;
+let pumpAgain = false;
+/**
+ * Starts due sessions until RECORDING_MAX_CONCURRENT_ASSEMBLIES (default 1) runs are active. Called by the sweep and
+ * whenever a run ends (requestAssembly), so the queue moves on at once. Returns how many it started.
+ */
+export async function pumpAssemblies(): Promise<number> {
+  if (pumping) { pumpAgain = true; return 0; } // a run ended mid-query: look again afterwards
+  pumping = true;
+  let started = 0;
+  try {
+    do {
+      pumpAgain = false;
+      started += await pumpOnce();
+    } while (pumpAgain);
+  } catch (err: any) {
+    console.error('[Recording v2] assembly pump failed:', err.message);
+  } finally {
+    pumping = false;
+  }
+  return started;
+}
+
 let sweepingV2 = false;
 export async function sweepV2(): Promise<void> {
   if (sweepingV2) return;
   sweepingV2 = true;
   try {
     const now = Date.now();
-    const { requestAssembly, isAssembling, activeAssemblyCount } = await import('./recording.service');
-    const maxConcurrent = Number(process.env.RECORDING_MAX_CONCURRENT_ASSEMBLIES ?? MAX_CONCURRENT_ASSEMBLIES) || 1;
 
     for (const p of [...pendingCleanup]) await deleteFile(p);
 
@@ -747,36 +967,8 @@ export async function sweepV2(): Promise<void> {
       stale.forEach((s) => recordingEmitter.emit(`stopped:${s.id}`));
     }
 
-    // (b) unassembled complete segments: idle ≥ 30 min, or recording day over + 30 min
-    const pending = await prisma.recordingSession.findMany({
-      where: { recording_date: { not: null }, segments: { some: { state: { in: ASSEMBLABLE } } } },
-      select: { id: true, user_id: true, recording_date: true, last_chunk_at: true, created_at: true, assembly_attempts: true, assembly_error: true, updated_at: true },
-      orderBy: [{ recording_date: 'asc' }, { last_chunk_at: 'asc' }],
-    });
-    const counts = pending.length
-      ? await prisma.recordingChunk.groupBy({
-          by: ['session_id'],
-          where: { session_id: { in: pending.map((s) => s.id) }, purged_at: null },
-          _count: { _all: true },
-        })
-      : [];
-    const countById = new Map(counts.map((c) => [c.session_id, c._count._all]));
-    pending.sort((a, b) => (countById.get(a.id) ?? 0) - (countById.get(b.id) ?? 0));
-    let queued = 0;
-    for (const s of pending) {
-      if (s.assembly_error && now - s.updated_at.getTime() < assemblyBackoffMs(s.assembly_attempts)) continue;
-      const idle = now - (s.last_chunk_at ?? s.created_at).getTime() >= IDLE_ASSEMBLE_MS;
-      let dayOver = false;
-      if (!idle) {
-        const end = recordingDayEndsAt(dateStr(s.recording_date!), await ruleForUser(s.user_id));
-        dayOver = now >= end.getTime() + DAY_OVER_GRACE_MS;
-      }
-      if (idle || dayOver) {
-        if (!isAssembling(s.id) && activeAssemblyCount() >= maxConcurrent) break;
-        queued++;
-        requestAssembly(s.id).catch((err) => console.error(`[Sweeper v2] assembly request failed for ${s.id}: ${err.message}`));
-      }
-    }
+    // (b) unassembled complete segments: the queue (fair order, backoff, free slots) decides who runs; the sweep does not wait
+    const queued = await pumpAssemblies();
 
     // (c) stopped + current generation covers everything assemblable → assembled
     const done = await prisma.recordingSession.updateMany({
@@ -797,8 +989,8 @@ export async function assembleOnDemand(sessionId: string): Promise<boolean> {
   const n = await prisma.recordingSegment.count({ where: { session_id: sessionId, state: { in: ASSEMBLABLE } } });
   if (n === 0) return false;
   // S11: same backoff as the sweeper - a <video> Range request must not re-run a failing ffmpeg every time.
-  const s = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { assembly_error: true, assembly_attempts: true, updated_at: true } });
-  if (s?.assembly_error && Date.now() - s.updated_at.getTime() < assemblyBackoffMs(s.assembly_attempts)) return false;
+  const s = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { assembly_next_at: true } });
+  if (s?.assembly_next_at && s.assembly_next_at.getTime() > Date.now()) return false;
   const { requestAssembly } = await import('./recording.service');
   requestAssembly(sessionId).catch(console.error);
   return true;

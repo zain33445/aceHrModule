@@ -63,6 +63,7 @@ produces the client.
 - `logged_out_ms INT NOT NULL DEFAULT 0`
 - `last_chunk_at TIMESTAMP NULL`
 - `assembly_error TEXT NULL`, `assembly_attempts INT NOT NULL DEFAULT 0`
+- `assembly_next_at TIMESTAMP NULL` — earliest next assembly attempt (failure backoff); NULL = due now
 - unique index `(user_id, recording_date)` (NULLs allowed for legacy rows)
 - index `(user_id, status)`
 
@@ -72,11 +73,14 @@ produces the client.
 - `started_at TIMESTAMP`, `ended_at TIMESTAMP NULL`
 - `last_seq INT NULL` (set on close), `lost_seqs INT[] NOT NULL DEFAULT '{}'`
 - `mime TEXT NULL`, `width INT NULL`, `height INT NULL`
-- `state TEXT NOT NULL DEFAULT 'open'` — `open | closed | complete | assembled | incomplete`
+- `state TEXT NOT NULL DEFAULT 'open'` — `open | closed | complete | assembled | incomplete | unreadable`
+  (`unreadable`: assembly could not use the segment's chunks; they stay on disk, unpurged, and the queue ignores it)
+- `problem TEXT NULL` — why a segment's chunks are not (fully) in the video (`unreadable`, or `assembled` but short)
 - `generation INT NULL` (generation that included it)
 - `screen SMALLINT NULL` — multi-monitor: which screen the segment recorded
   (1 = primary, 2..N = the others left to right; NULL = unknown/old agent).
-  Added by an idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` at the end of the migration.
+  Added by an idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` at the end of the migration
+  (so are `problem` and `recording_sessions.assembly_next_at`).
 - `created_at`, `updated_at`; index `(session_id, state)`
 
 `recording_chunks` — new columns:
@@ -168,27 +172,67 @@ All idempotent. The segment's owner is the token's user; another user → 403.
 
 ## 7. Server — assembly, sweeper, access, retention
 
-Assembly (per session, existing per-session lock):
-1. Take segments in `complete`/`incomplete` state not yet assembled, ordered
-   by `started_at`. Remux each (stream chunks in seq order → `ffmpeg -c copy`).
-   If a segment's codec or width/height differ from the reference (previous
-   generation, or the first segment for generation 0), convert it to the
-   reference codec and size (scale+pad) with quality-based args
-   (`reencodeArgs`: vp8 crf 10 / 3M, vp9 crf 32, `-deadline good`) before joining.
-2. Join `[current generation file (if any), new segment files…]` with the
-   ffmpeg concat demuxer (`-c copy`) into `recording-g<N+1>.webm.tmp`;
-   last-resort full re-encode with `reencodeArgs(reference codec)` (rare, as segments are normalised first).
-3. Verify: ffmpeg exits 0 on a demux pass and duration ≥
-   previous generation duration + Σ new segment durations − 2 s.
-4. fsync + rename to `recording-g<N+1>.webm`; one DB transaction sets
-   `generation`, `file_path`, `duration_ms`, `logged_out_ms`, segment states →
-   `assembled` (+`generation`), chunk `purged_at`.
-5. After commit: delete chunk files of those segments and the previous
+Assembly (per session, existing per-session lock). **A chunk file is deleted only after its frames are verified
+inside a committed video; a bad segment never fails the day.**
+1. Take segments in `complete`/`incomplete` state not yet assembled, ordered by `started_at`. A segment whose chunk
+   *file* is missing on disk is skipped for this run (transient: the session backs off, see below).
+2. Prepare each segment on its own (`prepareSegment`), returning a file or a problem, never throwing for bad media:
+   - first unpurged chunk is not seq 0 → `late chunks without their header` (stage 2 will graft a header);
+   - concat the chunks → `ffmpeg -c copy`. Failure or **zero video packets** → one retry with
+     `-fflags +genpts+discardcorrupt -err_detect ignore_err`; still nothing → `no readable video`. Raw bytes are never
+     used as a fallback. If the first remux plays less than the chunks claim, the tolerant remux is tried too and the
+     longer file is kept;
+   - coverage: expected = Σ chunk `duration_ms` (null = 10 s, each chunk capped at 60 s so a PC sleep is no false
+     alarm). Playing less than `expected − max(15 s, 1 %)` → the segment is still included, but its chunk **files are
+     kept** and `problem = only X of Y min readable` (measured on 15 real segments: worst 6 s short of an hour);
+   - codec or width/height differ from the reference (previous generation, else the first usable segment) → re-encode
+     **that one segment** (scale+pad, `reencodeArgs`). A re-encode that is more than 5 s shorter than its source, or
+     fails → `re-encode … failed`.
+   A problem sets the segment `unreadable` (+`problem`), chunks untouched, and the others carry on.
+3. Join `[current generation file (if any), usable segment files…]` with the concat demuxer (`-c copy`) and verify
+   with one demux pass (`probeFile`, `-v verbose`): exit 0, duration ≥ base + Σ new − 2 s (concat adds ~0.07 s per
+   segment, so duration alone hides losses) **and** video packets muxed ≥ Σ of the inputs' packets (ffmpeg can skip an
+   input and exit 0; an unparsable count falls back to the duration check and is logged). The base duration is the
+   *measured* length of the current generation, never `duration_ms` from the DB. If the whole list will not join it is
+   split in halves and joined recursively on top of the last good file (copy only) to find the culprit; a lone culprit
+   gets one per-segment re-encode and one more try, else it is `unreadable` (`could not be joined`). At most 3 such
+   culprits (= 3 re-encodes) are handled per run; beyond that the remaining segments are left assemblable, the good
+   part is published and the session backs off. With no previous generation, if nothing joins onto the first segment
+   (it is the odd one), the LONGEST segment is published alone (normal commit, only its own chunks marked / purged)
+   and the others are not flagged: they stay assemblable, the run ends in a backoff, and the next run joins them on
+   top of it. There is no
+   full-session or whole-tail re-encode any more. An unreadable previous generation aborts the run (never build over it).
+4. fsync + rename to `recording-g<N+1>.webm`; one DB transaction sets `generation`, `file_path`, `duration_ms`,
+   `logged_out_ms`, marks `assembled` only the segments actually joined, `unreadable` the rest, and sets `purged_at`
+   only on the chunk rows that were joined (the snapshot taken at the start; a chunk that arrived meanwhile stays
+   unpurged and its segment is re-opened).
+5. After commit: delete the chunk files of **fully covered** segments (not the short ones) and the previous
    generation file (ignore EBUSY; a cleanup pass retries).
-Failure anywhere before step 4 changes nothing; `assembly_error` +
-`assembly_attempts` recorded; retried by the sweeper with backoff.
-Segments that arrive out of order are appended in arrival order (logged).
-ponytail: append-only generations; full rebuild if exact ordering ever matters.
+A run in which nothing could be used commits no generation and does not touch `generation`, `duration_ms`,
+`assembly_attempts` or `assembly_next_at`; `assembly_error` keeps the reasons. A new chunk for an `unreadable`
+segment puts it back to `closed` (and recomputes `complete`/`incomplete`), clearing `problem`.
+Failure of the run itself (missing chunk file, previous generation missing/unreadable, an infrastructure failure of
+ffmpeg, a join that timed out or whose culprits exceeded the budget) never flags a segment as unreadable and
+changes nothing else: `assembly_error` is set, `assembly_attempts + 1`, `assembly_next_at = now + backoff(attempts)`
+(`2^attempts × 5 min`, cap 6 h). `assembly_attempts`/`assembly_next_at` reset only when a generation containing new video
+is committed, or when any new chunk of the session arrives. Segments that arrive out of order are appended in arrival
+order (logged).
+ffmpeg runs with `-nostdin`; copy/probe calls time out after 20 min, a one-segment re-encode after
+`max(10 min, 6 × duration)` (cap 3 h), and any other `runFfmpeg` call (legacy v1) after 3 h, so a hung process cannot
+hold the single slot forever. **Certain infrastructure failures always throw** (the session backs off, no segment is
+flagged): spawn error / binary missing (code -1 other than a timeout), killed process (code null, Windows 0xC000013A),
+`No space left`. **Ambiguous** texts — `Cannot allocate memory`, `Input/output error`, `Permission denied` — are printed by
+ffmpeg for corrupt media too (truncated EBML, bogus sizes): they throw while the session's `assembly_attempts` < 3, and from
+the 4th run they are that segment's problem (`unreadable`, `problem = ffmpeg: <text>`, chunks kept) so the rest of the day
+gets through. For the previous generation's probe and for joins they always throw. A timeout counts as a failure of that input.
+`RECORDING_FFMPEG_PATH` overrides the bundled ffmpeg binary (the e2e test points it at a bogus path).
+
+Queue (`pickAssemblies` / `pumpAssemblies`): the 5-min sweep only calls `pumpAssemblies()` and never waits for a run.
+A session is *due* when it has an assemblable segment, is idle ≥ 30 min (or its recording day is over + 30 min),
+`assembly_next_at` is null or past, and is not running. Due sessions are ordered by `assembly_attempts` ascending,
+then `last_chunk_at` ascending, so an untried day always beats a failing one; up to
+`RECORDING_MAX_CONCURRENT_ASSEMBLIES` (default 1) runs are active, and when a run ends the pump runs again at once.
+`GET /sessions/:id/file` (`assembleOnDemand`) honours `assembly_next_at` too.
 
 Session status for v2 sessions (keeps the existing admin UI working):
 `recording` (a chunk in the last 10 min) → `stopped` (idle, waiting for
@@ -281,6 +325,8 @@ Local retention (sweep at start and every 10 min):
   tab-access toggle admin-only, protocol-2 CONNECTED payload and no
   START_RECORDING for v2 agents.
 - new `nodejs-backend/src/test-recording-day.ts`: `recordingDateFor` cases.
+- `npm run test-recording-queue` (no DB): queue order, backoff, starvation simulation, ffmpeg timeout.
+- `npm run test-recording-edge-e2e` S17–S29: bad media never blocks a day or loses bytes (see `recording-edge-cases.md`).
 - new `frontend/electron/recording-day.check.mjs` + spool retention checks.
 
 ---

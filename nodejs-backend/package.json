@@ -13,6 +13,7 @@
     "test-device-ws": "ts-node src/test-device-ws.ts",
     "test-device-e2e": "ts-node src/test-device-e2e.ts",
     "test-recording-assembly": "ts-node src/test-recording-assembly.ts",
+    "test-recording-queue": "ts-node src/test-recording-queue.ts",
     "test-call-e2e": "ts-node src/test-call-e2e.ts",
     "db:baseline": "ts-node src/db-baseline.ts",
     "test-recording-e2e": "ts-node src/test-recording-e2e.ts",

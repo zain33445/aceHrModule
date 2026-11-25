@@ -467,16 +467,25 @@ export async function saveChunk(
 // Assembly
 // ─────────────────────────────────────────
 
-export function runFfmpeg(args: string[]): Promise<{ code: number | null; stderr: string }> {
+/** Nothing legitimate runs longer; without it a hung ffmpeg would hold an assembly slot forever. */
+export const DEFAULT_FFMPEG_TIMEOUT_MS = 3 * 3600_000;
+
+/**
+ * Runs ffmpeg (never reads stdin). A process still running after `timeoutMs` (default 3 h) is killed and resolves
+ * { code: -1, stderr: 'timeout' }. RECORDING_FFMPEG_PATH overrides the bundled binary (tests use a bogus one).
+ */
+export function runFfmpeg(args: string[], opts: { timeoutMs?: number } = {}): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve) => {
     let ffmpegPath: string | null;
-    try { ffmpegPath = require('ffmpeg-static'); } catch { ffmpegPath = null; }
+    try { ffmpegPath = process.env.RECORDING_FFMPEG_PATH || require('ffmpeg-static'); } catch { ffmpegPath = null; }
     if (!ffmpegPath) return resolve({ code: -1, stderr: 'ffmpeg-static not available' });
-    const p = spawn(ffmpegPath, args, { windowsHide: true });
+    const p = spawn(ffmpegPath, ['-nostdin', ...args], { windowsHide: true });
     let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; p.kill('SIGKILL'); }, opts.timeoutMs ?? DEFAULT_FFMPEG_TIMEOUT_MS);
     p.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-4000); });
-    p.on('error', (e) => resolve({ code: -1, stderr: e.message }));
-    p.on('close', (code) => resolve({ code, stderr }));
+    p.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, stderr: e.message }); });
+    p.on('close', (code) => { clearTimeout(timer); resolve(timedOut ? { code: -1, stderr: 'timeout' } : { code, stderr }); });
   });
 }
 
@@ -684,6 +693,8 @@ export async function requestAssembly(sessionId: string): Promise<void> {
     } while (state.rerun);
   } finally {
     assemblyRuns.delete(sessionId);
+    // A slot is free: start the next due session now instead of waiting for the next 5-min sweep.
+    import('./recording-v2.service').then((m) => m.pumpAssemblies()).catch((err) => console.error(`[Recording Service] assembly pump failed: ${err.message}`));
   }
 }
 
