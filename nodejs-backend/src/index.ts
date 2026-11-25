@@ -29,6 +29,7 @@ import recordingRoutes from './routes/recording.routes';
 import recordingV2Routes from './routes/recording-v2.routes';
 import { ensureRecordingSchema } from './db/ensure-recording-schema';
 import { ensureChatSchema } from './db/ensure-chat-schema';
+import { ensureLeaveLedgerBalanceTrigger } from './db/ensure-leave-ledger-trigger';
 import tabAccessRoutes from './routes/tab-access.routes';
 import overtimeRoutes from './routes/overtime.routes';
 import { initGateway } from './gateways/recording.gateway';
@@ -148,6 +149,23 @@ app.get('/', (req, res) => {
   res.send('Node.js Attendance API is running.');
 });
 
+// Liveness + database readiness. The UI uses this to tell "server down" apart
+// from "database unreachable" instead of reporting the whole backend offline.
+app.get('/api/health', async (_req, res) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('database ping timed out')), 3000);
+    });
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
+    res.json({ status: 'ok', db: 'up', uptime: Math.round(process.uptime()) });
+  } catch {
+    res.status(503).json({ status: 'degraded', db: 'down', uptime: Math.round(process.uptime()) });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+});
+
 const server = createServer(app);
 
 // Initialize WebSocket gateway for recording control
@@ -163,7 +181,8 @@ initCallGateway(server);
 // Device gateways (recording yields /device-ws and /device-admin-ws)
 initDeviceGateway(server);
 
-server.listen(PORT, () => {
+const startHttpServer = () => {
+  server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 
   // Chat group-title column (idempotent); first so the inbox query never sees a missing column.
@@ -337,13 +356,6 @@ server.listen(PORT, () => {
           const existing = await tx.leaveLedger.findUnique({ where: { idempotency_key: idempotencyKey } });
           if (existing) { skipped++; continue; }
 
-          // Ensure leave bank row exists
-          await tx.leaveBank.upsert({
-            where: { user_id_leave_type_id: { user_id, leave_type_id } },
-            create: { user_id, leave_type_id, leaves_remaining: 0, last_reset_month: currentMonth },
-            update: {}
-          });
-
           // Record in ledger (source of truth)
           await tx.leaveLedger.create({
             data: {
@@ -354,12 +366,6 @@ server.listen(PORT, () => {
               notes: `Monthly accrual for ${currentMonth}`,
               created_by_type: 'SYSTEM'
             }
-          });
-
-          // Increment leave bank (no reset — purely additive)
-          await tx.leaveBank.update({
-            where: { user_id_leave_type_id: { user_id, leave_type_id } },
-            data: { leaves_remaining: { increment: totalAccrual }, last_reset_month: currentMonth }
           });
 
           applied++;
@@ -413,4 +419,21 @@ server.listen(PORT, () => {
     }
   }, 24 * 60 * 60 * 1000); // Run every 24 hours
 
-});
+  });
+};
+
+// The HTTP server must never wait for the database. A DB blip at boot used to
+// abort the process, so the backend stayed "offline" until someone restarted
+// it by hand; now it starts serving (and reports degraded via /api/health) and
+// keeps retrying the idempotent trigger setup in the background.
+const initLeaveLedgerTrigger = async () => {
+  try {
+    await ensureLeaveLedgerBalanceTrigger();
+  } catch (err) {
+    console.error('[Leave Ledger] failed to ensure balance trigger — retrying in 30s:', err);
+    setTimeout(initLeaveLedgerTrigger, 30_000);
+  }
+};
+
+startHttpServer();
+initLeaveLedgerTrigger();

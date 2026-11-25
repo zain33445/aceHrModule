@@ -52,7 +52,7 @@ No CI workflows, no tests (root `npm test` is stub).
 ## Pricing / leave logic
 
 - Salary: `daily_rate = monthly_salary / 30` — deductions are `unpaid_absences × daily_rate`.
-- Leaves tracked via `leave_bank.leaves_remaining` (remaining balance) and `users.leave_bank` (static cap).
+- Leaves are ledger-driven: `leave_ledger` is the source of truth, and `leave_bank.leaves_remaining` is a cache maintained by the `leave_ledger_apply_balance` DB trigger (`src/db/ensure-leave-ledger-trigger.ts`). Never write `leaves_remaining` directly — insert a ledger row (`ACCRUAL`, `CONSUMPTION`, `RESERVED`, `REVERSAL`, `ADJUSTMENT`). The trigger is ensured at boot and reconciles once via `OPENING-BALANCE-*` rows (marker `leave_ledger_trigger_v1` in `app_settings`). Pending `RESERVED` holds reduce the available balance. `users.leave_bank` is the static cap.
 - Attendance processing compares check-in/check-out against shift `latetiming` and `halfday` thresholds (HH:MM format).
 
 ## Frontend conventions

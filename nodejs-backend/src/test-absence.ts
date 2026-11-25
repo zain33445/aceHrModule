@@ -171,7 +171,7 @@ async function main() {
 
     // T5 ---------------------------------------------------------------
     await check('T5 legacy auto-leave day refunded exactly once on punch', async () => {
-      await setBank(4); // 5 - 1 consumed by the legacy auto-deduction
+      await setBank(5);
       await prisma.attendanceRecord.create({ data: { user_id: UID, date: noon(DK.t5), status: 'leave' } });
       await prisma.leaveLedger.create({
         data: {
@@ -179,6 +179,7 @@ async function main() {
           idempotency_key: `${UID}-${leaveTypeId}-${DK.t5}-LEAVE_CONSUMPTION`, notes: 'test legacy auto leave', created_by_type: 'SYSTEM',
         },
       });
+      await setBank(4);
       await prisma.attendanceLog.create({ data: { user_id: UID, timestamp: new Date(`${DK.t5}T05:00:00.000Z`), status: 0 } });
       const logs = await prisma.attendanceLog.findMany({ where: { user_id: UID, timestamp: { gte: new Date(`${DK.t5}T00:00:00Z`), lte: new Date(`${DK.t5}T23:59:59.999Z`) } } });
       await svc.calculateAndRecordAttendance(UID, noon(DK.t5), logs, salary, shift);

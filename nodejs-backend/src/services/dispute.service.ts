@@ -4,8 +4,9 @@ import { DisputeWorkflow } from './dispute.workflow';
 import { createAndDeliver, NOTIFICATION_TYPES } from './notification.service';
 
 export class DisputeService {
-  // Helper to get active working days in a month (excluding weekends and holidays)
-  public static async getWorkingDaysInMonth(year: number, month: number): Promise<number> {
+  // Helper to get active working days in a month (excluding weekends and holidays).
+  // When departmentId is given, only global holidays and that department's holidays count.
+  public static async getWorkingDaysInMonth(year: number, month: number, departmentId?: number | null): Promise<number> {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     let workingDays = 0;
     for (let i = 1; i <= daysInMonth; i++) {
@@ -20,7 +21,10 @@ export class DisputeService {
 
     const holidays = await prisma.holiday.findMany({
       where: {
-        date: { gte: startOfMonth, lte: endOfMonth }
+        date: { gte: startOfMonth, lte: endOfMonth },
+        ...(departmentId != null
+          ? { OR: [{ department_id: null }, { department_id: departmentId }] }
+          : { department_id: null })
       },
       select: { date: true }
     });
@@ -38,8 +42,8 @@ export class DisputeService {
   }
 
   // Calculate deduction amount based on category
-  public static async calculateDeductionAmount(category: string, employeeSalary: number, date: Date): Promise<number> {
-    const workingDays = await this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth());
+  public static async calculateDeductionAmount(category: string, employeeSalary: number, date: Date, departmentId?: number | null): Promise<number> {
+    const workingDays = await this.getWorkingDaysInMonth(date.getFullYear(), date.getMonth(), departmentId);
 
     switch (category) {
       case 'absent':
@@ -63,9 +67,9 @@ export class DisputeService {
         date: { gte: startDate, lte: endDate },
         status: 'ACTIVE'
       },
-      include: {
-        user: { select: { monthly_salary: true } }
-      }
+        include: {
+          user: { select: { monthly_salary: true, department_id: true } }
+        }
     });
 
     const monthCache = new Map<string, number>();
@@ -74,11 +78,12 @@ export class DisputeService {
     for (const d of deductions) {
       if (d.type === 'leave') continue;
 
-      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}-${d.user.department_id ?? 'all'}`;
       if (!monthCache.has(monthKey)) {
         const workingDays = await this.getWorkingDaysInMonth(
           d.date.getFullYear(),
-          d.date.getMonth()
+          d.date.getMonth(),
+          d.user.department_id
         );
         monthCache.set(monthKey, workingDays);
       }

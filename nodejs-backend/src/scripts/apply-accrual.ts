@@ -1,8 +1,8 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../prisma';
+import { ensureLeaveLedgerBalanceTrigger } from '../db/ensure-leave-ledger-trigger';
 
 async function main() {
+  await ensureLeaveLedgerBalanceTrigger();
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
@@ -41,13 +41,6 @@ async function main() {
       continue;
     }
 
-    // Ensure leave bank row exists
-    await prisma.leaveBank.upsert({
-      where: { user_id_leave_type_id: { user_id, leave_type_id } },
-      create: { user_id, leave_type_id, leaves_remaining: 0, last_reset_month: currentMonth },
-      update: {}
-    });
-
     // Record in ledger
     await prisma.leaveLedger.create({
       data: {
@@ -61,13 +54,11 @@ async function main() {
       }
     });
 
-    // Increment leave bank (additive — no reset)
-    const updated = await prisma.leaveBank.update({
-      where: { user_id_leave_type_id: { user_id, leave_type_id } },
-      data: { leaves_remaining: { increment: totalAccrual }, last_reset_month: currentMonth }
+    const updated = await prisma.leaveBank.findUnique({
+      where: { user_id_leave_type_id: { user_id, leave_type_id } }
     });
 
-    console.log(`  [OK] user=${user_id} type=${leave_type_id} += ${totalAccrual} → balance=${updated.leaves_remaining}`);
+    console.log(`  [OK] user=${user_id} type=${leave_type_id} += ${totalAccrual} → balance=${updated?.leaves_remaining}`);
     applied++;
   }
 

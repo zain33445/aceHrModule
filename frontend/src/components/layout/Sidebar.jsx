@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import packageJson from '../../../package.json';
+import { API_BASE } from '../../services/endpoints';
 import {
   LayoutDashboard,
   Users,
@@ -163,7 +164,7 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
   });
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isClientOnline, setIsClientOnline] = useState(navigator.onLine);
-  const [isBackendOnline, setIsBackendOnline] = useState(true);
+  const [backendStatus, setBackendStatus] = useState('online');
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try {
       const saved = localStorage.getItem('collapsedSidebarGroups');
@@ -189,12 +190,24 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
   useEffect(() => {
     const checkBackend = async () => {
       if (!navigator.onLine) return;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
       try {
-        const baseUrl = import.meta.env.VITE_API_BASE?.replace(/\/api\/?$/, '') || 'http://localhost:5000';
-        const res = await fetch(baseUrl);
-        setIsBackendOnline(res.ok);
+        const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+        if (res.ok || res.status === 404) {
+          setBackendStatus('online');
+          return;
+        }
+        if (res.status === 503) {
+          const body = await res.json().catch(() => null);
+          setBackendStatus(body?.db === 'down' ? 'db-offline' : 'offline');
+          return;
+        }
+        setBackendStatus('offline');
       } catch {
-        setIsBackendOnline(false);
+        setBackendStatus('offline');
+      } finally {
+        clearTimeout(timer);
       }
     };
 
@@ -209,7 +222,10 @@ export const Sidebar = ({ activeTab = 'overview', onTabChange, user, grantedTabs
   if (!isClientOnline) {
     statusColor = 'bg-yellow-500';
     statusText = 'Client Offline';
-  } else if (!isBackendOnline) {
+  } else if (backendStatus === 'db-offline') {
+    statusColor = 'bg-yellow-500';
+    statusText = 'Database Offline';
+  } else if (backendStatus === 'offline') {
     statusColor = 'bg-red-500';
     statusText = 'Server Offline';
   }

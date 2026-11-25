@@ -111,7 +111,8 @@ router.get('/report/salary-report', async (req, res) => {
       select: {
         user_id: true,
         type: true,
-        date: true
+        date: true,
+        user: { select: { department_id: true } }
       }
     });
 
@@ -119,10 +120,10 @@ router.get('/report/salary-report', async (req, res) => {
     const deductionRateMap = new Map<string, number>();
     const monthCache = new Map<string, number>();
     for (const d of allDeductions) {
-      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+      const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}-${d.user.department_id ?? 'all'}`;
       if (!monthCache.has(monthKey)) {
         const workingDays = await DisputeService.getWorkingDaysInMonth(
-          d.date.getFullYear(), d.date.getMonth()
+          d.date.getFullYear(), d.date.getMonth(), d.user.department_id
         );
         monthCache.set(monthKey, workingDays);
       }

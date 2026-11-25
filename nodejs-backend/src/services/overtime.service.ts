@@ -120,7 +120,7 @@ export class OvertimeService {
   static async approveRequest(requestId: number, approverId: string, multiplier?: number) {
     const request = await prisma.overtimeRequest.findUnique({
       where: { id: requestId },
-      include: { user: { select: { id: true, name: true, monthly_salary: true } } }
+      include: { user: { select: { id: true, name: true, monthly_salary: true, department_id: true } } }
     });
 
     if (!request) throw new Error('Request not found');
@@ -131,7 +131,7 @@ export class OvertimeService {
     const year = canonicalDate.getUTCFullYear();
     const month = canonicalDate.getUTCMonth();
 
-    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month);
+    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month, request.user.department_id);
 
     const monthlySalary = request.user.monthly_salary;
     const hourlyRate = monthlySalary / effectiveWorkingDays / 9;
@@ -391,7 +391,7 @@ export class OvertimeService {
     const canonicalDate = this.getCanonicalUtcDate(request.date);
     const year = canonicalDate.getUTCFullYear();
     const month = canonicalDate.getUTCMonth();
-    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month);
+    const effectiveWorkingDays = await DisputeService.getWorkingDaysInMonth(year, month, request.user.department_id);
     const monthlySalary = request.user.monthly_salary;
     const hourlyRate = monthlySalary / effectiveWorkingDays / 9;
     const finalMultiplier = multiplier ?? 1;

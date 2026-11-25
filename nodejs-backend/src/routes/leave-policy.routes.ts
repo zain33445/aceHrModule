@@ -195,25 +195,7 @@ try {
       if (!user) continue;
 
       // -----------------------------
-      // 2. Get or create leave bank
-      // -----------------------------
-      let leaveBank = await tx.leaveBank.findUnique({
-        where: { user_id_leave_type_id: { user_id, leave_type_id } }
-      });
-
-      if (!leaveBank) {
-        leaveBank = await tx.leaveBank.create({
-          data: {
-            user_id,
-            leave_type_id,
-            leaves_remaining: 0,
-            last_reset_month: currentMonth
-          }
-        });
-      }
-
-      // -----------------------------
-      // 3. INSERT INTO LEAVE LEDGER (SOURCE OF TRUTH)
+      // 2. INSERT INTO LEAVE LEDGER (SOURCE OF TRUTH)
       // -----------------------------
       await tx.leaveLedger.create({
         data: {
@@ -227,16 +209,10 @@ try {
         }
       });
 
-      const updated = await tx.leaveBank.update({
-        where: { user_id_leave_type_id: { user_id, leave_type_id } },
-        data: {
-          leaves_remaining: {
-            increment: totalAccrual
-          },
-          last_reset_month: currentMonth
-        }
+      const updated = await tx.leaveBank.findUnique({
+        where: { user_id_leave_type_id: { user_id, leave_type_id } }
       });
-
+      if (!updated) throw new Error(`Leave bank not found for user ${user_id} type ${leave_type_id}`);
       results.push(updated);
     }
 

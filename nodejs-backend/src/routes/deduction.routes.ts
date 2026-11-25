@@ -35,20 +35,22 @@ router.get('/user/:userId', async (req, res) => {
         skip,
         take,
         include: {
-          user: { select: { monthly_salary: true } }
+          user: { select: { monthly_salary: true, department_id: true } }
         }
       }),
       prisma.deduction.count({ where })
     ]);
 
     // Pre-compute working days per month to avoid duplicate DB queries
-    const monthKeys = new Set(deductions.map(d =>
-      d.type !== 'leave' ? `${d.date.getFullYear()}-${d.date.getMonth()}` : ''
-    ));
+    const monthKeys = new Set(deductions
+      .filter(d => d.type !== 'leave')
+      .map(d => `${d.date.getFullYear()}-${d.date.getMonth()}-${d.user.department_id ?? 'all'}`)
+    );
     const monthCache = new Map<string, number>();
-    await Promise.all([...monthKeys].filter(Boolean).map(async (key) => {
-      const [y, m] = key.split('-').map(Number);
-      monthCache.set(key, await DisputeService.getWorkingDaysInMonth(y, m));
+    await Promise.all([...monthKeys].map(async (key) => {
+      const [y, m, deptKey] = key.split('-');
+      const departmentId = deptKey === 'all' ? null : Number(deptKey);
+      monthCache.set(key, await DisputeService.getWorkingDaysInMonth(Number(y), Number(m), departmentId));
     }));
 
     // Recalculate amounts on-the-fly using current working days
@@ -56,7 +58,7 @@ router.get('/user/:userId', async (req, res) => {
       const { user, ...rest } = d;
       let amount = d.amount;
       if (d.type !== 'leave') {
-        const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}`;
+        const monthKey = `${d.date.getFullYear()}-${d.date.getMonth()}-${d.user.department_id ?? 'all'}`;
         const workingDays = monthCache.get(monthKey)!;
         let multiplier: number;
         switch (d.type) {

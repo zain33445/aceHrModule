@@ -15,7 +15,7 @@ router.get('/balance/:user_id', async (req, res) => {
         lt.name,
         lb.leaves_remaining AS available_balance
       FROM leave_bank lb
-      JOIN leave_type lt ON lb.leave_type_id = lt.id
+      JOIN leave_types lt ON lb.leave_type_id = lt.id
       WHERE lb.user_id = ${user_id}
     `;
 
