@@ -90,11 +90,11 @@ export class AbsenceService {
         });
 
         if (attendanceLogs.length === 0) {
-          await this.processAttendance(user.id, targetDate, user.monthly_salary, (user as any).department?.shift);
+          await this.processAttendance(user.id, targetDate, user.monthly_salary, (user as any).department?.shift, user.department_id);
           processedCount++;
         } else {
           // Process attendance with times and status calculation
-          await this.calculateAndRecordAttendance(user.id, targetDate, attendanceLogs, user.monthly_salary, (user as any).department?.shift);
+          await this.calculateAndRecordAttendance(user.id, targetDate, attendanceLogs, user.monthly_salary, (user as any).department?.shift, user.department_id);
           processedCount++;
         }
       }
@@ -146,7 +146,7 @@ export class AbsenceService {
           });
 
           if (attendanceLogs.length > 0) {
-            await this.calculateAndRecordAttendance(user.id, date, attendanceLogs, user.monthly_salary, (user as any).department?.shift);
+            await this.calculateAndRecordAttendance(user.id, date, attendanceLogs, user.monthly_salary, (user as any).department?.shift, user.department_id);
             processedCount++;
           }
         }
@@ -197,9 +197,9 @@ export class AbsenceService {
         });
 
         if (logs.length > 0) {
-          await this.calculateAndRecordAttendance(record.user_id, record.date, logs, record.user.monthly_salary, record.user.department?.shift);
+          await this.calculateAndRecordAttendance(record.user_id, record.date, logs, record.user.monthly_salary, record.user.department?.shift, record.user.department_id);
         } else {
-          await this.processAttendance(record.user_id, record.date, record.user.monthly_salary, record.user.department?.shift);
+          await this.processAttendance(record.user_id, record.date, record.user.monthly_salary, record.user.department?.shift, record.user.department_id);
         }
       } catch (err) {
         console.error(`Failed to finalize stale record ${record.id}:`, err);
@@ -213,7 +213,7 @@ export class AbsenceService {
    * Calculate and record attendance status based on check-in/check-out times
    * For each user per day: First timestamp = check-in, Last timestamp = check-out
    */
-  private static async calculateAndRecordAttendance(userId: string, targetDateRaw: Date, attendanceLogs: any[], monthlySalary: number, userShift?: any) {
+  private static async calculateAndRecordAttendance(userId: string, targetDateRaw: Date, attendanceLogs: any[], monthlySalary: number, userShift?: any, departmentId?: number | null) {
     try {
       const date = this.getCanonicalUtcDate(targetDateRaw);
       const exemptFromLateHalfday = isLateHalfdayExempt(userId);
@@ -282,7 +282,7 @@ export class AbsenceService {
           status = 'pending';
         } else {
           // Rule 2: Past date with no punches, must check leave bank
-          return await this.processAttendance(userId, date, monthlySalary, shift);
+          return await this.processAttendance(userId, date, monthlySalary, shift, departmentId);
         }
       } else if (checkInTime) {
         // Rule 3: Has check-in
@@ -314,9 +314,12 @@ export class AbsenceService {
         let finalCheckInSource = checkInTime ? 'fp' : existingRecord.check_in_source;
         let finalCheckOutSource = checkOutTime ? 'fp' : existingRecord.check_out_source;
 
-        // Recalculate status based on the merged earliest check-in
+        // Recalculate status based on the merged earliest check-in, but never
+        // overwrite a day that holiday processing has already finalized.
         let finalStatus = status;
-        if (finalCheckIn && !isWeekend) {
+        if (existingRecord.status === 'holiday') {
+          finalStatus = 'holiday';
+        } else if (finalCheckIn && !isWeekend) {
           const currentShiftType = this.determineShiftType(finalCheckIn, shift);
           finalStatus = this.determineAttendanceStatus(finalCheckIn, shift, currentShiftType, exemptFromLateHalfday);
         }
@@ -349,10 +352,6 @@ export class AbsenceService {
               });
               if (alreadyReversed) return;
 
-              await tx.leaveBank.update({
-                where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-                data: { leaves_remaining: { increment: 1 } }
-              });
               await tx.leaveLedger.create({
                 data: {
                   user_id: userId,
@@ -407,7 +406,7 @@ export class AbsenceService {
 
       // Create deduction records if applicable
       if (isLate) {
-        const amount = await DisputeService.calculateDeductionAmount('late', monthlySalary, date);
+        const amount = await DisputeService.calculateDeductionAmount('late', monthlySalary, date, departmentId);
         if (amount > 0) {
           await prisma.deduction.create({
             data: {
@@ -421,7 +420,7 @@ export class AbsenceService {
       }
 
       if (isHalfday) {
-        const amount = await DisputeService.calculateDeductionAmount('half-day', monthlySalary, date);
+        const amount = await DisputeService.calculateDeductionAmount('half-day', monthlySalary, date, departmentId);
         if (amount > 0) {
           await prisma.deduction.create({
             data: {
@@ -513,7 +512,7 @@ export class AbsenceService {
   /**
    * Process absence for a specific user on a specific date (no attendance logs)
    */
-  private static async processAttendance(userId: string, targetDateRaw: Date, monthlySalary: number, userShift?: any) {
+  private static async processAttendance(userId: string, targetDateRaw: Date, monthlySalary: number, userShift?: any, departmentId?: number | null) {
     const date = this.getCanonicalUtcDate(targetDateRaw);
 
     // Use provided shift or fallback to first shift
@@ -601,7 +600,7 @@ export class AbsenceService {
     // If check_in_time or check_out_time already has a value, leave the record untouched.
 
     if (status === 'absent') {
-      const amount = await DisputeService.calculateDeductionAmount('absent', monthlySalary, date);
+      const amount = await DisputeService.calculateDeductionAmount('absent', monthlySalary, date, departmentId);
       if (amount > 0) {
         await prisma.deduction.create({
           data: {
@@ -919,32 +918,58 @@ export class AbsenceService {
    * Update leave bank for a user (admin function)
    */
   static async updateLeaveBank(userId: string, leavesRemaining: number, leaveTypeId: number = 1) {
-    const leaveBankRecord = await prisma.leaveBank.upsert({
-      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-      update: { leaves_remaining: leavesRemaining },
-      create: {
-        user_id: userId,
-        leave_type_id: leaveTypeId,
-        leaves_remaining: leavesRemaining
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true
+    if (!Number.isFinite(leavesRemaining)) {
+      throw new Error('INVALID_LEAVES');
+    }
+
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO leave_bank (user_id, leave_type_id, leaves_remaining)
+        VALUES (${userId}, ${leaveTypeId}, 0)
+        ON CONFLICT (user_id, leave_type_id) DO NOTHING
+      `;
+
+      const rows: any[] = await tx.$queryRaw`
+        SELECT leaves_remaining FROM leave_bank
+        WHERE user_id = ${userId} AND leave_type_id = ${leaveTypeId}
+        FOR UPDATE
+      `;
+      const current = Number(rows[0]?.leaves_remaining ?? 0);
+      const delta = Math.round((leavesRemaining - current) * 100) / 100;
+
+      if (delta !== 0) {
+        await tx.leaveLedger.create({
+          data: {
+            user_id: userId,
+            leave_type_id: leaveTypeId,
+            transaction_type: 'ADJUSTMENT',
+            amount: delta,
+            idempotency_key: `SET_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${userId}_${leaveTypeId}`,
+            notes: `Leave bank set to ${leavesRemaining}`,
+            created_by_type: 'USER'
           }
-        },
-        leave_type: {
-          select: {
-            id: true,
-            name: true,
-            is_paid: true
+        });
+      }
+
+      return tx.leaveBank.findUnique({
+        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true
+            }
+          },
+          leave_type: {
+            select: {
+              id: true,
+              name: true,
+              is_paid: true
+            }
           }
         }
-      }
+      });
     });
-
-    return leaveBankRecord;
   }
 
   static async resetLeaveBank(userId: string, leaveTypeId: number = 1) {
@@ -965,45 +990,58 @@ export class AbsenceService {
    * Deduction amounts: absent = 1.0, half-day = 0.5, late = 0.3
    */
   static async deductLeaveBank(userId: string, amount: number, reason: string = 'manual', recordDate?: Date, leaveTypeId: number = 1) {
-    const leaveBankRecord = await prisma.leaveBank.findUnique({
-      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-      include: {
-        user: {
-          select: { id: true, name: true }
-        },
-        leave_type: {
-          select: { id: true, name: true, is_paid: true }
-        }
-      }
-    });
-
-    if (!leaveBankRecord) {
-      throw new Error(`Leave bank not found for user ${userId} (type ${leaveTypeId})`);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('INVALID_AMOUNT');
     }
 
-    const currentBalance = leaveBankRecord.leaves_remaining;
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO leave_bank (user_id, leave_type_id, leaves_remaining)
+        VALUES (${userId}, ${leaveTypeId}, 0)
+        ON CONFLICT (user_id, leave_type_id) DO NOTHING
+      `;
 
-    if (currentBalance < amount) {
-      throw new Error('INSUFFICIENT_LEAVES');
-    }
+      const rows: any[] = await tx.$queryRaw`
+        SELECT leaves_remaining FROM leave_bank
+        WHERE user_id = ${userId} AND leave_type_id = ${leaveTypeId}
+        FOR UPDATE
+      `;
+      const currentBalance = Number(rows[0]?.leaves_remaining ?? 0);
 
-    const newBalance = Math.max(0, parseFloat((currentBalance - amount).toFixed(2)));
-
-    // 1. Deduct leaves from leave bank
-    const updated = await prisma.leaveBank.update({
-      where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
-      data: { leaves_remaining: newBalance },
-      include: {
-        user: {
-          select: { id: true, name: true }
-        },
-        leave_type: {
-          select: { id: true, name: true, is_paid: true }
-        }
+      if (currentBalance < amount) {
+        throw new Error('INSUFFICIENT_LEAVES');
       }
+
+      await tx.leaveLedger.create({
+        data: {
+          user_id: userId,
+          leave_type_id: leaveTypeId,
+          transaction_type: 'CONSUMPTION',
+          amount: -amount,
+          idempotency_key: `DEDUCT_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${userId}_${leaveTypeId}`,
+          notes: `Deduction: ${reason}`,
+          created_by_type: 'USER'
+        }
+      });
+
+      const updated = await tx.leaveBank.findUnique({
+        where: { user_id_leave_type_id: { user_id: userId, leave_type_id: leaveTypeId } },
+        include: {
+          user: {
+            select: { id: true, name: true }
+          },
+          leave_type: {
+            select: { id: true, name: true, is_paid: true }
+          }
+        }
+      });
+
+      return { updated, currentBalance };
     });
 
-    console.log(`[LeaveBank] Deducted ${amount} leaves from user ${userId} (type ${leaveTypeId}, reason: ${reason}). Balance: ${currentBalance} → ${newBalance}`);
+    const newBalance = result.updated?.leaves_remaining ?? 0;
+
+    console.log(`[LeaveBank] Deducted ${amount} leaves from user ${userId} (type ${leaveTypeId}, reason: ${reason}). Balance: ${result.currentBalance} → ${newBalance}`);
 
     // 2. If a specific date is provided, clean up attendance and delete cash deductions
     if (recordDate) {
@@ -1034,7 +1072,7 @@ export class AbsenceService {
       console.log(`[LeaveBank] Attendance status set to 'leave' and deleted ${deletedDeductions.count} cash deductions for user ${userId} on date ${canonicalDate.toISOString().split('T')[0]}`);
     }
 
-    return updated;
+    return result.updated;
   }
 
 
