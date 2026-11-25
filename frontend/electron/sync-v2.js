@@ -11,7 +11,10 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { recordingV2SegmentUrl } from './config.js';
-import { listSegmentDirs, readSegment, readJson, writeFileDurable, chunkFile, maxSeq } from './spool-v2.js';
+import {
+  listSegmentDirs, readSegment, readJson, writeFileDurable, chunkFile, maxSeq,
+  hasUnsentChunks, markClosedAcknowledged, removeEmptyClosedSegment, reopenClosedWithUnsent,
+} from './spool-v2.js';
 
 // Plain-node importable: electron's `net` is loaded lazily by the default request, logging is injected.
 const NOOP_LOG = { info() { }, warn() { }, error() { } };
@@ -25,6 +28,8 @@ const TIMEOUT_MS = 60_000;
 const BACKOFF_BASE_MS = 2000;
 const BACKOFF_CAP_MS = 60_000;
 const PARK_MS = 30 * 60 * 1000;
+const SEGMENT_PARK_MS = 5 * 60 * 1000; // A15: a segment the server keeps failing (500 / 404) steps aside this long
+const FAILS_BEFORE_PARK = 3;
 const PERIODIC_MS = 60_000;
 const FRESH_NO_META_MS = 30_000; // A8: a .webm younger than this may still be getting its <seq>.json
 const STALE_SEGMENT_MS = 5 * 60_000; // A6: rebuilt segment whose newest file is older than this is treated as closed
@@ -34,11 +39,15 @@ let _cfg = null;
 let _enabled = false;
 let _running = false;
 let _again = false;
+let _worker = Promise.resolve(); // the running background pass (syncPass waits for it: two scans must not overlap)
 let _backlog = { chunks: 0, bytes: 0 };
-const _parked = new Map(); // segment dir → { until (ms), reason }
+const _parked = new Map(); // segment dir → { until (ms), reason, token? }
+const _fails = new Map(); // segment dir → consecutive segment-level failures (A15)
+let _boot = Promise.resolve(); // A18: closed.ok repair, once per init
 
 export function initSyncV2(cfg) {
   _cfg = cfg;
+  _boot = reopenClosedWithUnsent(cfg.root, logger).catch((err) => logger.warn(`[SyncV2] closed.ok repair failed: ${err.message}`));
   const t = setInterval(kickSync, PERIODIC_MS);
   if (typeof t.unref === 'function') t.unref();
   kickSync();
@@ -57,7 +66,8 @@ export function kickSync() {
   if (!_cfg) return;
   if (_running) { _again = true; return; }
   _running = true;
-  (async () => {
+  _worker = (async () => {
+    await _boot;
     do { _again = false; await _drain(); } while (_again);
   })()
     .catch((err) => logger.error(`[SyncV2] Worker crashed: ${err.message}`))
@@ -105,16 +115,16 @@ async function _scan() {
   let bytes = 0;
   for (const { dir, userDir, segmentId } of await listSegmentDirs(_cfg.root)) {
     if (await _exists(path.join(dir, 'closed.ok'))) continue;
+    let seg = await readSegment(dir); // A17: segment.json BEFORE the listing, so the listing is never older than 'closed'
     let files;
     try { files = await fs.promises.readdir(dir); } catch { continue; }
-    let seg = await readSegment(dir);
     if (!seg?.segmentId) seg = await _rebuildSegment(dir, userDir, segmentId, files);
     const names = new Set(files);
     const registered = names.has('registered');
     // A13: a closed segment that never produced a chunk is not worth a server session.
-    if (seg.closed === true && !registered && !files.some((f) => /^\d+\.webm$/.test(f))) {
-      try { await fs.promises.rm(dir, { recursive: true, force: true }); logger.info(`[SyncV2] Removed empty segment ${seg.segmentId}`); } catch { /* retried next scan */ }
-      continue;
+    if (seg.closed === true && !registered && !files.some((f) => /^\d+\.webm/.test(f))) { // A19: a .webm.tmp is a write in progress
+      try { if (await removeEmptyClosedSegment(dir)) logger.info(`[SyncV2] Removed empty segment ${seg.segmentId}`); } catch { /* retried next scan */ }
+      continue; // never falls through: an empty segment is not worth a server session
     }
     const pending = [];
     let waiting = false;
@@ -141,10 +151,10 @@ async function _scan() {
 // A closed segment without closed.ok has work (the close call) unless a chunk is still being finalised.
 const _hasWork = (w) => w.pending.length > 0 || (w.seg.closed === true && !w.waiting);
 
-const _park = (dir, reason, ms = PARK_MS) => _parked.set(dir, { until: Date.now() + ms, reason });
+const _park = (dir, reason, ms = PARK_MS, extra = {}) => { _fails.delete(dir); _parked.set(dir, { until: Date.now() + ms, reason, ...extra }); };
 export const getParked = () => [..._parked.keys()];
 
-/** Parked for 30 min; a missing-token park ends as soon as the owner's token exists. */
+/** Parked for its time; a missing-token park ends as soon as the owner's token exists, an auth park when it changes. */
 async function _isParked(w) {
   const p = _parked.get(w.dir);
   if (!p) return false;
@@ -152,6 +162,7 @@ async function _isParked(w) {
     if (await _cfg.tokenFor(w.seg.userId)) { _parked.delete(w.dir); return false; }
     return true;
   }
+  if (p.reason === 'auth' && (await _cfg.tokenFor(w.seg.userId)) !== p.token) { _parked.delete(w.dir); return false; }
   if (p.until <= Date.now()) { _parked.delete(w.dir); return false; }
   return true;
 }
@@ -184,6 +195,8 @@ async function _drain() {
  */
 export async function syncPass() {
   if (!_cfg) return;
+  await _boot;
+  await _worker;
   for (const w of await _scan()) {
     if (!_hasWork(w) || await _isParked(w)) continue;
     try { await _syncSegment(w); } catch (err) { logger.error(`[SyncV2] ${w.seg.segmentId}: ${err.message}`); }
@@ -222,11 +235,19 @@ async function _http(method, url, headers, body) {
 const _json = (res) => { try { const j = JSON.parse(res.body); return j && typeof j === 'object' ? j : null; } catch { return null; } };
 const _is2xx = (res) => res.status >= 200 && res.status < 300;
 
+// Trouble that hits every segment alike (network, gateway, overload): the whole lane backs off, no segment is blamed.
+const _serverWide = (s) => s === 0 || s === 408 || s === 429 || s === 502 || s === 503 || s === 504 || (s >= 520 && s <= 530);
+
 /** Map a failed response to 'retry' | 'parked' (401 → token refresh for that user first). */
-async function _fail(res, what, dir, userId) {
+async function _fail(res, what, dir, userId, token) {
   if (res.status === 401) {
     try { await _cfg.refresh(userId); } catch (err) { logger.warn(`[SyncV2] Token refresh failed: ${err.message}`); }
-    return 'retry';
+    const now = await _cfg.tokenFor(userId);
+    if (now && now !== token) return 'retry'; // refreshed: the next attempt carries the new token
+    // A16: this user's token cannot be renewed here (not signed in / refresh failed): step aside until it changes
+    logger.warn(`[SyncV2] ${what}: 401 and the token did not change — segment parked until the token changes`);
+    _park(dir, 'auth', PARK_MS, { token });
+    return 'parked';
   }
   if ([403, 409, 413, 422].includes(res.status)) { // A4: persistent refusals must not block newer segments
     logger.warn(`[SyncV2] ${what} refused (${res.status}) — segment parked for 30 min`);
@@ -234,6 +255,15 @@ async function _fail(res, what, dir, userId) {
     return 'parked';
   }
   logger.warn(`[SyncV2] ${what} failed (HTTP ${res.status || 'network'})`);
+  if (_serverWide(res.status)) return 'retry';
+  // A15: 500 / 404 / anything else on this segment, three in a row: park it so the others are not held up
+  const n = (_fails.get(dir) || 0) + 1;
+  if (n >= FAILS_BEFORE_PARK) {
+    logger.warn(`[SyncV2] ${what} failed ${n}x in a row (HTTP ${res.status}) — segment parked for 5 min`);
+    _park(dir, `http_${res.status}`, SEGMENT_PARK_MS);
+    return 'parked';
+  }
+  _fails.set(dir, n);
   return 'retry';
 }
 
@@ -266,7 +296,8 @@ async function _syncSegment({ dir, seg, pending, registered }) {
       _park(dir, 'http_400');
       return 'parked';
     }
-    if (!_is2xx(res)) return _fail(res, `Register ${seg.segmentId}`, dir, seg.userId);
+    if (!_is2xx(res)) return _fail(res, `Register ${seg.segmentId}`, dir, seg.userId, token);
+    _fails.delete(dir);
     const j = _json(res);
     if (!j) { logger.warn(`[SyncV2] Register ${seg.segmentId}: 2xx without a JSON body (proxy / captive portal?)`); return 'retry'; }
     const sessionId = j.sessionId ?? '';
@@ -305,6 +336,7 @@ async function _syncSegment({ dir, seg, pending, registered }) {
         logger.warn(`[SyncV2] Chunk ${seg.segmentId}/${seq}: 2xx without {ok:true} (proxy / captive portal?) — not marked uploaded`);
         return 'retry';
       }
+      _fails.delete(dir);
       if (j.conflict) logger.warn(`[SyncV2] Chunk ${seg.segmentId}/${seq}: server reported a conflict (it keeps both copies)`);
       await fs.promises.writeFile(`${file}.ok`, '');
       _backlog = { chunks: Math.max(0, _backlog.chunks - 1), bytes: Math.max(0, _backlog.bytes - buf.length) };
@@ -326,23 +358,36 @@ async function _syncSegment({ dir, seg, pending, registered }) {
       logger.warn(`[SyncV2] Chunk ${seg.segmentId}/${seq} rejected (400, stale sha) — retrying with sha from disk`);
       return 'retry';
     }
-    return _fail(res, `Chunk ${seg.segmentId}/${seq}`, dir, seg.userId);
+    return _fail(res, `Chunk ${seg.segmentId}/${seq}`, dir, seg.userId, token);
   }
 
   if (seg.closed) {
-    const lastSeq = Number.isInteger(seg.lastSeq) ? seg.lastSeq : -1;
+    // A17: the scan is older than this upload. A chunk stored meanwhile (it also raised lastSeq) must go out
+    // first, so re-read segment.json + the folder; the segment is picked up again.
+    if (await hasUnsentChunks(dir)) return 'ok';
+    const cur = (await readSegment(dir)) ?? seg;
+    const lastSeq = Number.isInteger(cur.lastSeq) ? cur.lastSeq : -1;
     const lostSeqs = [];
     for (let i = 0; i <= lastSeq; i++) if (!(await _exists(chunkFile(dir, i)))) lostSeqs.push(i);
     if (lostSeqs.length) logger.warn(`[SyncV2] Segment ${seg.segmentId}: ${lostSeqs.length} chunk(s) missing locally → lostSeqs`);
     const res = await _http('POST', recordingV2SegmentUrl(seg.segmentId, '/close'), { ...auth, 'Content-Type': 'application/json' },
-      JSON.stringify({ lastSeq, endedAt: seg.endedAt, lostSeqs }));
+      JSON.stringify({ lastSeq, endedAt: cur.endedAt, lostSeqs }));
     if (res.status === 404 && /segment_not_registered/.test(res.body)) {
       await _unregister(dir);
       return 'retry';
     }
-    if (!_is2xx(res)) return _fail(res, `Close ${seg.segmentId}`, dir, seg.userId);
+    if (res.status === 400) {
+      logger.error(`[SyncV2] Close rejected (400) for ${seg.segmentId}: ${res.body.slice(0, 200)}`);
+      _park(dir, 'http_400');
+      return 'parked';
+    }
+    if (!_is2xx(res)) return _fail(res, `Close ${seg.segmentId}`, dir, seg.userId, token);
     if (!_json(res)) { logger.warn(`[SyncV2] Close ${seg.segmentId}: 2xx without a JSON body — not marked closed`); return 'retry'; }
-    await fs.promises.writeFile(path.join(dir, 'closed.ok'), '');
+    _fails.delete(dir);
+    if (!(await markClosedAcknowledged(dir))) { // a chunk landed while the close was in flight: close again after it
+      logger.info(`[SyncV2] Segment ${seg.segmentId}: chunk stored during the close — closed.ok not written`);
+      return 'ok';
+    }
     logger.info(`[SyncV2] Segment ${seg.segmentId} closed on server`);
   }
   return 'ok';

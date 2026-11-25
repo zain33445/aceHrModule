@@ -144,13 +144,24 @@ await check('followStep: returning to the current display resets the timer; flap
   assert.strictEqual(f.state.current, 'A');
 });
 
-await check('nativeCaptureSize: physical size, fitted to 4K, even, 1080p fallback', async () => {
+await check('nativeCaptureSize: always a 16:9 box (1920x1080 / 2560x1440 / 3840x2160), the smallest that contains the physical size', async () => {
   const [n] = await fns('nativeCaptureSize');
-  assert.deepStrictEqual(n({ bounds: { width: 1536, height: 864 }, scaleFactor: 1.25 }), { width: 1920, height: 1080 });
-  assert.deepStrictEqual(n({ bounds: { width: 2560, height: 1440 }, scaleFactor: 1 }), { width: 2560, height: 1440 });
-  assert.deepStrictEqual(n({ bounds: { width: 3840, height: 2160 }, scaleFactor: 2 }), { width: 3840, height: 2160 });
-  assert.deepStrictEqual(n({ bounds: { width: 5120, height: 1440 }, scaleFactor: 1 }), { width: 3840, height: 1080 });
-  assert.deepStrictEqual(n(null), { width: 1920, height: 1080 });
+  const d = (w, h, f = 1) => ({ bounds: { width: w, height: h }, scaleFactor: f });
+  const B1 = { width: 1920, height: 1080 }, B2 = { width: 2560, height: 1440 }, B3 = { width: 3840, height: 2160 };
+  assert.deepStrictEqual(n(d(1536, 864, 1.25)), B1, '1920x1080 physical');
+  assert.deepStrictEqual(n(d(1366, 768)), B1, 'small screen: never below the recorder presets');
+  assert.deepStrictEqual(n(d(1600, 900)), B1);
+  assert.deepStrictEqual(n(d(1728, 1080)), B1);
+  assert.deepStrictEqual(n(d(1280, 1024)), B1);
+  assert.deepStrictEqual(n(d(1920, 1080)), B1);
+  assert.deepStrictEqual(n(d(1920, 1200)), B2, '16:10 must NOT give a 16:10 box (it shrank 1080p recordings to 1728x1080)');
+  assert.deepStrictEqual(n(d(2560, 1440)), B2);
+  assert.deepStrictEqual(n(d(2560, 1600)), B3, '16:10 that does not fit 2560x1440');
+  assert.deepStrictEqual(n(d(3440, 1440)), B3, 'ultrawide wider than 2560');
+  assert.deepStrictEqual(n(d(1920, 1081)), B2, 'one pixel over a tier moves to the next');
+  assert.deepStrictEqual(n(d(3840, 2160, 2)), B3);
+  assert.deepStrictEqual(n(d(5120, 1440)), B3, 'nothing contains it: the largest box, letterboxed');
+  assert.deepStrictEqual(n(null), B1, 'unknown display');
 });
 
 finish('agent-policy');

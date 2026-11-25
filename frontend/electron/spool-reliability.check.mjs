@@ -1,4 +1,4 @@
-// Run: node frontend/electron/spool-reliability.check.mjs   (edge cases A1, A2)
+// Run: node frontend/electron/spool-reliability.check.mjs   (edge cases A1, A2, A17)
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -80,6 +80,19 @@ await check('A2 write after closeSegment raises segment.json lastSeq and removes
   assert.strictEqual(seg.lastSeq, 2, 'segment.json lastSeq not raised by a late chunk');
   assert.strictEqual(seg.closed, true, 'segment must stay closed');
   assert.ok(!fs.existsSync(path.join(dir, 'closed.ok')), 'closed.ok must be removed so the close is re-sent');
+});
+
+await check('A17 a chunk stored into a closed segment ALWAYS removes closed.ok, also one that fills a gap below lastSeq', async () => {
+  const dir = await mkSeg('u2', 'seg-a17-gap');
+  await spool.writeChunk(dir, 0, Buffer.from('c0'), meta);
+  await spool.writeChunk(dir, 2, Buffer.from('c2'), meta); // seq 1 missing
+  const closed = await spool.closeSegment(dir);
+  assert.strictEqual(closed.lastSeq, 2);
+  fs.writeFileSync(path.join(dir, 'closed.ok'), '');
+  const r = await spool.writeChunk(dir, 1, Buffer.from('c1'), meta); // below lastSeq
+  assert.strictEqual(r.seq, 1);
+  assert.strictEqual((await spool.readSegment(dir)).lastSeq, 2, 'lastSeq stays');
+  assert.ok(!fs.existsSync(path.join(dir, 'closed.ok')), 'closed.ok must go whenever a chunk is stored');
 });
 
 await check('A2 findSegmentDir(root, segmentId) locates an existing segment folder', async () => {

@@ -137,6 +137,10 @@ export function initRecorderMain(getToken, onStateChange) {
     _scheduleRestart(`capture lost (${reason})`, { graceful: true });
   });
 
+  ipcMain.on('recording:log', (_e, { level, message } = {}) => { // the hidden renderer has no log file of its own
+    (level === 'warn' ? logger.warn : logger.info)(`[Recorder] ${String(message).slice(0, 300)}`);
+  });
+
   ipcMain.on('recording:error', (_e, { code, message, segmentId } = {}) => {
     logger.error(`[Recorder] Error [${code}]: ${message} (segment: ${segmentId})`);
     if (segmentId && _seg && segmentId !== _seg.segmentId) return; // an old segment's error

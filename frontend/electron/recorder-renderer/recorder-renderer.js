@@ -55,7 +55,13 @@ const enqueue = (fn) => {
 // Silent capture warm-up (no MediaRecorder, no UI)
 // ─────────────────────────────────────────
 
-ipcRenderer.on('recording:warmup', async (_event, { sourceId }) => {
+// Queued with begin/stop (A20): Chromium shares an open desktop capture of the same screen between requests, so a
+// 320x180 warm-up still open while the recorder asks for its preset hands the recorder 320x180 frames (measured by
+// capture-size.check.cjs). Warm-up therefore never overlaps a begin, and is pointless once a capture exists.
+ipcRenderer.on('recording:warmup', (_event, { sourceId }) => { enqueue(() => warmup(sourceId)); });
+
+async function warmup(sourceId) {
+  if (capture) { ipcRenderer.send('recording:warmup-result', true); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -78,7 +84,7 @@ ipcRenderer.on('recording:warmup', async (_event, { sourceId }) => {
     ipcRenderer.send('recording:warmup-result', false);
     console.warn('[Recorder Renderer] Warm-up failed:', err.message);
   }
-});
+}
 
 // ─────────────────────────────────────────
 // Capture (shared stream)
@@ -91,7 +97,51 @@ function releaseCapture() {
   if (c) c.stream.getTracks().forEach((t) => t.stop());
 }
 
-async function acquireCapture({ sourceId, maxWidth, maxHeight, maxFps }) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const log = (level, message) => { console[level === 'warn' ? 'warn' : 'log']('[Recorder Renderer]', message); ipcRenderer.send('recording:log', { level, message }); };
+const SIZE_TRIES = 3;
+const SIZE_RETRY_MS = 400;
+const SIZE_TRIES_AT_ROTATION = 2; // a rotation that only retries a wrong size: the old recorder has stopped, every try is a gap
+
+const wantOf = (p) => ({ w: p.maxWidth || 1280, h: p.maxHeight || 720 });
+const sizeMatches = (real, want) => !!real && real.w === want.w && real.h === want.h; // 854x480 is exact too (capture-size.check.cjs)
+/** The capture's REAL size is known and is not the preset: it is not good enough to carry the next segment. */
+const wrongSize = (c, p) => !!c.size?.w && !sizeMatches(c.size, wantOf(p));
+
+/** Decoded size of ONE real frame of the track ({w,h}), null if none arrives in time. getSettings() can lie (A20). */
+async function firstFrameSize(track, timeoutMs = 2500) {
+  const probe = track.clone(); // stopping the probe never stops the capture
+  const v = document.createElement('video');
+  try {
+    v.muted = true;
+    v.srcObject = new MediaStream([probe]);
+    v.play().catch(() => { /* metadata is enough */ });
+    await Promise.race([new Promise((r) => { v.onloadedmetadata = r; }), sleep(timeoutMs)]);
+    return v.videoWidth > 0 ? { w: v.videoWidth, h: v.videoHeight } : null;
+  } finally { v.srcObject = null; probe.stop(); }
+}
+
+/**
+ * Opens the capture and verifies the REAL frame size equals the preset. A capture of the same screen that is already
+ * open elsewhere (live view window) makes Chromium reuse it at ITS size; then release and ask again (bounded) and
+ * finally record what we get: recording never stops because of the size. capture.size = what the frames really are.
+ */
+async function acquireCapture(p, tries = SIZE_TRIES) {
+  const want = wantOf(p);
+  for (let attempt = 1; ; attempt++) {
+    const c = await openCapture(p);
+    const real = await firstFrameSize(c.track);
+    const settings = c.track.getSettings?.() || {};
+    c.size = real || { w: settings.width ?? null, h: settings.height ?? null };
+    if (!real || sizeMatches(real, want)) return c;
+    log('warn', `Capture size ${real.w}x${real.h} instead of ${want.w}x${want.h} (getSettings ${settings.width}x${settings.height}), attempt ${attempt}/${tries}${attempt >= tries ? ' - recording at this size' : ''}`);
+    if (attempt >= tries) return c;
+    releaseCapture();
+    await sleep(SIZE_RETRY_MS * attempt);
+  }
+}
+
+async function openCapture({ sourceId, maxWidth, maxHeight, maxFps }) {
   releaseCapture();
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -136,13 +186,17 @@ async function begin(p) {
   try {
     // A new recording day may bring a different quality preset, and a screen switch a different source:
     // constraints are fixed at capture time.
-    const changed = capture && (capture.sourceId !== p.sourceId || capture.maxWidth !== p.maxWidth || capture.maxHeight !== p.maxHeight || capture.maxFps !== p.maxFps);
+    // A capture whose real size is not the preset (the guard gave up on it) is retried at every rotation, so a wrong
+    // size lasts one segment, not hours. In the normal case the size matches and rotation stays gapless.
+    const moved = capture && (capture.sourceId !== p.sourceId || capture.maxWidth !== p.maxWidth || capture.maxHeight !== p.maxHeight || capture.maxFps !== p.maxFps);
+    const retrySize = capture && !moved && !p.newCapture && wrongSize(capture, p); // only the size is off
+    const changed = moved || retrySize;
     if (changed && current && current.recorder.state !== 'inactive') {
       // Flush the old recorder's last chunk before its tracks are stopped.
       stopRecorder(current);
       await Promise.race([current.stopped, new Promise((r) => setTimeout(r, 4000))]);
     }
-    if (p.newCapture || changed || !capture || capture.track.readyState !== 'live') await acquireCapture(p);
+    if (p.newCapture || changed || !capture || capture.track.readyState !== 'live') await acquireCapture(p, retrySize ? SIZE_TRIES_AT_ROTATION : SIZE_TRIES);
     const mimeType = getSupportedMimeType();
     if (!mimeType) throw new Error('No supported video MIME type found in this Chromium build');
 
@@ -190,8 +244,7 @@ async function begin(p) {
     const old = current;
     recorder.start(timesliceMs || 10_000);
     current = rec; // new one is live BEFORE the old one stops: no gap
-    const s = myCapture.track.getSettings?.() || {};
-    ipcRenderer.send('recording:segment-started', { segmentId, mime: mimeType, width: s.width ?? null, height: s.height ?? null });
+    ipcRenderer.send('recording:segment-started', { segmentId, mime: mimeType, width: myCapture.size?.w ?? null, height: myCapture.size?.h ?? null });
     setStatus(`Recording segment ${segmentId.slice(0, 8)} (${mimeType})`);
     if (old) stopRecorder(old);
   } catch (err) {

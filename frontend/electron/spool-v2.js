@@ -19,11 +19,17 @@ export const chunkFile = (dir, seq, ext = 'webm') => path.join(dir, `${seq}.${ex
 
 // Per-directory promise chain: serialises chunk writes and segment.json edits.
 const _locks = new Map();
+const _busy = new Map(); // dir -> operations queued or running (a folder with one is not idle)
 function withLock(key, fn) {
+  _busy.set(key, (_busy.get(key) || 0) + 1);
   const prev = _locks.get(key) || Promise.resolve();
   const p = prev.catch(() => { }).then(fn);
   _locks.set(key, p);
-  p.then(() => { }, () => { }).then(() => { if (_locks.get(key) === p) _locks.delete(key); });
+  p.then(() => { }, () => { }).then(() => {
+    if (_locks.get(key) === p) _locks.delete(key);
+    const n = (_busy.get(key) || 1) - 1;
+    if (n) _busy.set(key, n); else _busy.delete(key);
+  });
   return p;
 }
 
@@ -108,11 +114,12 @@ export function writeChunk(dir, seq, buffer, { capturedAt, durationMs, loggedOut
       throw err;
     }
     // A2: a late chunk for an already closed segment raises lastSeq and re-opens the close handshake.
+    // A17: closed.ok goes whenever a chunk is stored (also one filling a gap below lastSeq): the close is repeated.
     const seg = await readSegment(dir);
     if (seg?.closed && !(Number.isInteger(seg.lastSeq) && seg.lastSeq >= n)) {
       await writeFileDurable(path.join(dir, 'segment.json'), JSON.stringify({ ...seg, lastSeq: n }));
-      try { await fs.promises.unlink(path.join(dir, 'closed.ok')); } catch { /* not acknowledged yet */ }
     }
+    try { await fs.promises.unlink(path.join(dir, 'closed.ok')); } catch { /* not acknowledged yet */ }
     return { seq: n, sha256, bytes: buffer.length, moved: n !== seq };
   });
 }
@@ -166,6 +173,59 @@ export async function listSegmentDirs(root) {
     let segs;
     try { segs = await fs.promises.readdir(path.join(root, u.name), { withFileTypes: true }); } catch { continue; }
     for (const s of segs) if (s.isDirectory()) out.push({ dir: path.join(root, u.name, s.name), userDir: u.name, segmentId: s.name });
+  }
+  return out;
+}
+
+/** True when a chunk (<seq>.webm) of the folder has no `.ok` yet. */
+export async function hasUnsentChunks(dir) {
+  let files;
+  try { files = new Set(await fs.promises.readdir(dir)); } catch { return false; }
+  for (const f of files) if (/^\d+\.webm$/.test(f) && !files.has(`${f}.ok`)) return true;
+  return false;
+}
+
+/**
+ * A17: the server acknowledged the close. closed.ok is written only if, inside the same lock that
+ * serialises writeChunk, no chunk is waiting for upload. @returns {Promise<boolean>} written
+ */
+export function markClosedAcknowledged(dir) {
+  return withLock(dir, async () => {
+    if (await hasUnsentChunks(dir)) return false;
+    await fs.promises.writeFile(path.join(dir, 'closed.ok'), '');
+    return true;
+  });
+}
+
+/**
+ * A13/A19: remove a closed segment that never produced anything. Never while a chunk write is pending
+ * (queued/running here, or bytes held for retry) or any chunk file (also `.webm.tmp`) exists.
+ * @returns {Promise<boolean>} removed
+ */
+export async function removeEmptyClosedSegment(dir) {
+  if (_busy.has(dir) || _pendingBytes > 0) return false;
+  return withLock(dir, async () => {
+    if (_busy.get(dir) > 1 || _pendingBytes > 0) return false;
+    let files;
+    try { files = await fs.promises.readdir(dir); } catch { return false; }
+    if (files.some((f) => /^\d+\.webm/.test(f) || f === 'registered')) return false;
+    if ((await readSegment(dir))?.closed !== true) return false;
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    return true;
+  });
+}
+
+/** A18, once at start: a closed.ok folder that holds an unsent chunk loses closed.ok so the chunk is uploaded. */
+export async function reopenClosedWithUnsent(root, log = { warn() { } }) {
+  const out = [];
+  for (const { dir, segmentId } of await listSegmentDirs(root)) {
+    if (!(await exists(path.join(dir, 'closed.ok'))) || !(await hasUnsentChunks(dir))) continue;
+    await withLock(dir, async () => {
+      if (!(await hasUnsentChunks(dir))) return;
+      try { await fs.promises.unlink(path.join(dir, 'closed.ok')); } catch { return; }
+      out.push(segmentId);
+      log.warn(`[Spool] ${segmentId}: closed.ok removed — the folder holds chunk(s) never uploaded`);
+    });
   }
   return out;
 }

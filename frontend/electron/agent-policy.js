@@ -75,12 +75,18 @@ export function followStep(state, displayId, nowMs, delayMs) {
   return { state, switchTo: null };
 }
 
-/** Native physical capture size of a display (bounds x scaleFactor), fitted into 3840x2160, even numbers; 1920x1080 when unknown. */
+/**
+ * Live capture box: always 16:9, the same aspect as the recorder presets - the smallest of 1920x1080, 2560x1440 and
+ * 3840x2160 that contains the display's physical size (bounds x scaleFactor); 3840x2160 when none does; 1920x1080 when
+ * the display is unknown. Screens of another aspect ratio are letterboxed (bars are part of the frame).
+ * Why: Chromium hands a recorder that starts while this capture is open the OPEN capture's size when that is smaller
+ * (1366x768 live -> 1366x768 recording) or of another aspect (1920x1200 live -> 1728x1080 recording); a 16:9 box that is
+ * at least 1920x1080 leaves every recorder preset intact (measured by capture-size.check.cjs).
+ */
+const LIVE_BOXES = [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 }, { width: 3840, height: 2160 }];
 export function nativeCaptureSize(display) {
   const w = Number(display?.bounds?.width), h = Number(display?.bounds?.height), f = Number(display?.scaleFactor) || 1;
-  if (!(w > 0 && h > 0)) return { width: 1920, height: 1080 };
-  let pw = Math.round(w * f), ph = Math.round(h * f);
-  const k = Math.min(1, 3840 / pw, 2160 / ph);
-  const even = (n) => Math.max(2, Math.round(n / 2) * 2);
-  return { width: even(pw * k), height: even(ph * k) };
+  if (!(w > 0 && h > 0)) return { ...LIVE_BOXES[0] };
+  const pw = Math.round(w * f), ph = Math.round(h * f);
+  return { ...(LIVE_BOXES.find((b) => pw <= b.width && ph <= b.height) ?? LIVE_BOXES[2]) };
 }
