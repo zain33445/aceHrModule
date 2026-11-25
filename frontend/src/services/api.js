@@ -360,6 +360,8 @@ const api = {
   recordingGetSession: (sessionId) => axios.get(`${API_BASE}/recording/sessions/${sessionId}`),
   recordingPlaybackToken: (sessionId) =>
     axios.post(`${API_BASE}/recording/sessions/${sessionId}/playback-token`, {}),
+  recordingRetryAssembly: (sessionId) =>
+    axios.post(`${API_BASE}/recording/sessions/${sessionId}/retry-assembly`, {}),
   recordingGetLivePresence: () => axios.get(`${API_BASE}/recording/live-presence`),
   recordingGetSettings: () => axios.get(`${API_BASE}/recording/settings`),
   recordingPutSettings: (body) => axios.put(`${API_BASE}/recording/settings`, body),

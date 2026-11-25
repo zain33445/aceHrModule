@@ -56,7 +56,7 @@ export default function RecordingTab({ adminId, employees = [], isAdmin }) {
         ))}
       </div>
       {active === 'live' && <LiveTab />}
-      {active === 'recordings' && <RecordingsByDay employees={employees} />}
+      {active === 'recordings' && <RecordingsByDay employees={employees} isAdmin={admin} />}
       {active === 'settings' && admin && <RecordingSettings />}
     </div>
   );

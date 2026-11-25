@@ -25,20 +25,30 @@ function fmtHm(ms) {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-// Derived from Day fields (docs §13).
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+// The time of the next automatic try, only while it is still ahead.
+const nextTry = (d) => (d.nextAttemptAt && new Date(d.nextAttemptAt).getTime() > Date.now() ? d.nextAttemptAt : null);
+
+// Derived from Day fields (docs §13). `assembling` is also true while segments merely wait their turn;
+// assemblyRunning (newer backends) says whether a build is really going.
 function dayStatus(d) {
   if ((d.openSegments ?? 0) > 0 || d.status === 'recording') return 'Recording';
-  if (d.assembling) return 'Assembling';
+  if (d.assembling) {
+    if (d.assemblyRunning !== false) return 'Assembling';
+    return d.assemblyError && nextTry(d) ? 'Retrying' : 'Waiting';
+  }
   if (d.incompleteSegments > 0) return 'Incomplete';
   if (d.hasFile) return 'Ready';
   // Nothing assembling and no file: a v2 day still waiting for its first
-  // assembly, or a legacy session that never produced a video.
-  return d.legacy ? 'No video' : 'Waiting';
+  // assembly, or a legacy session that never produced a video. Only set-aside
+  // chunks (new fields) and nothing queued will not build by itself: No video.
+  return d.legacy || (d.chunksNotInVideo > 0 && d.chunksWaiting === 0) ? 'No video' : 'Waiting';
 }
 
 const STATUS_CLS = {
   Recording: 'bg-red-50 text-red-700',
   Assembling: 'bg-amber-50 text-amber-700',
+  Retrying: 'bg-amber-50 text-amber-700',
   Ready: 'bg-emerald-50 text-emerald-700',
   Incomplete: 'bg-orange-50 text-orange-700',
   Waiting: 'bg-slate-100 text-slate-600',
@@ -86,6 +96,64 @@ function SegmentList({ sessionId }) {
 
 function dayLabel(d) {
   return d.recordingDate || (d.createdAt ? ymd(new Date(d.createdAt)) : '—');
+}
+
+// The backend's reason, in plain words. Unknown texts are shown as they are.
+function reasonText(p) {
+  if (/^late chunks without/.test(p)) return 'Chunks arrived without the start of their recording';
+  if (/^no readable video/.test(p)) return 'No video could be read from them';
+  const m = /^only ([\d.]+) of ([\d.]+) min readable/.exec(p);
+  if (m) return `Only ${m[1]} of ${m[2]} min could be read`;
+  if (/^re-encode/.test(p)) return 'Could not be converted to the size of the day';
+  if (/^could not be joined/.test(p)) return 'Could not be joined to the rest of the day';
+  if (/^late chunks joined/.test(p)) return 'Late chunks were added; a few seconds before them may be missing';
+  if (/^ffmpeg:/.test(p)) return `The video tool failed on them: ${p.replace(/^ffmpeg:\s*/, '')}`;
+  return p;
+}
+
+// Does the day have anything to explain (chunks missing from the video, a build error, or notes on segments)?
+const hasDetails = (d) => d.chunksNotInVideo > 0 || !!d.assemblyError || d.problemCount > 0;
+// Retry makes sense for missing chunks or a failed build, not for notes only.
+const canRetry = (d) => d.chunksNotInVideo > 0 || !!d.assemblyError;
+
+// Why chunks of one day are not in its video, and the admin's Retry.
+function DayProblems({ d, isAdmin, retry, onRetry }) {
+  const more = (d.problemCount ?? 0) - (d.problems?.length ?? 0);
+  return (
+    <div className="space-y-2 text-xs text-neutral-700">
+      {d.problems?.length > 0 && (
+        <table className="text-xs">
+          <thead className="text-neutral-500">
+            <tr><th className="pr-6 text-left font-medium">Time</th><th className="pr-6 text-left font-medium">Reason</th><th className="text-left font-medium">Chunks</th></tr>
+          </thead>
+          <tbody>
+            {d.problems.map((p) => (
+              <tr key={p.segmentId}>
+                <td className="pr-6 whitespace-nowrap">{fmtClock(p.startedAt)}</td>
+                <td className="pr-6">{reasonText(p.problem)}</td>
+                <td>{p.chunks}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {more > 0 && <p className="text-neutral-500">and {more} more</p>}
+      {d.assemblyError && <p className="text-red-700">Last error: {d.assemblyError}</p>}
+      {nextTry(d) && <p>Next try {fmtTime(d.nextAttemptAt)}</p>}
+      {isAdmin && (
+        <div className="flex items-center gap-3">
+          {canRetry(d) && (
+            <button type="button" disabled={retry?.busy} onClick={() => onRetry(d)}
+              aria-label={`Retry building the recording of ${d.name} on ${dayLabel(d)}`}
+              className="flex items-center gap-1 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500">
+              {retry?.busy && <Loader2 size={12} className="animate-spin" />}Retry
+            </button>
+          )}
+          {retry?.text && <span role={retry.ok ? 'status' : 'alert'} className={retry.ok ? 'text-emerald-700' : 'text-red-700'}>{retry.text}</span>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // The token url is `/api/recording/...` (relative to the server origin) — see report.
@@ -177,7 +245,7 @@ function PlaybackVideo({ sessionId, initialUrl }) {
   );
 }
 
-export default function RecordingsByDay({ employees = [] }) {
+export default function RecordingsByDay({ employees = [], isAdmin = false }) {
   const [from, setFrom] = useState(() => karachiDay(Date.now() - 6 * 86400_000));
   const [to, setTo] = useState(() => karachiDay(Date.now()));
   const [userId, setUserId] = useState('');
@@ -186,6 +254,8 @@ export default function RecordingsByDay({ employees = [] }) {
   const [errorState, setErrorState] = useState(null); // { key, msg } — hidden once a newer request starts
   const [player, setPlayer] = useState(null); // { day, url? , error? }
   const [open, setOpen] = useState({}); // sessionId -> segment list expanded
+  const [retry, setRetry] = useState({}); // sessionId -> { busy?, ok?, text? } of the Retry button
+  const [reload, setReload] = useState(0); // bumped to fetch the list again
   const playReq = useRef(0); // ignores token responses of a closed modal / superseded Play
 
   const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
@@ -205,7 +275,22 @@ export default function RecordingsByDay({ employees = [] }) {
       (err) => { if (!stale) setErrorState({ key, msg: err.response?.data?.error ?? err.message }); }
     );
     return () => { stale = true; };
-  }, [from, to, userId, curPage, key]);
+  }, [from, to, userId, curPage, key, reload]);
+
+  const toggle = (id) => setOpen((o) => ({ ...o, [id]: !o[id] }));
+
+  const retryDay = async (day) => {
+    const id = day.sessionId;
+    setRetry((r) => ({ ...r, [id]: { busy: true } }));
+    try {
+      await api.recordingRetryAssembly(id);
+      setRetry((r) => ({ ...r, [id]: { ok: true, text: 'Retry started' } }));
+      setReload((n) => n + 1);
+    } catch (err) {
+      const text = err.response?.status === 409 ? 'Already being built' : `Could not retry: ${err.response?.data?.error ?? err.message}`;
+      setRetry((r) => ({ ...r, [id]: { ok: false, text } }));
+    }
+  };
 
   const play = async (day) => {
     const id = ++playReq.current;
@@ -308,9 +393,16 @@ export default function RecordingsByDay({ employees = [] }) {
                     {d.legacy && <span className="ml-2 rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-600">legacy</span>}
                     {d.screens > 1 && (
                       <button type="button" aria-expanded={!!open[d.sessionId]} aria-label={`Segments of ${d.name} on ${dayLabel(d)}`}
-                        onClick={() => setOpen((o) => ({ ...o, [d.sessionId]: !o[d.sessionId] }))}
+                        onClick={() => toggle(d.sessionId)}
                         className="ml-2 inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
                         {open[d.sessionId] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{d.screens} screens
+                      </button>
+                    )}
+                    {hasDetails(d) && (
+                      <button type="button" aria-expanded={!!open[d.sessionId]} aria-label={`Details about the recording of ${d.name} on ${dayLabel(d)}`}
+                        onClick={() => toggle(d.sessionId)}
+                        className="ml-2 inline-flex items-center gap-0.5 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500">
+                        {open[d.sessionId] ? <ChevronDown size={12} /> : <ChevronRight size={12} />}{d.chunksNotInVideo > 0 ? `${d.chunksNotInVideo} ${d.chunksNotInVideo === 1 ? 'chunk' : 'chunks'} not in video` : d.assemblyError ? 'Build problem' : `${d.problemCount} ${d.problemCount === 1 ? 'note' : 'notes'}`}
                       </button>
                     )}
                   </td>
@@ -322,6 +414,7 @@ export default function RecordingsByDay({ employees = [] }) {
                   </td>
                   <td className="px-4 py-2.5">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${STATUS_CLS[st]}`}>{st}</span>
+                    {st === 'Retrying' && <p className="mt-0.5 text-xs text-neutral-500">next try {fmtTime(d.nextAttemptAt)}</p>}
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-end gap-2">
@@ -338,8 +431,13 @@ export default function RecordingsByDay({ employees = [] }) {
                     </div>
                   </td>
                 </tr>
-                {open[d.sessionId] && (
-                  <tr className="bg-neutral-50"><td colSpan={5} className="px-4 py-3"><SegmentList sessionId={d.sessionId} /></td></tr>
+                {open[d.sessionId] && (hasDetails(d) || retry[d.sessionId]?.text || d.screens > 1) && (
+                  <tr className="bg-neutral-50">
+                    <td colSpan={5} className="space-y-3 px-4 py-3">
+                      {(hasDetails(d) || retry[d.sessionId]?.text) && <DayProblems d={d} isAdmin={isAdmin} retry={retry[d.sessionId]} onRetry={retryDay} />}
+                      {d.screens > 1 && <SegmentList sessionId={d.sessionId} />}
+                    </td>
+                  </tr>
                 )}
                 </Fragment>
               );
