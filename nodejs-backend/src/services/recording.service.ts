@@ -653,6 +653,11 @@ export function isAssembling(sessionId: string): boolean {
   return assemblyRuns.has(sessionId);
 }
 
+/** Number of assembly runs currently in flight (any session). */
+export function activeAssemblyCount(): number {
+  return assemblyRuns.size;
+}
+
 /** Per-session guarded assembly; a call during a run schedules exactly one more run. Never rejects. */
 export async function requestAssembly(sessionId: string): Promise<void> {
   const running = assemblyRuns.get(sessionId);
