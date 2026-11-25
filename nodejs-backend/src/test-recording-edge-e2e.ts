@@ -21,6 +21,8 @@ import { spawnSync } from 'child_process';
 import prisma from './prisma';
 import { runRetentionOnce, sweepV2, assembleOnDemand, assembleSessionV2 } from './services/recording-v2.service';
 
+process.env.RECORDING_PREBOOT_GRACE_MS = '0';
+
 const API = process.env.API_BASE || 'http://localhost:5000/api';
 const ORIGIN = API.replace(/\/api$/, '');
 const WS = ORIGIN.replace(/^http/, 'ws');
@@ -68,6 +70,13 @@ function makeRun(seconds: number, parts: number): Buffer[] {
   fs.unlinkSync(out);
   const n = Math.ceil(buf.length / parts);
   return Array.from({ length: parts }, (_, i) => buf.subarray(i * n, (i + 1) * n));
+}
+
+function durationOf(file: string): number {
+  const ff: string = require('ffmpeg-static');
+  const r = spawnSync(ff, ['-i', file]);
+  const m = /Duration: (\d+):(\d+):([\d.]+)/.exec(r.stderr.toString());
+  return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : -1;
 }
 
 function openSocket(url: string) {
@@ -135,7 +144,7 @@ async function main() {
   const sockets: WebSocket[] = [];
   const tmpFiles: string[] = [];
 
-  console.log(`\nRecording edge-case e2e (S1–S16) against ${API}\n`);
+  console.log(`\nRecording edge-case e2e (S1–S17) against ${API}\n`);
   if (process.env.AGENT_JWT_SECRET) console.log('  note: AGENT_JWT_SECRET is set — S8 forges tokens with it (the agent secret), not the built-in default\n');
   const emp = (await prisma.user.findUnique({ where: { username: EMPLOYEE.username } }))!;
   const other = (await prisma.user.findUnique({ where: { username: OTHER.username } }))!;
@@ -455,6 +464,28 @@ async function main() {
       const adm = await axios.get(url, xlAs(adminTok));
       check(`S16 GET /export/${ep} for an admin → 200 spreadsheetml`, isXlsx(adm), `${adm.status} ${adm.headers['content-type']}`);
     }
+
+    console.log('S17 late chunk after assembly is re-opened and appended');
+    const tail0 = makeRun(2, 1)[0];
+    const tail1 = makeRun(2, 1)[0];
+    const segT = newSeg('s17');
+    const rT = await register(agentTok, segT, daysAgo(6));
+    const T17 = track(rT.data.sessionId as string);
+    const put0 = await putChunk(agentTok, segT, 0, tail0);
+    await close(agentTok, segT, 0);
+    await assembleSessionV2(T17);
+    const before17 = (await sessionRow(T17))!;
+    const beforeDur = durationOf(before17.file_path!);
+    const latePut = await putChunk(agentTok, segT, 1, tail1);
+    const reopened = await until(async () => { const s = await segRow(segT); return s && s.state !== 'assembled' ? s : null; }, 5000);
+    check('S17 late chunk on an assembled segment is accepted', put0.status >= 200 && put0.status < 300 && latePut.status >= 200 && latePut.status < 300, `${put0.status}/${latePut.status}`);
+    check('S17 …and re-opens the segment for assembly', !!reopened, `state=${(await segRow(segT))?.state}`);
+    await assembleSessionV2(T17);
+    const after17 = (await sessionRow(T17))!;
+    const afterDur = durationOf(after17.file_path!);
+    const tailRow = await chunkRow(segT, 1);
+    check('S17 …the next generation appends the tail', after17.generation === before17.generation + 1 && afterDur > beforeDur + 1, `gen ${before17.generation}→${after17.generation}, ${beforeDur}s→${afterDur}s`);
+    check('S17 …and the late chunk is purged', !!tailRow?.purged_at, `purged=${tailRow?.purged_at}`);
   } finally {
     for (const s of sockets) { try { s.close(); } catch { /* ignore */ } }
     await sleep(500);

@@ -23,6 +23,7 @@ import {
   recordingEmitter,
 } from './recording.service';
 import { recordingDateFor, recordingDayEndsAt, ruleForUser } from './recording-day';
+import { getGateway } from '../gateways/recording.gateway';
 
 export const SEGMENT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const SHA_RE = /^[a-f0-9]{64}$/i;
@@ -30,7 +31,11 @@ const IDLE_ASSEMBLE_MS = 30 * 60_000;
 const DAY_OVER_GRACE_MS = 30 * 60_000;
 const LIVE_WINDOW_MS = 10 * 60_000;
 const STUCK_SEGMENT_MS = 48 * 3600_000;
+const PREBOOT_GRACE_MS = 2 * 3600_000;
+const MAX_CONCURRENT_ASSEMBLIES = 1;
 const ASSEMBLABLE = ['complete', 'incomplete'];
+const PROCESS_STARTED_AT = Date.now();
+const preBootDeferred = new Set<string>();
 
 const dateOnly = (d: string) => new Date(`${d}T00:00:00.000Z`);
 const dateStr = (d: Date) => d.toISOString().slice(0, 10);
@@ -180,6 +185,28 @@ async function recomputeSegmentState(segmentId: string): Promise<string> {
   return next;
 }
 
+async function reopenAssembledSegment(segmentId: string, reason: string): Promise<boolean> {
+  const seg = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, select: { state: true, last_seq: true } });
+  if (!seg || seg.state !== 'assembled') return false;
+  const rows = await prisma.recordingChunk.findMany({ where: { segment_id: segmentId }, select: { seq: true } });
+  const have = new Set<number>();
+  for (const r of rows) if (r.seq !== null) have.add(r.seq);
+  if (have.size === 0) return false;
+  let maxSeq = -1;
+  for (const s of have) if (s > maxSeq) maxSeq = s;
+  const lastSeq = Math.max(seg.last_seq ?? -1, maxSeq);
+  if (lastSeq < 0) return false;
+  const lost: number[] = [];
+  for (let i = 0; i <= lastSeq; i++) if (!have.has(i)) lost.push(i);
+  const updated = await prisma.recordingSegment.updateMany({
+    where: { id: segmentId, state: 'assembled' },
+    data: { state: lost.length ? 'incomplete' : 'complete', last_seq: lastSeq, lost_seqs: lost },
+  });
+  if (!updated.count) return false;
+  console.warn(`[Recording v2] Re-opened assembled segment ${segmentId} for tail assembly (${reason}) — lastSeq ${lastSeq}, ${lost.length} missing`);
+  return true;
+}
+
 export async function saveChunkV2(userId: string, segmentId: string, seq: number, buffer: Buffer, meta: ChunkMeta): Promise<ChunkResult> {
   const seg = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, include: { session: true } });
   if (!seg) throw new HttpError(404, 'segment_not_registered');
@@ -246,12 +273,17 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
   }
 
   if (!result.duplicate && !result.conflict) {
+    const lateTail = seg.state === 'assembled';
     await prisma.recordingSession.update({
       where: { id: session.id },
-      data: { last_chunk_at: new Date(), status: 'recording', ended_at: null, ...(session.status === 'pending' ? { started_at: new Date() } : {}) },
+      data: {
+        last_chunk_at: new Date(),
+        ...(lateTail ? {} : { status: 'recording', ended_at: null, ...(session.status === 'pending' ? { started_at: new Date() } : {}) }),
+      },
     });
-    if (seg.state === 'assembled') {
-      console.warn(`[Recording v2] Late chunk seg=${segmentId} seq=${seq} for an already assembled segment — kept on disk, not in the video`);
+    if (lateTail) {
+      try { await reopenAssembledSegment(segmentId, 'late chunk'); }
+      catch (err: any) { console.error(`[Recording v2] Could not re-open assembled segment ${segmentId}: ${err.message}`); }
     }
   }
   // Always recompute (also after a duplicate: a healed row may complete the segment). Only touches open-ish states.
@@ -370,7 +402,9 @@ const ABANDONED_SEGMENT_MS = 30 * 60_000;
  * left to the 48 h rule. Optionally scoped to one session (assembly start).
  */
 export async function closeAbandonedSegments(sessionId?: string): Promise<number> {
-  const cutoff = new Date(Date.now() - ABANDONED_SEGMENT_MS);
+  const nowMs = Date.now();
+  const cutoff = new Date(nowMs - ABANDONED_SEGMENT_MS);
+  const preBootGraceMs = Number(process.env.RECORDING_PREBOOT_GRACE_MS ?? PREBOOT_GRACE_MS);
   const groups = await prisma.recordingChunk.groupBy({
     by: ['segment_id'],
     where: { segment: { state: { in: ['open', 'closed'] } }, ...(sessionId ? { session_id: sessionId } : {}) },
@@ -382,6 +416,18 @@ export async function closeAbandonedSegments(sessionId?: string): Promise<number
     if (!g.segment_id || g._max.seq === null) continue;
     const seg = await prisma.recordingSegment.findUnique({ where: { id: g.segment_id } });
     if (!seg || (seg.state !== 'open' && seg.state !== 'closed')) continue;
+    if (seg.state === 'open') {
+      if (getGateway()?.isConnected(seg.user_id) && nowMs - seg.started_at.getTime() < 24 * 3600_000) continue;
+      const lastAt = g._max.uploaded_at?.getTime() ?? 0;
+      const recentlyActiveBeforeBoot = lastAt < PROCESS_STARTED_AT && lastAt >= PROCESS_STARTED_AT - ABANDONED_SEGMENT_MS;
+      if (preBootGraceMs > 0 && recentlyActiveBeforeBoot && nowMs < PROCESS_STARTED_AT + preBootGraceMs) {
+        if (!preBootDeferred.has(seg.id)) {
+          preBootDeferred.add(seg.id);
+          console.log(`[Recording v2] Segment ${seg.id} left open for the post-restart grace (agent may still be draining)`);
+        }
+        continue;
+      }
+    }
     const have = new Set((await prisma.recordingChunk.findMany({ where: { segment_id: seg.id }, select: { seq: true } })).map((c) => c.seq));
     const lastSeq = seg.last_seq ?? g._max.seq;
     const lost: number[] = [];
@@ -431,16 +477,18 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   // S2: never commit (and so never purge) a segment whose stored chunk file is missing. It stays as it is;
   // healthy segments of the same session are still assembled.
   const broken: string[] = [];
+  const skipped: string[] = [];
   const segments = all.filter((seg) => {
     const miss = seg.chunks.find((c) => !fs.existsSync(c.file_path));
     if (miss) broken.push(`segment ${seg.id} seq ${miss.seq} (${miss.file_path})`);
     return !miss;
   });
   const brokenMsg = () => `chunk file missing on disk: ${broken.join('; ')}`.slice(0, 900);
+  const issueMsg = () => [...broken, ...skipped].join('; ').slice(0, 900);
   if (broken.length) console.error(`[Recording v2] Session ${sessionId}: ${brokenMsg()}`);
   if (segments.length === 0) throw new Error(brokenMsg());
-  const keepError = () => broken.length
-    ? prisma.recordingSession.update({ where: { id: sessionId }, data: { assembly_error: brokenMsg(), assembly_attempts: { increment: 1 } } })
+  const keepError = () => (broken.length || skipped.length)
+    ? prisma.recordingSession.update({ where: { id: sessionId }, data: { assembly_error: issueMsg(), assembly_attempts: { increment: 1 } } })
     : null;
 
   const dir = dirOf(session);
@@ -490,6 +538,14 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
         continue;
       }
       if (files.length !== seg.chunks.length) console.warn(`[Recording v2] Segment ${seg.id}: ${seg.chunks.length - files.length} chunk file(s) missing on disk`);
+      if (files[0].seq !== 0) {
+        // A late chunk whose earlier chunks are already inside the generation. Without the segment's
+        // first chunk it has no WebM header and cannot be assembled on its own; keep it on disk so
+        // the data is not lost and let the rest of the session assemble.
+        skipped.push(`segment ${seg.id} starts at seq ${files[0].seq}; earlier chunks are already in the generation`);
+        console.warn(`[Recording v2] Segment ${seg.id}: first unpurged chunk is seq ${files[0].seq}, not standalone — keeping on disk`);
+        continue;
+      }
       const raw = path.join(dir, `.tmp-${ts}-${seg.id}.raw.webm`);
       const remuxed = path.join(dir, `.tmp-${ts}-${seg.id}.webm`);
       temps.push(raw, remuxed);
@@ -509,7 +565,9 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
         const vf = `scale=${refSize.w}:${refSize.h}:force_original_aspect_ratio=decrease,pad=${refSize.w}:${refSize.h}:(ow-iw)/2:(oh-ih)/2`;
         console.log(`[Recording v2] Segment ${seg.id} is ${dims?.codec ?? '?'} ${sw}x${sh}, generation is ${refCodec} ${refSize.w}x${refSize.h} — converting`);
         if (!(await ffmpegOk(['-y', '-i', useFile, '-vf', vf, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', scaled], scaled))) {
-          throw new Error(`re-encode of segment ${seg.id} to ${refSize.w}x${refSize.h} failed`);
+          skipped.push(`re-encode of segment ${seg.id} to ${refSize.w}x${refSize.h} failed`);
+          console.warn(`[Recording v2] Segment ${seg.id}: re-encode failed — keeping its chunks on disk and continuing`);
+          continue;
         }
         useFile = scaled;
         probe = await probeFile(useFile);
@@ -528,10 +586,10 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     // 2. join [previous generation, new segments…]
     const inputs = [...(prevFile ? [prevFile] : []), ...segFiles];
     const minDuration = prevDuration + newDuration - 2000;
-    const verify = async (): Promise<number | null> => {
+    const verify = async (minMs = minDuration): Promise<number | null> => {
       const p = await probeFile(tmpFinal);
-      if (!p.ok || p.durationMs < minDuration) {
-        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${minDuration}ms`);
+      if (!p.ok || p.durationMs < minMs) {
+        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${minMs}ms`);
         return null;
       }
       return p.durationMs;
@@ -546,13 +604,39 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
       await fs.promises.writeFile(list, inputs.map(concatListEntry).join('\n') + '\n');
       const base = ['-y', '-f', 'concat', '-safe', '0', '-i', list];
       if (await ffmpegOk([...base, '-c', 'copy', '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
-      if (finalDuration === null) {
+      if (finalDuration === null && prevFile && segFiles.length > 0) {
+        console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with tail-only re-encode`);
+        const tailList = path.join(dir, `.tmp-${ts}-tail-list.txt`);
+        const tailFile = path.join(dir, `.tmp-${ts}-tail.webm`);
+        temps.push(tailList, tailFile);
+        await fs.promises.writeFile(tailList, segFiles.map(concatListEntry).join('\n') + '\n');
+        const tailArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', tailList];
+        if (refSize) {
+          tailArgs.push('-vf', `scale=${refSize.w}:${refSize.h}:force_original_aspect_ratio=decrease,pad=${refSize.w}:${refSize.h}:(ow-iw)/2:(oh-ih)/2`);
+        }
+        if (await ffmpegOk([...tailArgs, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', tailFile], tailFile)) {
+          const tail = await probeFile(tailFile);
+          if (tail.ok && tail.durationMs > 0) {
+            const mergedList = path.join(dir, `.tmp-${ts}-merged-list.txt`);
+            temps.push(mergedList);
+            await fs.promises.writeFile(mergedList, [prevFile, tailFile].map(concatListEntry).join('\n') + '\n');
+            await rm(tmpFinal);
+            if (await ffmpegOk(['-y', '-f', 'concat', '-safe', '0', '-i', mergedList, '-c', 'copy', '-f', 'webm', tmpFinal], tmpFinal)) {
+              finalDuration = await verify(prevDuration + tail.durationMs - 2000);
+            }
+          }
+        }
+      }
+      if (finalDuration === null && !prevFile) {
         console.warn(`[Recording v2] concat -c copy unusable for ${sessionId}; retrying with LAST-RESORT full re-encode (${refCodec ?? 'vp8'})`);
         await rm(tmpFinal);
         if (await ffmpegOk([...base, ...reencodeArgs(refCodec ?? 'vp8'), '-f', 'webm', tmpFinal], tmpFinal)) finalDuration = await verify();
       }
     }
-    if (finalDuration === null) throw new Error('assembled generation failed verification');
+    if (finalDuration === null) {
+      if (prevFile) console.warn(`[Recording v2] tail-only assembly unusable for ${sessionId}; refusing full-session re-encode`);
+      throw new Error('assembled generation failed verification');
+    }
 
     // 3. publish: fsync + rename, then one DB transaction
     await fsyncFile(tmpFinal);
@@ -598,6 +682,15 @@ async function commitGeneration(
   for (const s of segs) for (const c of s.chunks) await deleteFile(c.file_path);
   for (const s of segs) if (s.chunks.length) await fs.promises.rmdir(path.dirname(s.chunks[0].file_path)).catch(() => {});
   if (prevFile && prevFile !== finalPath) await deleteFile(prevFile);
+
+  const leftovers = await prisma.recordingSegment.findMany({
+    where: { id: { in: segIds }, state: 'assembled', chunks: { some: { purged_at: null } } },
+    select: { id: true },
+  });
+  for (const l of leftovers) {
+    try { await reopenAssembledSegment(l.id, 'chunks arrived during assembly'); }
+    catch (err: any) { console.error(`[Recording v2] Could not re-open assembled segment ${l.id}: ${err.message}`); }
+  }
 }
 
 // ─────────────────────────────────────────
@@ -615,7 +708,8 @@ export async function sweepV2(): Promise<void> {
   sweepingV2 = true;
   try {
     const now = Date.now();
-    const { requestAssembly } = await import('./recording.service');
+    const { requestAssembly, isAssembling, activeAssemblyCount } = await import('./recording.service');
+    const maxConcurrent = Number(process.env.RECORDING_MAX_CONCURRENT_ASSEMBLIES ?? MAX_CONCURRENT_ASSEMBLIES) || 1;
 
     for (const p of [...pendingCleanup]) await deleteFile(p);
 
@@ -629,6 +723,18 @@ export async function sweepV2(): Promise<void> {
 
     // S4: finish segments nobody closed (agent crashed) so they become assemblable
     await closeAbandonedSegments().catch((err) => console.error('[Sweeper v2] abandoned-segment pass failed:', err.message));
+
+    const stranded = await prisma.recordingSegment.findMany({
+      where: { state: 'assembled', chunks: { some: { purged_at: null } } },
+      select: { id: true },
+    });
+    if (stranded.length) {
+      console.warn(`[Sweeper v2] ${stranded.length} assembled segment(s) hold chunks that are not in the video — re-opening for assembly`);
+      for (const s of stranded) {
+        try { await reopenAssembledSegment(s.id, 'sweeper'); }
+        catch (err: any) { console.error(`[Sweeper v2] Could not re-open segment ${s.id}: ${err.message}`); }
+      }
+    }
 
     // (a) live → stopped after 10 min without chunks
     const live = await prisma.recordingSession.findMany({
@@ -645,7 +751,17 @@ export async function sweepV2(): Promise<void> {
     const pending = await prisma.recordingSession.findMany({
       where: { recording_date: { not: null }, segments: { some: { state: { in: ASSEMBLABLE } } } },
       select: { id: true, user_id: true, recording_date: true, last_chunk_at: true, created_at: true, assembly_attempts: true, assembly_error: true, updated_at: true },
+      orderBy: [{ recording_date: 'asc' }, { last_chunk_at: 'asc' }],
     });
+    const counts = pending.length
+      ? await prisma.recordingChunk.groupBy({
+          by: ['session_id'],
+          where: { session_id: { in: pending.map((s) => s.id) }, purged_at: null },
+          _count: { _all: true },
+        })
+      : [];
+    const countById = new Map(counts.map((c) => [c.session_id, c._count._all]));
+    pending.sort((a, b) => (countById.get(a.id) ?? 0) - (countById.get(b.id) ?? 0));
     let queued = 0;
     for (const s of pending) {
       if (s.assembly_error && now - s.updated_at.getTime() < assemblyBackoffMs(s.assembly_attempts)) continue;
@@ -655,7 +771,11 @@ export async function sweepV2(): Promise<void> {
         const end = recordingDayEndsAt(dateStr(s.recording_date!), await ruleForUser(s.user_id));
         dayOver = now >= end.getTime() + DAY_OVER_GRACE_MS;
       }
-      if (idle || dayOver) { queued++; await requestAssembly(s.id); }
+      if (idle || dayOver) {
+        if (!isAssembling(s.id) && activeAssemblyCount() >= maxConcurrent) break;
+        queued++;
+        requestAssembly(s.id).catch((err) => console.error(`[Sweeper v2] assembly request failed for ${s.id}: ${err.message}`));
+      }
     }
 
     // (c) stopped + current generation covers everything assemblable → assembled
