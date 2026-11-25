@@ -783,19 +783,21 @@ export function startAssemblySweeper(): void {
 // ─────────────────────────────────────────
 
 export async function getSession(sessionId: string) {
-  return prisma.recordingSession.findUnique({
+  const s = await prisma.recordingSession.findUnique({
     where: { id: sessionId },
     include: {
       chunks: { orderBy: { chunk_index: 'asc' }, select: { chunk_index: true, file_size: true, uploaded_at: true } },
       employee: { select: { id: true, name: true } },
       creator: { select: { id: true, name: true } },
-      segments: { orderBy: { started_at: 'asc' }, select: { id: true, state: true, started_at: true, ended_at: true, last_seq: true, lost_seqs: true, generation: true, width: true, height: true, screen: true } },
+      segments: { orderBy: { started_at: 'asc' }, select: { id: true, state: true, started_at: true, ended_at: true, last_seq: true, lost_seqs: true, generation: true, width: true, height: true, screen: true, problem: true } },
     },
   });
+  if (s) delete (s as { parts?: unknown }).parts; // the part manifest is for the server, and can be large
+  return s;
 }
 
 export async function listSessions(userId?: string) {
-  return prisma.recordingSession.findMany({
+  const rows = await prisma.recordingSession.findMany({
     where: userId ? { user_id: userId } : undefined,
     orderBy: { created_at: 'desc' },
     take: 100,
@@ -805,6 +807,8 @@ export async function listSessions(userId?: string) {
       _count: { select: { chunks: true } },
     },
   });
+  for (const r of rows) delete (r as { parts?: unknown }).parts; // the part manifest is for the server, and can be large
+  return rows;
 }
 
 export function getLiveStatus(userId: string): {

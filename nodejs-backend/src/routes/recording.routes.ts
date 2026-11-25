@@ -25,7 +25,8 @@ import { verifyUserToken, findSessionUser, TOKEN_EXPIRED_CODE, signViewerToken, 
 import { getGateway } from '../gateways/recording.gateway';
 import * as RecordingService from '../services/recording.service';
 import { recordingEmitter, HttpError, isValidSessionId, startsWithEbml } from '../services/recording.service';
-import { assembleOnDemand, getRetentionDays, setRetentionDays, RETENTION_VALUES, QUALITY_VALUES, getRecordingQuality, setRecordingQuality } from '../services/recording-v2.service';
+import { Prisma } from '@prisma/client';
+import { assembleOnDemand, retryAssembly, getRetentionDays, setRetentionDays, RETENTION_VALUES, QUALITY_VALUES, getRecordingQuality, setRecordingQuality } from '../services/recording-v2.service';
 import prisma from '../prisma';
 
 const router = Router();
@@ -200,8 +201,15 @@ router.get('/days', requireRecordingAccess, async (req: Request, res: Response) 
     const ids = keys.slice((page - 1) * pageSize, page * pageSize).map((k) => k.id);
     const rows = await prisma.recordingSession.findMany({
       where: { id: { in: ids } },
-      include: { employee: { select: { name: true, department: { select: { name: true } } } }, segments: { select: { state: true, screen: true } } },
+      include: { employee: { select: { name: true, department: { select: { name: true } } } }, segments: { select: { id: true, state: true, screen: true, started_at: true, problem: true } } },
     });
+    // One grouped query for the page: chunk rows of the segments that are waiting, unreadable or flagged.
+    const counts = ids.length ? await prisma.$queryRaw<{ segment_id: string; total: number; unpurged: number }[]>(Prisma.sql`
+      SELECT c.segment_id, COUNT(*)::int AS total, (COUNT(*) FILTER (WHERE c.purged_at IS NULL))::int AS unpurged
+      FROM recording_chunks c JOIN recording_segments s ON s.id = c.segment_id
+      WHERE c.session_id IN (${Prisma.join(ids)}) AND (s.state IN ('unreadable', 'complete', 'incomplete') OR s.problem IS NOT NULL)
+      GROUP BY c.segment_id`) : [];
+    const chunksOf = new Map(counts.map((c) => [c.segment_id, c]));
     const byId = new Map(rows.map((r) => [r.id, r]));
     const items = await Promise.all(ids.map(async (id) => {
       const r = byId.get(id);
@@ -210,6 +218,8 @@ router.get('/days', requireRecordingAccess, async (req: Request, res: Response) 
       const st = (state: string) => r.segments.filter((x) => x.state === state).length;
       let hasFile = false;
       if (r.file_path) hasFile = await fs.promises.stat(r.file_path).then((f) => f.isFile(), () => false);
+      const unpurged = (...states: string[]) => r.segments.filter((x) => states.includes(x.state)).reduce((a, x) => a + (chunksOf.get(x.id)?.unpurged ?? 0), 0);
+      const flagged = r.segments.filter((x) => x.problem !== null).sort((a, b) => a.started_at.getTime() - b.started_at.getTime());
       return {
         sessionId: r.id,
         userId: r.user_id,
@@ -229,6 +239,14 @@ router.get('/days', requireRecordingAccess, async (req: Request, res: Response) 
         assembling: !legacy && (RecordingService.isAssembling(r.id) || st('complete') + st('incomplete') > 0),
         lastChunkAt: r.last_chunk_at,
         hasFile,
+        assemblyRunning: !legacy && RecordingService.isAssembling(r.id),
+        chunksNotInVideo: unpurged('unreadable'),
+        chunksWaiting: unpurged('complete', 'incomplete'),
+        problems: flagged.slice(0, 10).map((x) => ({ segmentId: x.id, startedAt: x.started_at, state: x.state, problem: x.problem, chunks: chunksOf.get(x.id)?.total ?? 0 })),
+        problemCount: flagged.length,
+        assemblyError: legacy ? null : r.assembly_error,
+        assemblyAttempts: legacy ? 0 : r.assembly_attempts,
+        nextAttemptAt: legacy ? null : r.assembly_next_at,
       };
     }));
     res.json({ items: items.filter(Boolean), total: keys.length, page, pageSize });
@@ -258,6 +276,23 @@ router.get('/sessions/:id', requireRecordingAccess, async (req: Request, res: Re
     res.json(session);
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to get session' });
+  }
+});
+
+/**
+ * POST /api/recording/sessions/:id/retry-assembly (admins)
+ * Unreadable segments with unpurged chunks go back into the queue, attempts / backoff / error are cleared and the day is
+ * rebuilt in the background. 202 { revived, pending }; 404 unknown or legacy session; 409 { error: 'already_assembling' }.
+ */
+router.post('/sessions/:id/retry-assembly', requireAdmin, async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  if (!isValidSessionId(id)) return res.status(400).json({ error: 'Invalid session id' });
+  try {
+    res.status(202).json(await retryAssembly(id));
+  } catch (err: any) {
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    console.error('[Recording] retry-assembly failed:', err.message);
+    res.status(500).json({ error: 'Failed to retry assembly' });
   }
 });
 

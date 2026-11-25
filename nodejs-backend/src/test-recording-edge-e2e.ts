@@ -1,5 +1,5 @@
 /**
- * test-recording-edge-e2e.ts — server edge cases S1–S29 of docs/recording-edge-cases.md (TDD).
+ * test-recording-edge-e2e.ts — server edge cases S1–S41 of docs/recording-edge-cases.md (TDD).
  *
  * Needs a running backend on API_BASE and its database, started with RECORDINGS_DIR pointing at a
  * scratch folder; run this script with the SAME RECORDINGS_DIR and the same .env (retention, sweeper and
@@ -21,9 +21,10 @@ import { spawnSync } from 'child_process';
 import prisma from './prisma';
 import { activeAssemblyCount } from './services/recording.service';
 import * as v2svc from './services/recording-v2.service';
-import { runRetentionOnce, sweepV2, assembleOnDemand, assembleSessionV2, pumpAssemblies } from './services/recording-v2.service';
+import { runRetentionOnce, sweepV2, assembleOnDemand, assembleSessionV2, pumpAssemblies, parseManifest, probeDims, cleanKeptFiles, collapseParts, removeUnknownParts, reviveHeaderlessUnreadable } from './services/recording-v2.service';
 
 process.env.RECORDING_PREBOOT_GRACE_MS = '0';
+process.env.RECORDING_PARTS_MIN_FREE_GB = '0'; // this PC has far less than the 20 GB the parts rule wants; the server must be started with the same
 
 const API = process.env.API_BASE || 'http://localhost:5000/api';
 const ORIGIN = API.replace(/\/api$/, '');
@@ -72,6 +73,27 @@ function makeRun(seconds: number, parts: number): Buffer[] {
   fs.unlinkSync(out);
   const n = Math.ceil(buf.length / parts);
   return Array.from({ length: parts }, (_, i) => buf.subarray(i * n, (i + 1) * n));
+}
+
+/** A MediaRecorder-like live WebM (VP8, unknown-size Segment, 1 s clusters, a keyframe every 2 s) cut at arbitrary bytes. */
+function makeLive(seconds: number, size: string, color: string | null, parts: number): Buffer[] {
+  const ff: string = require('ffmpeg-static');
+  const out = path.join(os.tmpdir(), `rec-edge-live-${rid()}.webm`);
+  const src = color ? `color=c=${color}:s=${size}:r=10:d=${seconds}` : `testsrc=duration=${seconds}:size=${size}:rate=10`;
+  const r = spawnSync(ff, ['-y', '-f', 'lavfi', '-i', src, '-pix_fmt', 'yuv420p', '-c:v', 'libvpx', '-b:v', '200k', '-g', '20', '-f', 'webm', '-live', '1', '-cluster_time_limit', '1000', out]);
+  if (r.status !== 0) throw new Error(`ffmpeg failed: ${r.stderr?.toString().slice(-300)}`);
+  const buf = fs.readFileSync(out);
+  fs.unlinkSync(out);
+  const cut = (i: number) => (i <= 0 ? 0 : i >= parts ? buf.length : Math.floor((buf.length * i) / parts) + 13 * i); // arbitrary byte positions, not cluster edges
+  return Array.from({ length: parts }, (_, i) => buf.subarray(cut(i), cut(i + 1)));
+}
+
+/** Dominant colour of the frame at t seconds. */
+function colorAt(file: string, t: number): string {
+  const ff: string = require('ffmpeg-static');
+  const r = spawnSync(ff, ['-v', 'error', '-ss', String(t), '-i', file, '-frames:v', '1', '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  const [R, G, B] = r.stdout;
+  return R > G && R > B ? 'red' : G > R && G > B ? 'green' : B > R && B > G ? 'blue' : 'unknown';
 }
 
 const CLUSTER_ID = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
@@ -165,7 +187,7 @@ async function main() {
   const sockets: WebSocket[] = [];
   const tmpFiles: string[] = [];
 
-  console.log(`\nRecording edge-case e2e (S1–S29) against ${API}\n`);
+  console.log(`\nRecording edge-case e2e (S1–S41) against ${API}\n`);
   if (process.env.AGENT_JWT_SECRET) console.log('  note: AGENT_JWT_SECRET is set — S8 forges tokens with it (the agent secret), not the built-in default\n');
   const emp = (await prisma.user.findUnique({ where: { username: EMPLOYEE.username } }))!;
   const other = (await prisma.user.findUnique({ where: { username: OTHER.username } }))!;
@@ -515,12 +537,9 @@ async function main() {
     const after17 = (await sessionRow(T17))!;
     const tailRow = await chunkRow(segT, 1);
     const tailSeg = await segRow(segT);
-    // Stage 1: the late chunk has no WebM header of its own (seq 0 was purged with generation 1), so it cannot be
-    // decoded. It must be kept on disk and flagged. Stage 2 grafts a header; then it appends to the video again
-    // (generation + 1, duration + ~2 s, chunk purged) and these three checks become the original S17 assertions.
-    check('S17 …a late chunk without its segment header is kept (row not purged, file on disk)', !!tailRow && tailRow.purged_at === null && fs.existsSync(tailRow.file_path), `purged=${tailRow?.purged_at}`);
-    check('S17 …and flagged: segment unreadable, problem names the missing header', tailSeg?.state === 'unreadable' && /late chunks without their header/.test(tailSeg.problem ?? ''), `state=${tailSeg?.state} problem=${tailSeg?.problem}`);
-    check('S17 …and the generation is untouched', after17.generation === before17.generation && durationOf(after17.file_path!) === beforeDur, `gen ${before17.generation}→${after17.generation}`);
+    check('S17 …the next generation appends the late chunk (generation + 1, ~2 s longer)', after17.generation === before17.generation + 1 && durationOf(after17.file_path!) > beforeDur + 1, `gen ${before17.generation}→${after17.generation}, ${beforeDur}s→${after17.file_path ? durationOf(after17.file_path) : -1}s`);
+    check('S17 …and the late chunk is purged (it is in the video)', !!tailRow?.purged_at, `purged=${tailRow?.purged_at}`);
+    check('S17 …the segment is assembled again, nothing flagged', tailSeg?.state === 'assembled' && tailSeg.problem === null, `state=${tailSeg?.state} problem=${tailSeg?.problem}`);
 
     // ── S18–S22: bad media must never block a day, and its bytes must never be purged ──
     const BAD = makeBadMedia();
@@ -629,16 +648,19 @@ async function main() {
     check('S21c a chunk claiming 10 min counts as 60 s (…of 3.0 min), not 30 min', /^only [\d.]+ of 3\.0 min readable$/.test(cap?.problem ?? ''), `problem=${cap?.problem}`);
     check('S21b/c what plays is published in both days', (await sessionRow(S21b))!.generation === 1 && (await sessionRow(S21c))!.generation === 1);
 
-    console.log('S22 a chunk arriving between the snapshot and the commit is never purged unseen');
+    console.log('S22 a chunk arriving between the snapshot and the commit is never purged unseen; the next run puts the whole segment in the video');
     const hooks = (v2svc as any).testHooks as { afterSnapshot?: () => Promise<void> } | undefined;
     check('S22 precondition: the service exposes testHooks.afterSnapshot', !!hooks);
     if (hooks) {
       const d22 = daysAgo(15);
       const sRace = newSeg('s22');
       const S22 = track((await register(agentTok, sRace, d22)).data.sessionId as string);
-      await addGood(sRace, d22);
-      const lateTail = makeRun(2, 1)[0];
-      hooks.afterSnapshot = async () => { hooks.afterSnapshot = undefined; await putChunk(agentTok, sRace, 3, lateTail); };
+      const RACE = makeLive(8, '320x240', null, 4); // one real stream cut at arbitrary bytes: chunk 3 continues chunk 2
+      for (let i = 0; i < 3; i++) await putChunk(agentTok, sRace, i, RACE[i], { 'X-Duration-Ms': '2000' });
+      const old22 = new Date(Date.now() - 31 * 60_000);
+      await prisma.recordingChunk.updateMany({ where: { segment_id: sRace }, data: { uploaded_at: old22 } }); // the agent vanished: the 30-min rule closes it
+      await prisma.recordingSegment.update({ where: { id: sRace }, data: { updated_at: old22 } });
+      hooks.afterSnapshot = async () => { hooks.afterSnapshot = undefined; await putChunk(agentTok, sRace, 3, RACE[3], { 'X-Duration-Ms': '2000' }); };
       const ok22 = await runOk(S22);
       hooks.afterSnapshot = undefined;
       const late = await chunkRow(sRace, 3);
@@ -646,10 +668,13 @@ async function main() {
       check('S22 the snapshot chunks are in generation 1', ok22 && row22.generation === 1, `ok=${ok22} gen=${row22.generation}`);
       check('S22 the chunk that arrived mid-assembly is NOT purged and its file is on disk', !!late && late.purged_at === null && fs.existsSync(late.file_path), `purged=${late?.purged_at}`);
       check('S22 …and its segment is pending again, not assembled-and-forgotten', ['complete', 'incomplete'].includes((await segRow(sRace))?.state ?? ''), `state=${(await segRow(sRace))?.state}`);
+      check('S22 …the earlier chunk files were not deleted either (the segment is not agent-closed, and a chunk is pending)', (await Promise.all([0, 1, 2].map(async (i) => fs.existsSync((await chunkRow(sRace, i))!.file_path)))).every(Boolean));
+      const dur22a = durOf(row22);
       await assembleSessionV2(S22).catch(() => {});
       const late2 = await chunkRow(sRace, 3);
-      const seg22 = await segRow(sRace);
-      check('S22 a later run keeps it (no header of its own) and flags it instead of purging', !!late2 && late2.purged_at === null && fs.existsSync(late2.file_path) && seg22?.state === 'unreadable' && !!seg22.problem, `state=${seg22?.state} problem=${seg22?.problem}`);
+      const row22b = (await sessionRow(S22))!;
+      check('S22 the next run rebuilds the segment with the late chunk: generation 2 is the whole stream, not 1 + 2 copies', row22b.generation === 2 && durOf(row22b) > dur22a + 1 && durOf(row22b) < 9.5, `gen=${row22b.generation} ${dur22a}s→${durOf(row22b)}s`);
+      check('S22 …the late chunk is purged only now that it is in the video', !!late2?.purged_at && (await segRow(sRace))?.state === 'assembled', `state=${(await segRow(sRace))?.state}`);
     }
 
     console.log('S24 two segments that will not join: bisect keeps the rest, a lone culprit gets one re-encode');
@@ -784,6 +809,298 @@ async function main() {
     check('S29 …the faulty one is unreadable with the text as its problem, chunks kept', st30[1]?.state === 'unreadable' && /Input\/output error/.test(st30[1].problem ?? '') && (await kept(s30[1])), `state=${st30[1]?.state} problem=${st30[1]?.problem}`);
     check('S29 …the others are assembled', st30[0]?.state === 'assembled' && st30[2]?.state === 'assembled');
 
+    // ── Stage 2: kept files, late chunks, parts, time order, reference size ──
+    const manifestOf = async (id: string) => parseManifest((await sessionRow(id))!.parts);
+    const partFiles = (m: ReturnType<typeof parseManifest>, dir: string) => (m?.items ?? []).map((i) => path.join(dir, i.file));
+    const dirOfSession = async (id: string) => (await sessionRow(id))!.dir_path!;
+    const rowsOf = (seg: string) => prisma.recordingChunk.findMany({ where: { segment_id: seg }, orderBy: { seq: 'asc' } });
+    const allKept = async (seg: string) => { const r = await rowsOf(seg); return r.length > 0 && r.every((c) => c.purged_at !== null && fs.existsSync(c.file_path)); };
+    const age = async (seg: string, minutes: number) => {
+      const t = new Date(Date.now() - minutes * 60_000);
+      await prisma.recordingChunk.updateMany({ where: { segment_id: seg }, data: { uploaded_at: t } });
+      await prisma.recordingSegment.update({ where: { id: seg }, data: { updated_at: t } });
+    };
+
+    console.log('S30 early abandon, the rest arrives later: the whole segment is rebuilt from its kept chunks');
+    const dS30 = daysAgo(30), seg30 = newSeg('s30');
+    const L30 = makeLive(8, '320x240', null, 4);
+    const S30s = track((await register(agentTok, seg30, dS30)).data.sessionId as string);
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, seg30, i, L30[i], { 'X-Duration-Ms': '2000' });
+    await age(seg30, 31);
+    const ok30 = await runOk(S30s);
+    const r30a = (await sessionRow(S30s))!, dur30a = durOf(r30a), m30a = await manifestOf(S30s);
+    check('S30 the abandoned segment is assembled (generation 1, 2.5-5 s) with a part of its own', ok30 && r30a.generation === 1 && dur30a > 2.5 && dur30a < 5 && m30a?.items.length === 1 && m30a.items[0].segmentId === seg30 && m30a.items[0].firstSeq === 0, `ok=${ok30} gen=${r30a.generation} dur=${dur30a} items=${JSON.stringify(m30a?.items)}`);
+    check('S30 …its chunk rows are purged but the FILES stay (the agent never closed it)', await allKept(seg30));
+    await putChunk(agentTok, seg30, 2, L30[2], { 'X-Duration-Ms': '2000' });
+    await putChunk(agentTok, seg30, 3, L30[3], { 'X-Duration-Ms': '2000' });
+    await close(agentTok, seg30, 3);
+    check('S30 the late chunks re-open the segment (complete) and are pending', ['complete', 'incomplete'].includes((await segRow(seg30))?.state ?? ''), `state=${(await segRow(seg30))?.state}`);
+    const oldPart30 = m30a ? path.join(await dirOfSession(S30s), m30a.items[0].file) : '';
+    const ok30b = await runOk(S30s);
+    const r30b = (await sessionRow(S30s))!, dur30b = durOf(r30b), m30b = await manifestOf(S30s);
+    const sg30 = await segRow(seg30);
+    check('S30 generation 2 is the whole stream (7-9 s), not the first part twice', ok30b && r30b.generation === 2 && dur30b > 7 && dur30b < 9.2, `ok=${ok30b} gen=${r30b.generation} dur=${dur30b}`);
+    check('S30 …no header problem, segment assembled, one part for it (the old part is replaced and gone)', sg30?.state === 'assembled' && sg30.problem === null && m30b?.items.length === 1 && !fs.existsSync(oldPart30) && fs.existsSync(path.join(await dirOfSession(S30s), m30b.items[0].file)), `state=${sg30?.state} problem=${sg30?.problem} items=${JSON.stringify(m30b?.items)}`);
+    check('S30 …all four chunks purged and, the agent having closed the segment, their files deleted', await purged(seg30));
+
+    console.log('S31 late chunks after the files are gone: grafted onto the segment\'s own header (init_data)');
+    const d31 = daysAgo(31), seg31 = newSeg('s31');
+    const L31 = makeLive(8, '320x240', null, 4);
+    const S31s = track((await register(agentTok, seg31, d31)).data.sessionId as string);
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, seg31, i, L31[i], { 'X-Duration-Ms': '2000' });
+    await close(agentTok, seg31, 1);
+    await runOk(S31s);
+    const r31a = (await sessionRow(S31s))!, dur31a = durOf(r31a);
+    const init31 = (await segRow(seg31))?.init_data;
+    check('S31 seq 0 stored its header bytes (init_data, starts with the EBML magic)', !!init31 && init31.length > 100 && init31.length < 65536 && Buffer.from(init31).subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])), `len=${init31?.length}`);
+    check('S31 generation 1 built; the agent closed the segment, so its chunk files are deleted', r31a.generation === 1 && (await purged(seg31)) && (await segRow(seg31))?.agent_closed_at !== null);
+    await putChunk(agentTok, seg31, 2, L31[2], { 'X-Duration-Ms': '2000' });
+    await putChunk(agentTok, seg31, 3, L31[3], { 'X-Duration-Ms': '2000' });
+    const ok31 = await runOk(S31s);
+    const r31b = (await sessionRow(S31s))!, dur31b = durOf(r31b), m31 = await manifestOf(S31s);
+    const s31 = await segRow(seg31);
+    check('S31 the tail is in the video: generation 2 is 1.2-4.5 s longer', ok31 && r31b.generation === 2 && dur31b > dur31a + 1.2 && dur31b < dur31a + 4.5, `ok=${ok31} gen=${r31b.generation} ${dur31a}s->${dur31b}s`);
+    check('S31 …the segment is assembled and says it used its own header', s31?.state === 'assembled' && /own header/.test(s31.problem ?? ''), `state=${s31?.state} problem=${s31?.problem}`);
+    check('S31 …the tail chunk rows are purged but their FILES are kept (frames before its first keyframe are not in the video)', (await Promise.all([2, 3].map(async (i) => { const c = (await chunkRow(seg31, i))!; return c.purged_at !== null && fs.existsSync(c.file_path); }))).every(Boolean));
+    check('S31 …the manifest holds the head part and the tail part of the segment, in time order, files present', JSON.stringify((m31?.items ?? []).filter((i) => i.segmentId === seg31).map((i) => i.firstSeq)) === '[0,2]' && partFiles(m31, await dirOfSession(S31s)).every((p) => fs.existsSync(p)), JSON.stringify(m31?.items));
+
+    console.log('S31b a still screen: seq 0 is ONE byte and the header continues in seq 1');
+    const d44 = daysAgo(44), seg44 = newSeg('s31b');
+    const L44 = makeLive(8, '320x240', null, 3);
+    const S44s = track((await register(agentTok, seg44, d44)).data.sessionId as string);
+    await putChunk(agentTok, seg44, 0, L44[0].subarray(0, 1), { 'X-Duration-Ms': '10' });
+    check('S31b after a 1-byte seq 0 there is no header yet (init_data NULL)', (await segRow(seg44))?.init_data === null);
+    await putChunk(agentTok, seg44, 1, L44[0].subarray(1), { 'X-Duration-Ms': '2600' });
+    const init44 = (await segRow(seg44))?.init_data;
+    check('S31b …after seq 1 init_data is the header from the concatenated chunks 0 and 1', !!init44 && init44.length > 100 && init44.length < 65536 && Buffer.from(init44).subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])), `len=${init44?.length}`);
+    await close(agentTok, seg44, 1);
+    await runOk(S44s);
+    const dur44a = durOf((await sessionRow(S44s))!);
+    check('S31b the two chunks assemble (generation 1) and, the agent having closed it, the files are deleted', (await sessionRow(S44s))!.generation === 1 && dur44a > 1.5 && (await purged(seg44)), `dur=${dur44a}`);
+    await putChunk(agentTok, seg44, 2, L44[1], { 'X-Duration-Ms': '2600' });
+    await putChunk(agentTok, seg44, 3, L44[2], { 'X-Duration-Ms': '2600' });
+    await runOk(S44s);
+    const r44 = (await sessionRow(S44s))!;
+    check('S31b the late chunks are grafted onto that header (generation 2 longer by 1.2-6 s)', r44.generation === 2 && durOf(r44) > dur44a + 1.2 && durOf(r44) < dur44a + 6 && /own header/.test((await segRow(seg44))?.problem ?? ''), `gen=${r44.generation} ${dur44a}s->${durOf(r44)}s problem=${(await segRow(seg44))?.problem}`);
+
+    console.log('S32 no own header: grafted onto the header of a donor segment (same user, mime and size)');
+    const d32 = daysAgo(32), seg32d = newSeg('s32d'), seg32 = newSeg('s32');
+    const L32d = makeLive(4, '320x240', null, 1), L32 = makeLive(8, '320x240', null, 4);
+    const S32s = track((await register(agentTok, seg32d, d32)).data.sessionId as string);
+    await putChunk(agentTok, seg32d, 0, L32d[0], { 'X-Duration-Ms': '4000' });
+    await close(agentTok, seg32d, 0);
+    await register(agentTok, seg32, new Date(d32.getTime() + 60_000));
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, seg32, i, L32[i], { 'X-Duration-Ms': '2000' });
+    await close(agentTok, seg32, 1);
+    await runOk(S32s);
+    await prisma.recordingSegment.update({ where: { id: seg32 }, data: { init_data: null } }); // a segment from before init_data existed
+    const dur32a = durOf((await sessionRow(S32s))!);
+    await putChunk(agentTok, seg32, 2, L32[2], { 'X-Duration-Ms': '2000' });
+    await putChunk(agentTok, seg32, 3, L32[3], { 'X-Duration-Ms': '2000' });
+    const ok32 = await runOk(S32s);
+    const r32 = (await sessionRow(S32s))!, dur32b = durOf(r32), s32 = await segRow(seg32);
+    check('S32 the tail is in the video via the donor header (generation 2, 1.2-4.5 s longer)', ok32 && r32.generation === 2 && dur32b > dur32a + 1.2 && dur32b < dur32a + 4.5, `ok=${ok32} gen=${r32.generation} ${dur32a}s->${dur32b}s`);
+    check('S32 …the segment says it used a donor header and its tail files are kept', s32?.state === 'assembled' && /donor/.test(s32.problem ?? '') && (await Promise.all([2, 3].map(async (i) => fs.existsSync((await chunkRow(seg32, i))!.file_path)))).every(Boolean), `problem=${s32?.problem}`);
+
+    console.log('S33 an older segment that arrives later sits before the newer ones');
+    const d33 = daysAgo(33), seg33 = ['red', 'blue', 'green'].map((c) => newSeg(`s33${c}`));
+    const addColor = async (seg: string, color: string, at: Date) => { await register(agentTok, seg, at); await putChunk(agentTok, seg, 0, makeLive(2, '320x240', color, 1)[0], { 'X-Duration-Ms': '2000' }); await close(agentTok, seg, 0); };
+    const S33s = track((await register(agentTok, seg33[1], new Date(d33.getTime() + 60_000))).data.sessionId as string);
+    await addColor(seg33[1], 'blue', new Date(d33.getTime() + 60_000));
+    await addColor(seg33[2], 'green', new Date(d33.getTime() + 120_000));
+    await runOk(S33s);
+    check('S33 precondition: blue then green in generation 1', colorAt((await sessionRow(S33s))!.file_path!, 1) === 'blue' && colorAt((await sessionRow(S33s))!.file_path!, 3) === 'green');
+    await addColor(seg33[0], 'red', d33); // started BEFORE both, arrives last
+    await runOk(S33s);
+    const r33 = (await sessionRow(S33s))!, m33 = await manifestOf(S33s);
+    check('S33 generation 2 plays red, blue, green (by colour at 1 s, 3 s, 5 s)', r33.generation === 2 && [1, 3, 5].map((t) => colorAt(r33.file_path!, t)).join() === 'red,blue,green', `gen=${r33.generation} ${[1, 3, 5].map((t) => colorAt(r33.file_path!, t))}`);
+    check('S33 …and the manifest lists the parts in time order', JSON.stringify(m33?.items.map((i) => i.segmentId)) === JSON.stringify(seg33), JSON.stringify(m33?.items.map((i) => i.segmentId)));
+
+    console.log('S33b the ordered join of the parts fails once: the segment is appended to the generation and the parts collapse (nothing lost)');
+    const joinHooks = (v2svc as any).testHooks as { failJoin?: (g: { id: string; reencoded: boolean }[]) => boolean };
+    const d40 = daysAgo(43), seg40 = [newSeg('s33bred'), newSeg('s33bblue')];
+    const S40s = track((await register(agentTok, seg40[1], new Date(d40.getTime() + 60_000))).data.sessionId as string);
+    await addColor(seg40[1], 'blue', new Date(d40.getTime() + 60_000));
+    await runOk(S40s);
+    const m40a = await manifestOf(S40s), dir40 = await dirOfSession(S40s);
+    await addColor(seg40[0], 'red', d40); // older, arrives later: wants the ordered join
+    let calls40 = 0;
+    joinHooks.failJoin = () => calls40++ === 0; // only the first (ordered) attempt fails
+    const ok40 = await runOk(S40s);
+    joinHooks.failJoin = undefined;
+    const r40 = (await sessionRow(S40s))!, m40 = await manifestOf(S40s);
+    check('S33b generation 2 holds both (~4 s), appended in arrival order (blue, then red)', ok40 && r40.generation === 2 && durOf(r40) > 3.3 && durOf(r40) < 5.5 && colorAt(r40.file_path!, 1) === 'blue' && colorAt(r40.file_path!, 3) === 'red', `ok=${ok40} gen=${r40.generation} dur=${durOf(r40)}`);
+    check('S33b …the manifest collapsed to the generation alone and the old part files are gone', m40?.items.length === 1 && m40.items[0].segmentId === null && path.join(dir40, m40.items[0].file) === r40.file_path && partFiles(m40a, dir40).every((p) => !fs.existsSync(p)), JSON.stringify(m40?.items));
+    check('S33b …both segments are assembled and nothing is pending', (await Promise.all(seg40.map(async (s) => (await segRow(s))?.state === 'assembled'))).every(Boolean));
+
+    console.log('S34 the reference size is the one with the most video, not the first segment\'s');
+    const d34 = daysAgo(34), seg34 = [newSeg('s34t'), newSeg('s34a'), newSeg('s34b')];
+    const S34s = track((await register(agentTok, seg34[0], d34, { width: 320, height: 180 })).data.sessionId as string);
+    await putChunk(agentTok, seg34[0], 0, makeLive(3, '320x180', null, 1)[0], { 'X-Duration-Ms': '3000' }); await close(agentTok, seg34[0], 0);
+    for (const [i, sg] of [seg34[1], seg34[2]].entries()) {
+      await register(agentTok, sg, new Date(d34.getTime() + (i + 1) * 60_000), { width: 640, height: 360 });
+      await putChunk(agentTok, sg, 0, makeLive(3, '640x360', null, 1)[0], { 'X-Duration-Ms': '3000' }); await close(agentTok, sg, 0);
+    }
+    const ok34 = await runOk(S34s);
+    const r34 = (await sessionRow(S34s))!, dims34 = await probeDims(r34.file_path!);
+    check('S34 the day is 640x360 (the small first segment was scaled up), all three in (~9 s)', ok34 && dims34?.width === 640 && dims34.height === 360 && durOf(r34) > 8 && durOf(r34) < 10.5, `ok=${ok34} dims=${dims34?.width}x${dims34?.height} dur=${durOf(r34)}`);
+
+    console.log('S34b a day generated at under 640 wide is re-encoded once when clearly more material of a proper size arrives');
+    const d35 = daysAgo(35), seg35 = [newSeg('s35t'), newSeg('s35a'), newSeg('s35b')];
+    const S35s = track((await register(agentTok, seg35[0], d35, { width: 320, height: 180 })).data.sessionId as string);
+    await putChunk(agentTok, seg35[0], 0, makeLive(4, '320x180', null, 1)[0], { 'X-Duration-Ms': '4000' }); await close(agentTok, seg35[0], 0);
+    await runOk(S35s);
+    const dims35a = await probeDims((await sessionRow(S35s))!.file_path!);
+    for (const [i, sg] of [seg35[1], seg35[2]].entries()) {
+      await register(agentTok, sg, new Date(d35.getTime() + (i + 1) * 60_000), { width: 640, height: 360 });
+      await putChunk(agentTok, sg, 0, makeLive(3, '640x360', null, 1)[0], { 'X-Duration-Ms': '3000' }); await close(agentTok, sg, 0);
+    }
+    const ok35 = await runOk(S35s);
+    const r35 = (await sessionRow(S35s))!, dims35b = await probeDims(r35.file_path!);
+    check('S34b generation 1 is 320x180 (nothing else existed), generation 2 is 640x360 with everything (~10 s)', ok35 && dims35a?.width === 320 && dims35b?.width === 640 && dims35b.height === 360 && r35.generation === 2 && durOf(r35) > 8.5 && durOf(r35) < 11.8, `dims ${dims35a?.width}->${dims35b?.width} gen=${r35.generation} dur=${durOf(r35)}`);
+
+    console.log('S35 parts: kept while the day is recent, collapsed into the generation when it is old or the disk is low');
+    const dir33 = await dirOfSession(S33s);
+    const before35 = await manifestOf(S33s);
+    await collapseParts({ keepDays: 1000 });
+    check('S35 a day within the keep days keeps its parts', (await manifestOf(S33s))?.items.length === 3 && partFiles(before35, dir33).every((p) => fs.existsSync(p)));
+    const genFile33 = r33.file_path!, genDur33 = durOf(r33);
+    await collapseParts({ keepDays: 4 });
+    const m35 = await manifestOf(S33s);
+    check('S35 an old day collapses to one base item = the current generation; part files are gone; the generation is untouched', m35?.items.length === 1 && m35.items[0].segmentId === null && path.join(dir33, m35.items[0].file) === genFile33 && partFiles(before35, dir33).every((p) => !fs.existsSync(p)) && durOf((await sessionRow(S33s))!) === genDur33, JSON.stringify(m35?.items));
+    const seg33d = newSeg('s33d');
+    await addColor(seg33d, 'green', new Date(d33.getTime() + 180_000));
+    await runOk(S33s);
+    const r35c = (await sessionRow(S33s))!, m35c = await manifestOf(S33s);
+    check('S35 a new segment on a collapsed day: generation 3 has all four (~8 s), the old generation became a base part that still exists', r35c.generation === 3 && durOf(r35c) > 7 && durOf(r35c) < 9.5 && m35c?.items.length === 2 && m35c.items[0].segmentId === null && partFiles(m35c, dir33).every((p) => fs.existsSync(p)) && !fs.existsSync(genFile33), `gen=${r35c.generation} dur=${durOf(r35c)} items=${JSON.stringify(m35c?.items)}`);
+    process.env.RECORDING_PARTS_MIN_FREE_GB = '1000000000';
+    const d36 = daysAgo(36), seg36 = newSeg('s36lowdisk');
+    const S36l = track((await register(agentTok, seg36, d36)).data.sessionId as string);
+    await addGood(seg36, d36);
+    await runOk(S36l);
+    process.env.RECORDING_PARTS_MIN_FREE_GB = '0';
+    const m36l = await manifestOf(S36l), dir36l = await dirOfSession(S36l);
+    const partsLeft36 = fs.existsSync(path.join(dir36l, 'parts')) ? fs.readdirSync(path.join(dir36l, 'parts')).length : 0;
+    check('S35 low disk: no parts are created, the manifest is just the generation', m36l?.items.length === 1 && m36l.items[0].segmentId === null && partsLeft36 === 0, JSON.stringify(m36l?.items));
+
+    console.log('S36 crash between moving the new parts and the commit never loses a committed file');
+    const crashHooks = (v2svc as any).testHooks as { beforeCommit?: () => Promise<void> };
+    const d37 = daysAgo(37), seg37 = [newSeg('s36a'), newSeg('s36b')];
+    const S37s = track((await register(agentTok, seg37[0], d37)).data.sessionId as string);
+    await addGood(seg37[0], d37);
+    await runOk(S37s);
+    const r37a = (await sessionRow(S37s))!, m37a = await manifestOf(S37s), dir37 = await dirOfSession(S37s), gen37Size = fs.statSync(r37a.file_path!).size;
+    await addGood(seg37[1], new Date(d37.getTime() + 60_000));
+    crashHooks.beforeCommit = async () => { crashHooks.beforeCommit = undefined; throw new Error('simulated crash before the commit'); };
+    const ok37 = await runOk(S37s);
+    crashHooks.beforeCommit = undefined;
+    const r37b = (await sessionRow(S37s))!;
+    const partsDir = path.join(dir37, 'parts');
+    const known = new Set((m37a?.items ?? []).map((i) => path.basename(i.file)));
+    const orphans = fs.existsSync(partsDir) ? fs.readdirSync(partsDir).filter((n) => !known.has(n)) : [];
+    check('S36 the crashed run fails; generation, manifest and the committed generation file are as before', !ok37 && r37b.generation === r37a.generation && JSON.stringify(r37b.parts) === JSON.stringify(r37a.parts) && fs.existsSync(r37a.file_path!) && fs.statSync(r37a.file_path!).size === gen37Size, `ok=${ok37} gen=${r37b.generation}`);
+    check('S36 …every part file of the committed manifest is intact, the new part sits unreferenced in parts/', partFiles(m37a, dir37).every((p) => fs.existsSync(p)) && orphans.length >= 1, `orphans=${orphans}`);
+    check('S36 …the chunks of the crashed run were not purged', (await prisma.recordingChunk.findMany({ where: { segment_id: seg37[1] } })).every((c) => c.purged_at === null));
+    await removeUnknownParts();
+    check('S36 an unreferenced part younger than 1 h is left alone', orphans.every((n) => fs.existsSync(path.join(partsDir, n))));
+    const twoHours = new Date(Date.now() - 2 * 3600_000);
+    for (const n of orphans) fs.utimesSync(path.join(partsDir, n), twoHours, twoHours);
+    await removeUnknownParts();
+    check('S36 …and removed once older than 1 h; committed parts are never touched', orphans.every((n) => !fs.existsSync(path.join(partsDir, n))) && partFiles(m37a, dir37).every((p) => fs.existsSync(p)));
+    const ok37b = await runOk(S37s);
+    check('S36 the retry succeeds: generation 2 holds both, two parts in the manifest', ok37b && (await sessionRow(S37s))!.generation === 2 && (await manifestOf(S37s))?.items.length === 2, `ok=${ok37b}`);
+
+    console.log('S37 kept chunk files go once the agent has closed the segment, or 16 days after the last chunk of one it never closed');
+    const d38 = daysAgo(38), seg38 = [newSeg('s37a'), newSeg('s37b'), newSeg('s37c')];
+    const S38s = track((await register(agentTok, seg38[0], d38)).data.sessionId as string);
+    for (const [i, sg] of seg38.entries()) {
+      if (i) await register(agentTok, sg, new Date(d38.getTime() + i * 60_000));
+      await putChunk(agentTok, sg, 0, makeLive(2, '320x240', null, 1)[0], { 'X-Duration-Ms': '2000' });
+    }
+    for (const sg of seg38) await age(sg, 31);
+    await runOk(S38s);
+    await age(seg38[1], 17 * 1440); await age(seg38[2], 15 * 1440); // time passes after assembly
+    check('S37 precondition: three assembled segments, no agent close, files kept', (await Promise.all(seg38.map(allKept))).every(Boolean) && (await Promise.all(seg38.map(async (s) => (await segRow(s))?.agent_closed_at === null))).every(Boolean));
+    await cleanKeptFiles();
+    check('S37 only the segment idle for 17 days lost its files (15 days and 31 min are kept)', (await purged(seg38[1])) && (await allKept(seg38[0])) && (await allKept(seg38[2])));
+    const closeLate = await close(agentTok, seg38[0], 0);
+    check('S37 a close that arrives after assembly is accepted and recorded (state stays assembled)', closeLate.status === 200 && closeLate.data.state === 'assembled' && (await segRow(seg38[0]))?.agent_closed_at !== null, JSON.stringify(closeLate.data));
+    await cleanKeptFiles();
+    check('S37 …then the sweep deletes the kept files; the 15-day-old unclosed segment still keeps them', (await purged(seg38[0])) && (await allKept(seg38[2])));
+    check('S37 a segment with a problem keeps its files (S21: short coverage) through the cleanup', (await rowsOf(sShort)).every((c) => fs.existsSync(c.file_path)));
+
+    console.log('S38 stage-1 "late chunks without their header" segments are made assemblable again once');
+    const d39 = daysAgo(39), seg39 = newSeg('s38');
+    const L39 = makeLive(8, '320x240', null, 4);
+    const S39s = track((await register(agentTok, seg39, d39)).data.sessionId as string);
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, seg39, i, L39[i], { 'X-Duration-Ms': '2000' });
+    await close(agentTok, seg39, 1);
+    await runOk(S39s);
+    await putChunk(agentTok, seg39, 2, L39[2], { 'X-Duration-Ms': '2000' });
+    await putChunk(agentTok, seg39, 3, L39[3], { 'X-Duration-Ms': '2000' });
+    await prisma.recordingSegment.update({ where: { id: seg39 }, data: { state: 'unreadable', problem: 'late chunks without their header (first stored chunk is seq 2)' } });
+    const reviveN = await reviveHeaderlessUnreadable();
+    check('S38 the flagged segment is pending again, problem cleared', reviveN >= 1 && ['closed', 'complete', 'incomplete'].includes((await segRow(seg39))?.state ?? '') && (await segRow(seg39))?.problem === null, `revived=${reviveN} state=${(await segRow(seg39))?.state}`);
+    const dur39a = durOf((await sessionRow(S39s))!);
+    await runOk(S39s);
+    check('S38 …and now its tail is grafted into the video', (await sessionRow(S39s))!.generation === 2 && durOf((await sessionRow(S39s))!) > dur39a + 1.2 && (await segRow(seg39))?.state === 'assembled', `gen=${(await sessionRow(S39s))!.generation}`);
+
+    console.log('S30c a rebuild that plays much less than the part it would replace is not used: the late chunk goes in alone');
+    const d45 = daysAgo(45), seg45 = newSeg('s30c');
+    const L45 = makeLive(12, '320x240', null, 6);
+    const S45s = track((await register(agentTok, seg45, d45)).data.sessionId as string);
+    for (let i = 0; i < 4; i++) await putChunk(agentTok, seg45, i, L45[i], { 'X-Duration-Ms': '2000' });
+    await age(seg45, 31);
+    await runOk(S45s);
+    const r45a = (await sessionRow(S45s))!, dur45a = durOf(r45a), m45a = await manifestOf(S45s), dir45 = await dirOfSession(S45s);
+    check('S30c precondition: generation 1 (~8 s) with a head part, the chunk files kept', r45a.generation === 1 && dur45a > 6.5 && m45a?.items.length === 1 && m45a.items[0].firstSeq === 0 && (await allKept(seg45)), `gen=${r45a.generation} dur=${dur45a}`);
+    for (let i = 1; i < 4; i++) { const row = (await chunkRow(seg45, i))!; fs.writeFileSync(row.file_path, Buffer.alloc(row.file_size)); } // the kept files rot: rebuilding from them would lose most of the video
+    const ids45: number[] = [];
+    for (let i = L45[4].indexOf(CLUSTER_ID); i >= 0; i = L45[4].indexOf(CLUSTER_ID, i + 1)) ids45.push(i);
+    await putChunk(agentTok, seg45, 4, L45[4].subarray(ids45[Math.max(0, ids45.length - 2)]), { 'X-Duration-Ms': '1500' });
+    const ok45 = await runOk(S45s);
+    const r45b = (await sessionRow(S45s))!, m45b = await manifestOf(S45s);
+    check('S30c the old part is NOT replaced by the rotten rebuild: still in the manifest, file on disk', ok45 && !!m45b?.items.some((i) => i.file === m45a!.items[0].file) && fs.existsSync(path.join(dir45, m45a!.items[0].file)), `items=${JSON.stringify(m45b?.items)}`);
+    check('S30c …the generation did not get shorter (late chunk appended as a tail)', r45b.generation === 2 && durOf(r45b) >= dur45a - 0.3, `gen=${r45b.generation} ${dur45a}s->${durOf(r45b)}s`);
+    check('S30c …the segment says it used a header for the late chunk; all five chunk files are still on disk', /own header/.test((await segRow(seg45))?.problem ?? '') && (await Promise.all([0, 1, 2, 3, 4].map(async (i) => fs.existsSync((await chunkRow(seg45, i))!.file_path)))).every(Boolean), `problem=${(await segRow(seg45))?.problem}`);
+
+    console.log('S33c the ordered join fails: a rebuilt segment is reduced to its late chunks, appended, the manifest collapses, nothing is lost');
+    const failHooks = (v2svc as any).testHooks as { failJoin?: (g: { id: string; reencoded: boolean }[]) => boolean };
+    const d46 = daysAgo(46), seg46 = newSeg('s33c');
+    const L46 = makeLive(8, '320x240', null, 4);
+    const S46s = track((await register(agentTok, seg46, d46)).data.sessionId as string);
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, seg46, i, L46[i], { 'X-Duration-Ms': '2000' });
+    await age(seg46, 31);
+    await runOk(S46s);
+    const dur46a = durOf((await sessionRow(S46s))!), m46a = await manifestOf(S46s), dir46 = await dirOfSession(S46s);
+    await putChunk(agentTok, seg46, 2, L46[2], { 'X-Duration-Ms': '2000' });
+    await putChunk(agentTok, seg46, 3, L46[3], { 'X-Duration-Ms': '2000' });
+    await close(agentTok, seg46, 3);
+    let calls46 = 0;
+    failHooks.failJoin = () => calls46++ === 0; // the first join (the ordered one, which would replace the part) fails
+    const ok46 = await runOk(S46s);
+    failHooks.failJoin = undefined;
+    const r46 = (await sessionRow(S46s))!, m46 = await manifestOf(S46s), sg46 = await segRow(seg46);
+    check('S33c generation 2 = generation 1 + the late chunks only (not the whole segment twice: 1.2-4.5 s longer)', ok46 && r46.generation === 2 && durOf(r46) > dur46a + 1.2 && durOf(r46) < dur46a + 4.5, `ok=${ok46} gen=${r46.generation} ${dur46a}s->${durOf(r46)}s`);
+    check('S33c …the manifest collapsed to the generation and the old part file is gone (its video is in the generation)', m46?.items.length === 1 && m46.items[0].segmentId === null && path.join(dir46, m46.items[0].file) === r46.file_path && partFiles(m46a, dir46).every((p) => !fs.existsSync(p)), JSON.stringify(m46?.items));
+    check('S33c …the segment is assembled (grafted tail: problem says so) and no chunk file was deleted', sg46?.state === 'assembled' && /own header/.test(sg46.problem ?? '') && (await Promise.all([0, 1, 2, 3].map(async (i) => fs.existsSync((await chunkRow(seg46, i))!.file_path)))).every(Boolean), `state=${sg46?.state} problem=${sg46?.problem}`);
+
+    console.log('S34c the earlier video cannot be re-encoded to the new size: the new material is scaled down to it instead');
+    const d47 = daysAgo(47), seg47 = [newSeg('s34ct'), newSeg('s34ca'), newSeg('s34cb')];
+    const S47s = track((await register(agentTok, seg47[0], d47, { width: 320, height: 180 })).data.sessionId as string);
+    await putChunk(agentTok, seg47[0], 0, makeLive(4, '320x180', null, 1)[0], { 'X-Duration-Ms': '4000' }); await close(agentTok, seg47[0], 0);
+    await runOk(S47s);
+    for (const [i, sg] of [seg47[1], seg47[2]].entries()) {
+      await register(agentTok, sg, new Date(d47.getTime() + (i + 1) * 60_000), { width: 640, height: 360 });
+      await putChunk(agentTok, sg, 0, makeLive(3, '640x360', null, 1)[0], { 'X-Duration-Ms': '3000' }); await close(agentTok, sg, 0);
+    }
+    const ffHooks = (v2svc as any).testHooks as { ffmpegFault?: (args: string[]) => string | null };
+    ffHooks.ffmpegFault = (args) => (args.some((a) => a.includes('-rebase')) ? 'Invalid data found when processing input' : null); // only the base re-encode fails
+    const ok47 = await runOk(S47s);
+    ffHooks.ffmpegFault = undefined;
+    const r47 = (await sessionRow(S47s))!, dims47 = await probeDims(r47.file_path!);
+    check('S34c the day stays 320x180 with everything in (generation 2, ~10 s), nothing flagged', ok47 && r47.generation === 2 && dims47?.width === 320 && dims47.height === 180 && durOf(r47) > 8.5 && durOf(r47) < 11.8 && (await Promise.all(seg47.map(async (x) => (await segRow(x))?.state === 'assembled'))).every(Boolean), `ok=${ok47} gen=${r47.generation} dims=${dims47?.width}x${dims47?.height} dur=${durOf(r47)}`);
+
     console.log('S23 pump: when a run ends the next due session starts at once (one slot)');
     const foreign = await prisma.recordingSegment.count({ where: { state: { in: ['complete', 'incomplete'] }, session: { user_id: { notIn: [empId, other.id, adminRow.id] } } } });
     if (foreign) {
@@ -797,11 +1114,160 @@ async function main() {
         ids23.push(track((await register(agentTok, sg, d)).data.sessionId as string));
         await addGood(sg, d);
       }
+      const startedFresh = await pumpAssemblies();
+      check('S23 days that are over but whose last chunk is seconds old are NOT due (a backlog upload is not rebuilt chunk by chunk)', startedFresh === 0, `started=${startedFresh}`);
+      await prisma.recordingSession.updateMany({ where: { id: { in: ids23 } }, data: { last_chunk_at: new Date(Date.now() - 6 * 60_000) } }); // quiet for 6 min
       const started = await pumpAssemblies();
       check('S23 one pump starts exactly one run (one slot)', started === 1, `started=${started}`);
       const all3 = await until(async () => { const rows = await prisma.recordingSession.findMany({ where: { id: { in: ids23 } }, select: { generation: true } }); return rows.every((r) => r.generation >= 1) ? rows : null; }, 90_000, 1000);
       check('S23 …and the other two were started by the end of each run, without waiting for another sweep', !!all3, JSON.stringify(await prisma.recordingSession.findMany({ where: { id: { in: ids23 } }, select: { generation: true, assembly_error: true } })));
     }
+
+    // ── Stage 4: retry endpoint, /days problem fields, repair script ──
+    const adminHdr = bearer(adminTok);
+    const ymdUtc = (d: Date) => d.toISOString().slice(0, 10);
+    const addGood4 = async (seg: string, startedAt: Date) => {
+      await register(agentTok, seg, startedAt);
+      for (let i = 0; i < RUN.length; i++) await putChunk(agentTok, seg, i, RUN[i]);
+      await close(agentTok, seg, RUN.length - 1);
+    };
+    const segs4 = (ids: string[]) => Promise.all(ids.map((s) => segRow(s)));
+    const kept4 = async (seg: string) => {
+      const rows = await prisma.recordingChunk.findMany({ where: { segment_id: seg } });
+      return rows.length > 0 && rows.every((c) => c.purged_at === null && fs.existsSync(c.file_path));
+    };
+    const purged4 = async (seg: string) => {
+      const rows = await prisma.recordingChunk.findMany({ where: { segment_id: seg } });
+      return rows.length > 0 && rows.every((c) => c.purged_at !== null && !fs.existsSync(c.file_path));
+    };
+    const durOf4 = (r: { file_path: string | null }) => (r.file_path && fs.existsSync(r.file_path) ? durationOf(r.file_path) : -1);
+
+    console.log('S39 POST /sessions/:id/retry-assembly: admins only; unreadable segments go back into the queue and the day is rebuilt');
+    const d50 = daysAgo(50), seg50 = [newSeg('s39a'), newSeg('s39b')];
+    const S50 = track((await register(agentTok, seg50[0], d50)).data.sessionId as string);
+    await addGood4(seg50[0], d50);
+    await addGood4(seg50[1], new Date(d50.getTime() + 60_000));
+    await prisma.recordingSegment.updateMany({ where: { id: { in: seg50 } }, data: { state: 'unreadable', problem: 'no readable video' } }); // both flagged; their media is fine
+    await prisma.recordingSession.update({ where: { id: S50 }, data: { assembly_attempts: 4, assembly_next_at: new Date(Date.now() + 3600_000), assembly_error: 'previous failure' } });
+    const retryUrl = (id: string) => `${API}/recording/sessions/${id}/retry-assembly`;
+    await prisma.user.update({ where: { id: other.id }, data: { status: prevOtherStatus } });
+    await prisma.userTabAccess.upsert({ where: { user_id_tab_key: { user_id: other.id, tab_key: 'recording' } }, create: { user_id: other.id, tab_key: 'recording' }, update: {} });
+    const hrCanSee = await axios.get(`${API}/recording/days?from=${ymdUtc(daysAgo(100))}&to=${ymdUtc(new Date())}`, bearer(otherTok));
+    check('S39 precondition: the HR grant works (GET /days 200)', hrCanSee.status === 200, `${hrCanSee.status}`);
+    const r39none = await axios.post(retryUrl(S50), {}, noThrow);
+    const r39emp = await axios.post(retryUrl(S50), {}, bearer(empTok));
+    const r39hr = await axios.post(retryUrl(S50), {}, bearer(otherTok));
+    check('S39 no token → 401, employee → 403, HR with the recording grant → 403', r39none.status === 401 && r39emp.status === 403 && r39hr.status === 403, `${r39none.status}/${r39emp.status}/${r39hr.status}`);
+    check('S39 …and they changed nothing (both segments still unreadable, attempts 4)', (await segs4(seg50)).every((s) => s?.state === 'unreadable') && (await sessionRow(S50))!.assembly_attempts === 4);
+    const legacy39 = track((await prisma.recordingSession.create({ data: { user_id: empId, created_by: adminRow.id, status: 'stopped' } })).id);
+    const r39unknown = await axios.post(retryUrl(crypto.randomUUID()), {}, adminHdr);
+    const r39legacy = await axios.post(retryUrl(legacy39), {}, adminHdr);
+    check('S39 an unknown session and a legacy (v1) session → 404', r39unknown.status === 404 && r39legacy.status === 404, `${r39unknown.status}/${r39legacy.status}`);
+    const r39 = await axios.post(retryUrl(S50), {}, adminHdr);
+    const r39again = await axios.post(retryUrl(S50), {}, adminHdr);
+    const st39 = await segs4(seg50);
+    check('S39 admin → 202 { revived: 2, pending: 2 }', r39.status === 202 && r39.data.revived === 2 && r39.data.pending === 2, `${r39.status} ${JSON.stringify(r39.data)}`);
+    check('S39 …an immediate second request while the run is going → 409 already_assembling', r39again.status === 409 && r39again.data.error === 'already_assembling', `${r39again.status} ${JSON.stringify(r39again.data)}`);
+    check('S39 …the segments left "unreadable" at once, problem cleared', st39.every((s) => s?.state !== 'unreadable' && s?.problem === null), JSON.stringify(st39.map((s) => [s?.state, s?.problem])));
+    const done39 = await until(async () => { const r = await sessionRow(S50); return r && r.generation >= 1 && r.assembly_attempts === 0 && !r.assembly_next_at && !r.assembly_error ? r : null; }, 90_000, 1000);
+    check('S39 the server rebuilt the day in the background: generation 1 (~6 s), no error, no backoff', !!done39 && durOf4(done39) > 5 && durOf4(done39) < 7.5, `gen=${(await sessionRow(S50))?.generation} dur=${done39 ? durOf4(done39) : -1}`);
+    check('S39 …both segments assembled and their chunks purged', (await Promise.all(seg50.map(async (s) => (await segRow(s))?.state === 'assembled' && (await purged4(s))))).every(Boolean));
+    let r39idle = await axios.post(retryUrl(S50), {}, adminHdr);
+    for (let i = 0; i < 20 && r39idle.status === 409; i++) { await sleep(1000); r39idle = await axios.post(retryUrl(S50), {}, adminHdr); } // the run is still finishing
+    check('S39 a retry with nothing to revive is accepted and revives nothing { revived: 0, pending: 0 }', r39idle.status === 202 && r39idle.data.revived === 0 && r39idle.data.pending === 0, `${r39idle.status} ${JSON.stringify(r39idle.data)}`);
+
+    console.log('S40 GET /days: chunks not in video, waiting chunks, problems, assembly error and next attempt');
+    const d51 = daysAgo(51), s51 = { u: newSeg('s40u'), w: newSeg('s40w'), a: newSeg('s40a') };
+    const S51 = track((await register(agentTok, s51.u, d51)).data.sessionId as string);
+    await addGood4(s51.u, d51);
+    await addGood4(s51.w, new Date(d51.getTime() + 60_000));
+    await register(agentTok, s51.a, new Date(d51.getTime() + 120_000));
+    for (let i = 0; i < 2; i++) await putChunk(agentTok, s51.a, i, RUN[i]);
+    await close(agentTok, s51.a, 1);
+    await prisma.recordingSegment.update({ where: { id: s51.u }, data: { state: 'unreadable', problem: 'no readable video' } });
+    await prisma.recordingSegment.update({ where: { id: s51.a }, data: { state: 'assembled', problem: 'only 0.1 of 2.0 min readable' } });
+    await prisma.recordingChunk.updateMany({ where: { segment_id: s51.a }, data: { purged_at: new Date() } }); // in the video, files kept
+    const next51 = new Date(Date.now() + 1800_000);
+    await prisma.recordingSession.update({ where: { id: S51 }, data: { assembly_error: 'boom', assembly_attempts: 2, assembly_next_at: next51 } });
+    await prisma.recordingSegment.createMany({ data: Array.from({ length: 10 }, (_, i) => ({ id: `e2e-edge-s40x${i}-${rid()}`, session_id: S51, user_id: empId, started_at: new Date(d51.getTime() + (10 + i) * 60_000), state: 'unreadable', problem: `extra problem ${i}` })) });
+    const d52 = daysAgo(52), s52 = newSeg('s40c');
+    const S52 = track((await register(agentTok, s52, d52)).data.sessionId as string);
+    await putChunk(agentTok, s52, 0, RUN[0]);
+    const legacy40 = track((await prisma.recordingSession.create({ data: { user_id: empId, created_by: adminRow.id, status: 'stopped' } })).id);
+    const days40 = await axios.get(`${API}/recording/days?from=${ymdUtc(daysAgo(100))}&to=${ymdUtc(new Date(Date.now() + DAY))}&userId=${empId}&pageSize=200`, adminHdr);
+    const item = (id: string) => (days40.data.items as any[]).find((i) => i.sessionId === id);
+    const i51 = item(S51), i52 = item(S52), iLegacy = item(legacy40);
+    check('S40 GET /days answers 200 and lists the three rows', days40.status === 200 && !!i51 && !!i52 && !!iLegacy, `${days40.status} found=${!!i51}/${!!i52}/${!!iLegacy}`);
+    check('S40 counts: 3 chunks not in the video (unreadable segment), 3 waiting (complete segment); the assembled one counts as neither', i51?.chunksNotInVideo === 3 && i51?.chunksWaiting === 3, `${i51?.chunksNotInVideo}/${i51?.chunksWaiting}`);
+    const u51 = (i51?.problems ?? []).find((p: any) => p.segmentId === s51.u), a51 = (i51?.problems ?? []).find((p: any) => p.segmentId === s51.a);
+    check('S40 problems: at most 10 of problemCount 12, chronological', Array.isArray(i51?.problems) && i51.problems.length === 10 && i51.problemCount === 12 && new Date(i51.problems[0].startedAt).getTime() === d51.getTime(), `len=${i51?.problems?.length} count=${i51?.problemCount}`);
+    check('S40 …each { segmentId, startedAt, state, problem, chunks }: the unreadable segment has its 3 chunks, the assembled-with-problem one its 2 kept chunks', u51?.state === 'unreadable' && u51.problem === 'no readable video' && u51.chunks === 3 && a51?.state === 'assembled' && /only 0\.1 of 2\.0/.test(a51.problem) && a51.chunks === 2, JSON.stringify([u51, a51]));
+    check('S40 assemblyError, assemblyAttempts and nextAttemptAt come from the session', i51?.assemblyError === 'boom' && i51.assemblyAttempts === 2 && Math.abs(new Date(i51.nextAttemptAt).getTime() - next51.getTime()) < 1000, `${i51?.assemblyError}/${i51?.assemblyAttempts}/${i51?.nextAttemptAt}`);
+    check('S40 a clean day: zeros, no problems, no error, no next attempt', i52?.chunksNotInVideo === 0 && i52.chunksWaiting === 0 && Array.isArray(i52.problems) && i52.problems.length === 0 && i52.problemCount === 0 && i52.assemblyError === null && i52.assemblyAttempts === 0 && i52.nextAttemptAt === null, JSON.stringify(i52));
+    check('S40 a legacy row: zeros, empty, null', iLegacy?.legacy === true && iLegacy.chunksNotInVideo === 0 && iLegacy.chunksWaiting === 0 && iLegacy.problems?.length === 0 && iLegacy.problemCount === 0 && iLegacy.assemblyError === null && iLegacy.assemblyAttempts === 0 && iLegacy.nextAttemptAt === null, JSON.stringify(iLegacy));
+    const oldKeys = ['sessionId', 'userId', 'name', 'department', 'recordingDate', 'createdAt', 'legacy', 'status', 'generation', 'durationMs', 'loggedOutMs', 'segments', 'screens', 'incompleteSegments', 'openSegments', 'assembling', 'lastChunkAt', 'hasFile'];
+    check('S40 every existing field is still there; assembling stays true while a segment waits, assemblyRunning says nobody is building', oldKeys.every((k) => i51 && k in i51) && i51.assembling === true && i51.assemblyRunning === false && i51.segments === 13 && i51.incompleteSegments === 0, `assembling=${i51?.assembling} running=${i51?.assemblyRunning} segments=${i51?.segments}`);
+    const det40 = await axios.get(`${API}/recording/sessions/${S51}`, adminHdr);
+    check('S40 GET /sessions/:id lists "problem" on each segment', (det40.data.segments as any[])?.find((s) => s.id === s51.u)?.problem === 'no readable video', JSON.stringify(det40.data.segments?.[0]));
+
+    console.log('S41 repair-recordings: dry run changes nothing; --apply needs --yes; apply revives and heals missing rows; --session limits it; report-only findings; nothing is deleted');
+    const d53 = daysAgo(53), s53 = { r1: newSeg('s41a'), r2: newSeg('s41b'), r3: newSeg('s41c') }, d54 = daysAgo(54), s54 = newSeg('s41z');
+    const S53 = track((await register(agentTok, s53.r1, d53)).data.sessionId as string);
+    await addGood4(s53.r1, d53);
+    await prisma.recordingSegment.update({ where: { id: s53.r1 }, data: { state: 'unreadable', problem: 'no readable video' } });
+    const diff = await putChunk(agentTok, s53.r1, 0, Buffer.concat([RUN[0], Buffer.from('different')])); // same seq, other bytes → a collision file
+    await register(agentTok, s53.r2, new Date(d53.getTime() + 60_000));
+    await putChunk(agentTok, s53.r2, 0, RUN[0]);
+    await putChunk(agentTok, s53.r2, 2, RUN[2]);
+    const dir53 = (await sessionRow(S53))!.dir_path!;
+    const missingFile = path.join(dir53, 'segments', s53.r2, '1.webm'); // a chunk file whose row was lost (crash between link and insert)
+    fs.writeFileSync(missingFile, RUN[1]);
+    const longAgo = new Date(Date.now() - 3600_000);
+    fs.utimesSync(missingFile, longAgo, longAgo); // older than the repair script's 10 minutes
+    const freshFile = path.join(dir53, 'segments', s53.r2, '9.webm'); // just written: the running server may be about to insert its row
+    fs.writeFileSync(freshFile, RUN[2]);
+    await close(agentTok, s53.r2, 2);
+    const unknownDir = path.join(dir53, 'segments', `e2e-edge-unknown-${rid()}`);
+    fs.mkdirSync(unknownDir, { recursive: true });
+    fs.writeFileSync(path.join(unknownDir, '0.webm'), RUN[0]);
+    await prisma.recordingSegment.create({ data: { id: s53.r3, session_id: S53, user_id: empId, started_at: new Date(d53.getTime() + 120_000), state: 'assembled', last_seq: 2 } });
+    await prisma.recordingChunk.createMany({ data: [0, 1, 2].map((seq) => ({ session_id: S53, segment_id: s53.r3, seq, file_path: path.join(dir53, 'segments', s53.r3, `${seq}.webm`), file_size: 1, sha256: sha(Buffer.from(String(seq))), duration_ms: 60_000, purged_at: new Date() })) });
+    await prisma.recordingSession.update({ where: { id: S53 }, data: { generation: 1, file_path: path.join(dir53, 'recording-g1.webm'), duration_ms: 10_000, assembly_attempts: 3, assembly_next_at: new Date(Date.now() + 3600_000), assembly_error: 'old error' } });
+    track((await register(agentTok, s54, d54)).data.sessionId as string); // another session: --session must leave it alone
+    await addGood4(s54, d54);
+    await prisma.recordingSegment.update({ where: { id: s54 }, data: { state: 'unreadable', problem: 'no readable video' } });
+
+    const listFiles = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? listFiles(path.join(dir, e.name)) : [`${path.join(dir, e.name)}:${fs.statSync(path.join(dir, e.name)).size}`])).sort();
+    const repair = (args: string[]) => {
+      const r = spawnSync(process.execPath, [path.join(process.cwd(), 'node_modules', 'ts-node', 'dist', 'bin.js'), 'src/repair-recordings.ts', ...args], { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env, TS_NODE_TRANSPILE_ONLY: '1' }, timeout: 180_000 });
+      return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+    };
+    const dbState = async () => JSON.stringify([
+      (await Promise.all([s53.r1, s53.r2, s53.r3, s54].map(async (s) => { const g = await segRow(s); return [g?.state, g?.problem]; }))),
+      await prisma.recordingChunk.count({ where: { session_id: S53 } }),
+      await sessionRow(S53).then((r) => [r?.assembly_attempts, r?.assembly_next_at?.toISOString() ?? null, r?.assembly_error]),
+    ]);
+    const filesBefore = listFiles(dir53).join('\n'), dbBefore = await dbState();
+    check('S41 precondition: the same-seq upload with other bytes was kept as a collision file', diff.data?.conflict === true && fs.readdirSync(path.join(dir53, 'collisions')).length === 1, JSON.stringify(diff.data));
+
+    const dry = repair(['--session', S53]);
+    check('S41 dry run (the default): exit 0, says what it would do, names the database host and RECORDINGS_DIR', dry.code === 0 && /dry run/i.test(dry.out) && /would revive 1 unreadable/.test(dry.out) && /would add 1 missing chunk row/.test(dry.out) && /1 chunk file\(s\) without a row skipped \(modified in the last 10 minutes\)/.test(dry.out) && /localhost/.test(dry.out) && dry.out.includes(path.resolve(process.env.RECORDINGS_DIR ?? '')), `exit=${dry.code}\n${dry.out}`);
+    check('S41 …report-only findings: unknown segment folder, collision file, generation file missing, video shorter than recorded', /1 folder\(s\) of unknown segments/.test(dry.out) && /1 collision file/.test(dry.out) && /generation file is missing/.test(dry.out) && /shorter than recorded, cannot be repaired from the server/.test(dry.out), dry.out);
+    check('S41 …and changed nothing: database and files identical', (await dbState()) === dbBefore && listFiles(dir53).join('\n') === filesBefore);
+
+    const noYes = repair(['--apply', '--session', S53]);
+    check('S41 --apply without --yes refuses (exit ≠ 0), prints the database host and RECORDINGS_DIR, changes nothing', noYes.code !== 0 && /--yes/.test(noYes.out) && /localhost/.test(noYes.out) && noYes.out.includes(path.resolve(process.env.RECORDINGS_DIR ?? '')) && (await dbState()) === dbBefore, `exit=${noYes.code}\n${noYes.out}`);
+
+    const apply = repair(['--apply', '--yes', '--session', S53]);
+    const r1 = await segRow(s53.r1), r2 = await segRow(s53.r2), healedRow = await chunkRow(s53.r2, 1), s5 = await sessionRow(S53);
+    check('S41 --apply --yes: exit 0 and a total line', apply.code === 0 && /Total:/.test(apply.out), `exit=${apply.code}\n${apply.out}`);
+    check('S41 …a chunk file modified in the last 10 minutes got no row (and stays as it was)', !(await chunkRow(s53.r2, 9)) && fs.readFileSync(freshFile).equals(RUN[2]));
+    check('S41 …the unreadable segment is back in the queue (problem cleared, chunks still unpurged) and the session counters are reset', r1?.state !== 'unreadable' && r1?.problem === null && (await kept4(s53.r1)) && s5?.assembly_attempts === 0 && s5.assembly_next_at === null && s5.assembly_error === null, `state=${r1?.state} attempts=${s5?.assembly_attempts}`);
+    check('S41 …the chunk file without a row got its row (sha256 and size of the file), the file is untouched, and the segment is complete now', !!healedRow && healedRow.sha256 === sha(RUN[1]) && healedRow.file_size === RUN[1].length && healedRow.purged_at === null && fs.readFileSync(missingFile).equals(RUN[1]) && r2?.state === 'complete', `row=${!!healedRow} state=${r2?.state}`);
+    check('S41 …the folder of the unknown segment got no row and is untouched; no file was deleted or changed anywhere', (await prisma.recordingChunk.count({ where: { file_path: { contains: path.basename(unknownDir) } } })) === 0 && listFiles(dir53).join('\n') === filesBefore, 'files differ');
+    check('S41 …--session limited it: the other session\'s unreadable segment is still unreadable', (await segRow(s54))?.state === 'unreadable');
+    const second = repair(['--apply', '--yes', '--session', S53]);
+    check('S41 a second apply finds nothing to change (idempotent)', second.code === 0 && !/revived|added/.test(second.out.split('Total:')[0] ?? '') && (await prisma.recordingChunk.count({ where: { segment_id: s53.r2 } })) === 3, `exit=${second.code}\n${second.out}`);
   } finally {
     for (const s of sockets) { try { s.close(); } catch { /* ignore */ } }
     await sleep(500);

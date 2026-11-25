@@ -379,6 +379,7 @@ model RecordingSession {
   assembly_error    String?
   assembly_attempts Int                @default(0)
   assembly_next_at  DateTime?
+  parts             Json?
   chunks            RecordingChunk[]
   segments          RecordingSegment[]
   creator           User               @relation("AdminCreatedSessions", fields: [created_by], references: [id])
@@ -405,6 +406,8 @@ model RecordingSegment {
   generation  Int?
   screen      Int?             @db.SmallInt
   problem     String?
+  init_data       Bytes?
+  agent_closed_at DateTime?
   created_at  DateTime         @default(now())
   updated_at  DateTime         @updatedAt
   session     RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)

@@ -21,6 +21,7 @@ import {
   rm,
   concatListEntry,
   recordingEmitter,
+  startsWithEbml,
 } from './recording.service';
 import { recordingDateFor, recordingDayEndsAt, ruleForUser } from './recording-day';
 import { getGateway } from '../gateways/recording.gateway';
@@ -29,10 +30,17 @@ export const SEGMENT_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const SHA_RE = /^[a-f0-9]{64}$/i;
 const IDLE_ASSEMBLE_MS = 30 * 60_000;
 const DAY_OVER_GRACE_MS = 30 * 60_000;
+const DAY_OVER_SETTLE_MS = 5 * 60_000; // a finished day still receiving a backlog is not rebuilt per chunk
 const LIVE_WINDOW_MS = 10 * 60_000;
 const STUCK_SEGMENT_MS = 48 * 3600_000;
 const PREBOOT_GRACE_MS = 2 * 3600_000;
 const MAX_CONCURRENT_ASSEMBLIES = 1;
+const INIT_MAX = 64 * 1024; // init bytes (EBML header .. first Cluster) are a few hundred bytes; more means this is not what we think
+const TAIL_ALLOWANCE_MS = 15_000; // a grafted tail loses its frames before the first keyframe (keyframe every ~5 s)
+const MAX_DONORS = 5;
+const INIT_SEQ_MAX = 5; // the header may be spread over the first chunks (a still screen: seq 0 can be 1 byte)
+const NEVER_CLOSED_KEEP_MS = 16 * 86_400_000; // the agent keeps its own spool 15 days
+const PARTS_KEEP_DAYS = 4;
 const COPY_TIMEOUT_MS = 20 * 60_000; // copy / probe: a hung ffmpeg must not hold the queue forever
 const ASSEMBLABLE = ['complete', 'incomplete'];
 const PROCESS_STARTED_AT = Date.now();
@@ -290,6 +298,11 @@ export async function saveChunkV2(userId: string, segmentId: string, seq: number
     }
     if (seg.state === 'unreadable') await reviveSegment(segmentId);
   }
+  if (seq <= INIT_SEQ_MAX && !result.conflict && !seg.init_data) {
+    // the header bytes of the stream (chunks 0, 1, … up to the first Cluster): later chunks of this segment can be made readable with them even after seq 0 is gone
+    const init = await readInitOfSegment(segmentId).catch(() => null);
+    if (init) await prisma.recordingSegment.updateMany({ where: { id: segmentId, init_data: null }, data: { init_data: init } }).catch((err) => console.warn(`[Recording v2] init_data of ${segmentId} not stored: ${err.message}`));
+  }
   // Always recompute (also after a duplicate: a healed row may complete the segment). Only touches open-ish states.
   if (!result.conflict && seg.state !== 'assembled') await recomputeSegmentState(segmentId);
   return result;
@@ -328,12 +341,19 @@ export async function closeSegment(userId: string, segmentId: string, body: { la
   const seg = await prisma.recordingSegment.findUnique({ where: { id: segmentId } });
   if (!seg) throw new HttpError(404, 'segment_not_registered');
   if (seg.user_id !== userId) throw new HttpError(403, 'Segment belongs to another user');
-  if (seg.state === 'assembled') return { state: seg.state };
-
   const lostSeqs = [...new Set(lost as number[])].sort((a, b) => a - b);
+  const closedAt = seg.agent_closed_at ?? new Date(); // always remembered: it lets the kept chunk files go once everything is in the video
+  if (seg.state === 'assembled' || seg.state === 'unreadable') {
+    // already decided: only record the agent's close, a larger lastSeq and more lost seqs (the state stays)
+    await prisma.recordingSegment.update({
+      where: { id: segmentId },
+      data: { agent_closed_at: closedAt, last_seq: Math.max(seg.last_seq ?? -1, lastSeq as number), lost_seqs: [...new Set([...seg.lost_seqs, ...lostSeqs])].sort((a, b) => a - b) },
+    });
+    return { state: seg.state };
+  }
   await prisma.recordingSegment.update({
     where: { id: segmentId },
-    data: { state: 'closed', last_seq: lastSeq as number, lost_seqs: lostSeqs, ended_at: endedAt ?? seg.ended_at ?? new Date() },
+    data: { state: 'closed', last_seq: lastSeq as number, lost_seqs: lostSeqs, ended_at: endedAt ?? seg.ended_at ?? new Date(), agent_closed_at: closedAt },
   });
   return { state: await recomputeSegmentState(segmentId) };
 }
@@ -344,6 +364,143 @@ export async function segmentManifest(userId: string, segmentId: string) {
   if (seg.user_id !== userId) throw new HttpError(403, 'Segment belongs to another user');
   const rows = await prisma.recordingChunk.findMany({ where: { segment_id: segmentId }, select: { seq: true }, orderBy: { seq: 'asc' } });
   return { state: seg.state, lastSeq: seg.last_seq, have: rows.map((r) => r.seq as number) };
+}
+
+// ─────────────────────────────────────────
+// Stage 2 helpers (pure; unit-tested in test-recording-queue)
+// ─────────────────────────────────────────
+
+const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+const SEGMENT_ID = Buffer.from([0x18, 0x53, 0x80, 0x67]);
+const CLUSTER_ID = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
+const UNKNOWN_SIZE = Buffer.from([0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+
+/**
+ * The bytes of a stream's first chunk before its first Cluster (EBML header, Segment, Info, Tracks): what a later chunk
+ * needs in front of it to be readable. null when the chunk is not the start of a WebM, or no Cluster follows within 64 KB.
+ * A known-size Segment is made unknown-size (valid EBML, what MediaRecorder writes) so grafted clusters are not "outside" it.
+ * ponytail: byte search for the Cluster id, not an EBML walk; a false hit makes a short header that fails the decode check.
+ */
+export function extractInit(buf: Buffer): Buffer | null {
+  if (buf.length < 12 || !buf.subarray(0, 4).equals(EBML_MAGIC)) return null;
+  const at = buf.indexOf(CLUSTER_ID, 4);
+  if (at < 0 || at > INIT_MAX) return null;
+  const init = Buffer.from(buf.subarray(0, at));
+  const seg = init.indexOf(SEGMENT_ID, 4);
+  const first = seg > 0 ? init[seg + 4] : 0;
+  const len = first ? Math.clz32(first) - 23 : 0; // vint length from the leading zero bits
+  if (len >= 1 && len <= 8 && seg + 4 + len <= init.length) return Buffer.concat([init.subarray(0, seg + 4), UNKNOWN_SIZE, init.subarray(seg + 4 + len)]);
+  return init;
+}
+
+/** The init bytes of a stream whose first chunks may be tiny: the chunks from seq 0, in order, up to the first Cluster (which may start in one chunk and end in the next). */
+export function initFromChunks(chunks: Buffer[]): Buffer | null {
+  const parts: Buffer[] = [];
+  let n = 0;
+  for (const c of chunks) { parts.push(c); n += c.length; if (n > INIT_MAX + 4) break; }
+  return extractInit(Buffer.concat(parts));
+}
+
+/** Where the first Cluster id of a run of chunk files starts (file index + offset in it), also when the id is split between two files. */
+export async function firstClusterAt(files: string[]): Promise<{ index: number; offset: number } | null> {
+  const starts: number[] = [];
+  let global = 0;
+  let carry = Buffer.alloc(0);
+  for (const [index, file] of files.entries()) {
+    starts.push(global);
+    for await (const buf of fs.createReadStream(file)) {
+      const hay = Buffer.concat([carry, buf as Buffer]);
+      const at = hay.indexOf(CLUSTER_ID);
+      if (at >= 0) {
+        const g = global - carry.length + at;
+        let i = index;
+        while (starts[i] > g) i--;
+        return { index: i, offset: g - starts[i] };
+      }
+      global += (buf as Buffer).length;
+      carry = hay.subarray(Math.max(0, hay.length - (CLUSTER_ID.length - 1)));
+    }
+  }
+  return null;
+}
+
+/**
+ * May this segment's kept chunk files go? Only when every chunk is in the video (purged), nothing is flagged, and either the
+ * agent closed it and every seq 0..lastSeq is stored or declared lost (so nothing can still extend it and a rebuild is never
+ * needed), or nobody closed it and its last chunk is older than the agent's own 16-day spool.
+ */
+export function keptFilesDeletable(
+  seg: { state: string; problem: string | null; agent_closed_at: Date | null; last_seq: number | null; lost_seqs: number[] },
+  rows: { seq: number | null; purged_at: Date | null; uploaded_at: Date }[],
+  now: number,
+): boolean {
+  if (seg.state !== 'assembled' || seg.problem || rows.length === 0 || rows.some((r) => !r.purged_at)) return false;
+  if (!seg.agent_closed_at) return now - Math.max(...rows.map((r) => r.uploaded_at.getTime())) > NEVER_CLOSED_KEEP_MS;
+  if (seg.last_seq === null) return false;
+  const have = new Set(rows.map((r) => r.seq));
+  const lost = new Set(seg.lost_seqs);
+  for (let i = 0; i <= seg.last_seq; i++) if (!have.has(i) && !lost.has(i)) return false;
+  return true;
+}
+
+export interface SizeMs { w: number; h: number; codec: string; ms: number }
+
+/**
+ * The size/codec a day is made at. Without a base (first generation): the size with the most video, sizes under 640 wide only
+ * when there is nothing else, ties to the larger area. With a base: the base's size, except a base under 640 wide that is
+ * shorter than the new material of a proper size, which is re-encoded once (rebase).
+ */
+export function chooseRef(base: SizeMs | null, items: SizeMs[]): { ref: { w: number; h: number; codec: string } | null; rebase: boolean } {
+  const groups = new Map<string, { w: number; h: number; codec: string; ms: number; top: number }>();
+  for (const i of items) {
+    const g = groups.get(`${i.w}x${i.h}`) ?? { w: i.w, h: i.h, codec: i.codec, ms: 0, top: 0 };
+    g.ms += i.ms;
+    if (i.ms > g.top) { g.top = i.ms; g.codec = i.codec; }
+    groups.set(`${i.w}x${i.h}`, g);
+  }
+  const all = [...groups.values()];
+  const wide = all.filter((g) => g.w >= 640);
+  const major = [...(wide.length ? wide : all)].sort((a, b) => b.ms - a.ms || b.w * b.h - a.w * a.h)[0];
+  const pick = major ? { w: major.w, h: major.h, codec: major.codec } : null;
+  if (!base) return { ref: pick, rebase: false };
+  if (base.w < 640 && pick && pick.w >= 640 && items.reduce((a, i) => a + i.ms, 0) > base.ms) return { ref: pick, rebase: true };
+  return { ref: { w: base.w, h: base.h, codec: base.codec }, rebase: false };
+}
+
+/** Where a tail sits on the day's clock: its segment's start plus the durations of the chunks before it (a missing one counts 10 s). */
+export function tailStartMs(startedAt: Date, earlier: { seq: number | null; duration_ms: number | null }[], firstSeq: number): number {
+  const dur = new Map(earlier.map((c) => [c.seq, c.duration_ms]));
+  let ms = startedAt.getTime();
+  for (let i = 0; i < firstSeq; i++) ms += dur.get(i) ?? 10_000;
+  return ms;
+}
+
+/** The files the day's video is built from (names relative to the session folder), in time order. segmentId null = the base (an older generation). */
+export interface PartItem { file: string; segmentId: string | null; firstSeq: number; startMs: number; durationMs: number; packets: number | null }
+export interface PartsManifest { ref: { w: number; h: number; codec: string } | null; items: PartItem[] }
+
+export function parseManifest(v: unknown): PartsManifest | null {
+  const m = v as any;
+  if (!m || typeof m !== 'object' || !Array.isArray(m.items) || m.items.length === 0) return null;
+  const num = (x: unknown) => typeof x === 'number' && Number.isFinite(x);
+  for (const i of m.items) {
+    if (!i || typeof i.file !== 'string' || !(i.segmentId === null || typeof i.segmentId === 'string') || !num(i.firstSeq) || !num(i.startMs) || !num(i.durationMs) || !(i.packets === null || num(i.packets))) return null;
+  }
+  const r = m.ref;
+  return { ref: r && num(r.w) && num(r.h) && typeof r.codec === 'string' ? { w: r.w, h: r.h, codec: r.codec } : null, items: m.items };
+}
+
+/** True when the recording day is older than keepDays (Karachi today). */
+export function partsExpired(recordingDate: string, nowMs: number, keepDays: number): boolean {
+  const today = new Date(nowMs + 5 * 3600_000).toISOString().slice(0, 10);
+  return dateOnly(recordingDate).getTime() < dateOnly(today).getTime() - keepDays * 86_400_000;
+}
+
+/** Parts need disk (a second copy of the day): not below RECORDING_PARTS_MIN_FREE_GB (default 20) free, nor when that cannot be read. */
+async function partsAllowed(dir: string): Promise<boolean> {
+  const minFree = Number(process.env.RECORDING_PARTS_MIN_FREE_GB ?? 20) * 1024 ** 3;
+  if (!(minFree > 0)) return true;
+  try { const s = await fs.promises.statfs(dir); return s.bavail * s.bsize >= minFree; } catch { return false; }
 }
 
 // ─────────────────────────────────────────
@@ -487,11 +644,21 @@ export const testHooks: {
   afterSnapshot?: () => Promise<void>;
   failJoin?: (group: { id: string; reencoded: boolean }[]) => boolean;
   ffmpegFault?: (args: string[]) => string | null; // S29: pretend ffmpeg printed this text and failed
+  beforeCommit?: () => Promise<void>; // S36: "crash" after the new parts are moved, before the DB commit
 } = {};
 
 interface SegChunk { id: string; seq: number | null; file_path: string; duration_ms: number | null; logged_out: boolean }
-interface SegInfo { id: string; started_at: Date; width: number | null; height: number | null; chunks: SegChunk[] }
-interface Item { seg: SegInfo; file: string; durationMs: number; packets: number | null; reencoded: boolean; short: string | null }
+interface SegInfo {
+  id: string; user_id: string; started_at: Date; width: number | null; height: number | null; mime: string | null; init_data: Uint8Array | null;
+  chunks: SegChunk[];
+  late?: SegChunk[]; // set when chunks was widened to the whole segment (rebuild): only the chunks that are not in the video yet
+}
+interface Item {
+  seg: SegInfo; file: string; durationMs: number; packets: number | null; reencoded: boolean; short: string | null;
+  startMs: number; firstSeq: number; dims: { width: number; height: number; codec: string } | null;
+}
+/** One file the day's video is concatenated from: an existing part (fresh = false) or a new file still to be moved into parts/. */
+interface Piece { abs: string; segmentId: string | null; firstSeq: number; startMs: number; durationMs: number; packets: number | null; fresh: boolean }
 interface Ref { size: { w: number; h: number } | null; codec: string | null }
 interface Problem { seg: SegInfo; problem: string }
 
@@ -508,6 +675,12 @@ export function expectedMs(chunks: { duration_ms: number | null }[]): number {
 /** Playing less than expected − max(15 s, 1 %) is flagged (the files are then kept). Playing longer is fine. */
 export function shortProblem(playableMs: number, expected: number): string | null {
   return playableMs < expected - Math.max(15_000, expected * 0.01) ? `only ${minutes(playableMs)} of ${minutes(expected)} min readable` : null;
+}
+
+/** A rebuilt segment replaces its old parts only if it holds at least as much video (2 s slack; packets too when both are known). */
+export function rebuildKeepsVideo(old: { durationMs: number; packets: number | null }[], rebuilt: { durationMs: number; packets: number | null }): boolean {
+  if (rebuilt.durationMs < old.reduce((a, p) => a + p.durationMs, 0) - 2000) return false;
+  return !(rebuilt.packets !== null && old.every((p) => p.packets !== null) && rebuilt.packets < old.reduce((a, p) => a + p.packets!, 0));
 }
 
 /** A re-encode must not silently shorten the video. */
@@ -559,18 +732,25 @@ export async function assembleSessionV2(sessionId: string): Promise<void> {
 }
 
 /**
- * The segment's chunks → one remuxed WebM (`-c copy`). Never falls back to raw bytes: nothing readable → null.
- * If the plain remux plays less than the chunks claim, the tolerant remux is tried too and the longer one is kept.
+ * Chunk files → one remuxed WebM (`-c copy`), optionally behind a header (`header` = init bytes borrowed for a tail
+ * that lost its seq 0). Never falls back to raw bytes: nothing readable → null. If the plain remux plays less than
+ * `expected` the tolerant remux is tried too and the longer one is kept.
  */
-async function remuxSegment(seg: SegInfo, dir: string, ts: number, temps: string[]): Promise<{ file: string; probe: Probe } | null> {
-  const raw = path.join(dir, `.tmp-${ts}-${seg.id}.raw.webm`);
+export async function remuxChunks(files: string[], expected: number, dir: string, tag: string, temps: string[], header?: Buffer): Promise<{ file: string; probe: Probe } | null> {
+  const raw = path.join(dir, `.tmp-${tag}.raw.webm`);
   temps.push(raw);
-  await concatFiles(seg.chunks.map((c) => c.file_path), raw);
-  const expected = expectedMs(seg.chunks);
+  let src = files;
+  if (header) {
+    const h = `${raw}.hdr`;
+    temps.push(h);
+    await fs.promises.writeFile(h, header);
+    src = [h, ...files];
+  }
+  await concatFiles(src, raw);
   const tries: string[][] = [[], ['-fflags', '+genpts+discardcorrupt', '-err_detect', 'ignore_err']];
   let best: { file: string; probe: Probe } | null = null;
   for (const [i, input] of tries.entries()) {
-    const out = path.join(dir, `.tmp-${ts}-${seg.id}.r${i}.webm`);
+    const out = path.join(dir, `.tmp-${tag}.r${i}.webm`);
     temps.push(out);
     if (!(await ffmpegRun(['-y', ...input, '-i', raw, '-c', 'copy', '-f', 'webm', out], out, COPY_TIMEOUT_MS)).ok) continue;
     const probe = await probeFile(out);
@@ -581,10 +761,82 @@ async function remuxSegment(seg: SegInfo, dir: string, ts: number, temps: string
   return best;
 }
 
-/** One segment → a playable file in the generation's codec/size, or the reason it cannot be used. Never throws for bad media. */
-async function prepareSegment(seg: SegInfo, dir: string, ts: number, temps: string[], ref: Ref, attempts: number): Promise<Item | { problem: string }> {
+/** The file plays and its first 3 s decode without a single error (a borrowed header must not just "remux"). */
+export async function decodesClean(file: string): Promise<boolean> {
+  const r = await probeRun(['-v', 'error', '-t', '3', '-i', file, '-f', 'null', '-']);
+  return r.code === 0 && r.stderr.trim() === '';
+}
+
+/** Init bytes from the first chunk files, read in order only as far as the first Cluster (at most 64 KB). */
+async function readInitFiles(files: string[]): Promise<Buffer | null> {
+  const got: Buffer[] = [];
+  let n = 0;
   try {
-    return await prepareSegmentInner(seg, dir, ts, temps, ref);
+    for (const file of files) {
+      const fh = await fs.promises.open(file, 'r');
+      try {
+        const b = Buffer.alloc(INIT_MAX + 4 - n);
+        const { bytesRead } = await fh.read(b, 0, b.length, 0);
+        got.push(b.subarray(0, bytesRead));
+        n += bytesRead;
+      } finally { await fh.close(); }
+      if (n >= INIT_MAX + 4 || Buffer.concat(got).includes(CLUSTER_ID)) break;
+    }
+  } catch { return null; }
+  return initFromChunks(got);
+}
+
+/** The stored chunk files of a segment that are contiguous from seq 0 (at most the first INIT_SEQ_MAX + 1). */
+async function readInitOfSegment(segmentId: string): Promise<Buffer | null> {
+  const rows = await prisma.recordingChunk.findMany({ where: { segment_id: segmentId, seq: { lte: INIT_SEQ_MAX } }, orderBy: { seq: 'asc' }, select: { seq: true, file_path: true } });
+  const files: string[] = [];
+  for (const r of rows) { if (r.seq !== files.length || !fs.existsSync(r.file_path)) break; files.push(r.file_path); }
+  return files.length ? readInitFiles(files) : null;
+}
+
+/** Older segments (before init_data existed) get theirs from their first chunk files while those are still there. Best effort. */
+async function storeInit(seg: SegInfo) {
+  const files: string[] = [];
+  for (const c of seg.chunks) { if (c.seq !== files.length || files.length > INIT_SEQ_MAX) break; files.push(c.file_path); }
+  const init = await readInitFiles(files);
+  if (init) await prisma.recordingSegment.updateMany({ where: { id: seg.id, init_data: null }, data: { init_data: init } }).catch(() => {});
+}
+
+/** A tail that lost its header (first stored chunk is not seq 0): cut at its first Cluster (it may start inside the header or mid-cluster), the borrowed header put in front. null = no Cluster in it. */
+export async function remuxTail(files: string[], expected: number, dir: string, tag: string, temps: string[], header: Buffer): Promise<{ file: string; probe: Probe } | null> {
+  const cut = await firstClusterAt(files);
+  if (!cut) return null;
+  const rest = path.join(dir, `.tmp-${tag}.tail`);
+  temps.push(rest);
+  await fs.promises.writeFile(rest, (await fs.promises.readFile(files[cut.index])).subarray(cut.offset));
+  return remuxChunks([rest, ...files.slice(cut.index + 1)], expected, dir, tag, temps, header);
+}
+
+/** Headers to try for a tail without seq 0: its own init_data, then those of the same user's segments with the same mime and size (nearest in time first). */
+async function headerCandidates(seg: SegInfo): Promise<{ kind: 'own' | 'donor'; bytes: Buffer }[]> {
+  const out: { kind: 'own' | 'donor'; bytes: Buffer }[] = [];
+  if (seg.init_data) out.push({ kind: 'own', bytes: Buffer.from(seg.init_data) });
+  if (!seg.width || !seg.height) return out;
+  const where = { user_id: seg.user_id, id: { not: seg.id }, width: seg.width, height: seg.height, mime: seg.mime };
+  const select = { id: true, started_at: true, init_data: true };
+  const [before, after] = await Promise.all([
+    prisma.recordingSegment.findMany({ where: { ...where, started_at: { lte: seg.started_at } }, orderBy: { started_at: 'desc' }, take: 8, select }),
+    prisma.recordingSegment.findMany({ where: { ...where, started_at: { gt: seg.started_at } }, orderBy: { started_at: 'asc' }, take: 8, select }),
+  ]);
+  const near = (p: { started_at: Date }) => Math.abs(p.started_at.getTime() - seg.started_at.getTime());
+  let donors = 0;
+  for (const p of [...before, ...after].sort((a, b) => near(a) - near(b))) {
+    if (donors >= MAX_DONORS) break;
+    const bytes = p.init_data ? Buffer.from(p.init_data) : await readInitOfSegment(p.id);
+    if (bytes) { out.push({ kind: 'donor', bytes }); donors++; }
+  }
+  return out;
+}
+
+/** One segment → a playable remuxed file (not yet in the generation's size), or the reason it cannot be used. Never throws for bad media. */
+async function prepareSegment(seg: SegInfo, dir: string, ts: number, temps: string[], attempts: number): Promise<Item | { problem: string }> {
+  try {
+    return await prepareSegmentInner(seg, dir, ts, temps);
   } catch (err) {
     // Ambiguous ffmpeg text (Input/output error, …): retried 3 times as infrastructure, then it is this segment's problem.
     if (err instanceof AmbiguousFfmpegError && !ambiguousIsTransient(attempts)) return { problem: err.message };
@@ -592,43 +844,114 @@ async function prepareSegment(seg: SegInfo, dir: string, ts: number, temps: stri
   }
 }
 
-async function prepareSegmentInner(seg: SegInfo, dir: string, ts: number, temps: string[], ref: Ref): Promise<Item | { problem: string }> {
-  if (seg.chunks[0].seq !== 0) return { problem: `late chunks without their header (first stored chunk is seq ${seg.chunks[0].seq})` };
-  const rx = await remuxSegment(seg, dir, ts, temps);
-  if (!rx) return { problem: 'no readable video' };
-  let { file, probe } = rx;
-  // Coverage: the chunks say how much was recorded. Playing less than that is kept visible and the files are kept.
-  const short = shortProblem(probe.durationMs, expectedMs(seg.chunks));
-  const dims = await probeDims(file);
-  const sw = dims?.width ?? seg.width, sh = dims?.height ?? seg.height;
-  if (!ref.size && sw && sh) ref.size = { w: sw, h: sh };
-  if (!ref.codec && dims) ref.codec = dims.codec;
-  let reencoded = false;
-  if (ref.size && sw && sh && (sw !== ref.size.w || sh !== ref.size.h || (dims && ref.codec && dims.codec !== ref.codec))) {
-    const scaled = path.join(dir, `.tmp-${ts}-${seg.id}.scaled.webm`);
-    temps.push(scaled);
-    console.log(`[Recording v2] Segment ${seg.id} is ${dims?.codec ?? '?'} ${sw}x${sh}, generation is ${ref.codec} ${ref.size.w}x${ref.size.h} — converting`);
-    const enc = await ffmpegRun(['-y', '-i', file, '-vf', scaleFilter(ref.size), ...reencodeArgs(ref.codec ?? 'vp8'), '-f', 'webm', scaled], scaled, reencodeTimeoutMs(probe.durationMs));
-    const back = enc.ok ? await probeFile(scaled) : null;
-    if (!back || !back.ok || !reencodeKeptVideo(probe.durationMs, back.durationMs)) return { problem: `re-encode to ${ref.size.w}x${ref.size.h} failed` };
-    file = scaled;
-    probe = back;
-    reencoded = true;
+async function prepareSegmentInner(seg: SegInfo, dir: string, ts: number, temps: string[]): Promise<Item | { problem: string }> {
+  const first = seg.chunks[0];
+  const files = seg.chunks.map((c) => c.file_path);
+  const tail = first.seq !== 0;
+  const expected = expectedMs(seg.chunks);
+  let rx: { file: string; probe: Probe } | null = null;
+  let allowance = 0; // frames before a grafted tail's first keyframe are dropped by the remux
+  let note: string | null = null;
+  if (tail && !(await startsWithEbml(first.file_path))) {
+    // a continuation without its header: borrow one (own init bytes first, then donors) and accept it only if it plays and decodes
+    for (const [n, c] of (await headerCandidates(seg)).entries()) {
+      const r = await remuxTail(files, Math.max(0, expected - TAIL_ALLOWANCE_MS), dir, `${ts}-${seg.id}-h${n}`, temps, c.bytes);
+      if (r && (await decodesClean(r.file))) {
+        rx = r;
+        allowance = TAIL_ALLOWANCE_MS;
+        note = `late chunks joined onto ${c.kind === 'own' ? 'their own header' : 'a donor header'}; frames before their first keyframe are not in the video (chunk files kept)`;
+        break;
+      }
+    }
+    if (!rx) return { problem: 'late chunks without a usable header (own or donor)' };
+  } else {
+    rx = await remuxChunks(files, expected, dir, `${ts}-${seg.id}`, temps);
+    if (!rx) return { problem: 'no readable video' };
+    if (!tail && !seg.init_data) await storeInit(seg);
   }
-  return { seg, file, durationMs: probe.durationMs, packets: probe.packets, reencoded, short };
+  // Coverage: the chunks say how much was recorded. Playing less than that is kept visible and the files are kept.
+  const short = shortProblem(rx.probe.durationMs + allowance, expected) ?? note;
+  let startMs = seg.started_at.getTime();
+  if (tail) {
+    const earlier = await prisma.recordingChunk.findMany({ where: { segment_id: seg.id, seq: { lt: first.seq! } }, select: { seq: true, duration_ms: true } });
+    startMs = tailStartMs(seg.started_at, earlier, first.seq!);
+  }
+  return { seg, file: rx.file, durationMs: rx.probe.durationMs, packets: rx.probe.packets, reencoded: false, short, startMs, firstSeq: first.seq ?? 0, dims: await probeDims(rx.file) };
+}
+
+/** Converts one prepared segment to the generation's codec/size (one ffmpeg call, one segment). */
+async function normalizeItem(it: Item, ref: Ref, dir: string, ts: number, temps: string[]): Promise<Item | { problem: string }> {
+  const sw = it.dims?.width ?? it.seg.width, sh = it.dims?.height ?? it.seg.height;
+  if (!(ref.size && sw && sh && (sw !== ref.size.w || sh !== ref.size.h || (it.dims && ref.codec && it.dims.codec !== ref.codec)))) return it;
+  const scaled = path.join(dir, `.tmp-${ts}-${it.seg.id}-${it.firstSeq}.scaled.webm`);
+  temps.push(scaled);
+  console.log(`[Recording v2] Segment ${it.seg.id} is ${it.dims?.codec ?? '?'} ${sw}x${sh}, generation is ${ref.codec} ${ref.size.w}x${ref.size.h} — converting`);
+  const enc = await ffmpegRun(['-y', '-i', it.file, '-vf', scaleFilter(ref.size), ...reencodeArgs(ref.codec ?? 'vp8'), '-f', 'webm', scaled], scaled, reencodeTimeoutMs(it.durationMs));
+  const back = enc.ok ? await probeFile(scaled) : null;
+  if (!back || !back.ok || !reencodeKeptVideo(it.durationMs, back.durationMs)) return { problem: `re-encode to ${ref.size.w}x${ref.size.h} failed` };
+  return { ...it, file: scaled, durationMs: back.durationMs, packets: back.packets, reencoded: true };
+}
+
+const pieceOf = (i: Item): Piece => ({ abs: i.file, segmentId: i.seg.id, firstSeq: i.firstSeq, startMs: i.startMs, durationMs: i.durationMs, packets: i.packets, fresh: true });
+const byStart = (a: { startMs: number }, b: { startMs: number }) => a.startMs - b.startMs;
+
+/** Parts of the day: each file is moved into <dir>/parts, the old generation file that is a base part is hard-linked there; null = could not (or must not), the manifest is then just the generation. */
+async function placeParts(dir: string, pieces: Piece[], next: number, prevFile: string | null): Promise<PartItem[] | null> {
+  if (!(await partsAllowed(dir))) return null;
+  try {
+    const partsDir = path.join(dir, 'parts');
+    await fs.promises.mkdir(partsDir, { recursive: true });
+    const items: PartItem[] = [];
+    for (const p of pieces) {
+      let dest = p.abs;
+      if (p.fresh) {
+        // the generation is in the name: a replaced part never overwrites the file the committed manifest still names
+        dest = path.join(partsDir, `${p.segmentId ?? 'base'}-${p.firstSeq}-g${next}.webm`);
+        await fs.promises.rename(p.abs, dest);
+        const now = new Date();
+        await fs.promises.utimes(dest, now, now); // the sweep removes unreferenced parts only when older than 1 h
+      } else if (prevFile && p.abs === prevFile) {
+        dest = path.join(partsDir, `base-${p.firstSeq}-g${next - 1}.webm`);
+        await fs.promises.link(prevFile, dest).catch((err) => { if (err.code !== 'EEXIST') throw err; });
+      }
+      items.push({ file: path.relative(dir, dest).replace(/\\/g, '/'), segmentId: p.segmentId, firstSeq: p.firstSeq, startMs: p.startMs, durationMs: p.durationMs, packets: p.packets });
+    }
+    return items;
+  } catch (err: any) {
+    console.warn(`[Recording v2] could not keep parts (${err.code ?? err.message}): the day is kept as its generation only`);
+    return null;
+  }
 }
 
 async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   const session = await prisma.recordingSession.findUnique({ where: { id: sessionId } });
   if (!session || !session.recording_date) throw new Error('v2 session not found');
   await closeAbandonedSegments(sessionId); // S4: on-demand assembly benefits too
-  const all = await prisma.recordingSegment.findMany({
+  const rows = await prisma.recordingSegment.findMany({
     where: { session_id: sessionId, state: { in: ASSEMBLABLE } },
     orderBy: { started_at: 'asc' },
     include: { chunks: { where: { purged_at: null }, orderBy: { seq: 'asc' } } },
   });
-  if (all.length === 0) return;
+  if (rows.length === 0) return;
   await testHooks.afterSnapshot?.();
+
+  const dir = dirOf(session);
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  // What the current generation is made of. A manifest counts only while every part file is still there.
+  const manifest0 = parseManifest(session.parts);
+  const manifest = manifest0 && manifest0.items.every((i) => fs.existsSync(path.join(dir, i.file))) ? manifest0 : null;
+  const all: SegInfo[] = rows.map((r) => ({ id: r.id, user_id: r.user_id, started_at: r.started_at, width: r.width, height: r.height, mime: r.mime, init_data: r.init_data, chunks: r.chunks }));
+
+  // A segment that has a part of its own and whose earlier chunk files are all still on disk is rebuilt whole (its part is replaced).
+  for (const seg of all) {
+    if (!seg.chunks.length || !manifest?.items.some((i) => i.segmentId === seg.id && i.firstSeq === 0)) continue;
+    const prior = await prisma.recordingChunk.findMany({ where: { segment_id: seg.id, purged_at: { not: null } }, orderBy: { seq: 'asc' } });
+    if (prior.length && prior.every((p) => fs.existsSync(p.file_path))) {
+      seg.late = seg.chunks;
+      seg.chunks = [...prior, ...seg.chunks].sort((a, b) => a.seq! - b.seq!);
+    }
+  }
 
   // S2: never commit (and so never purge) a segment whose stored chunk file is missing. It stays as it is
   // (transient: the session backs off and retries); healthy segments of the same session are still assembled.
@@ -642,22 +965,11 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   if (broken.length) console.error(`[Recording v2] Session ${sessionId}: ${brokenMsg()}`);
   if (segments.length === 0) throw new Error(brokenMsg());
 
-  const dir = dirOf(session);
-  await fs.promises.mkdir(dir, { recursive: true });
-
-  // Segments that started before something already in the generation are appended in arrival order.
-  const lastAssembled = await prisma.recordingSegment.findFirst({
-    where: { session_id: sessionId, state: 'assembled' }, orderBy: { started_at: 'desc' }, select: { started_at: true },
-  });
-  if (lastAssembled && segments[0].started_at < lastAssembled.started_at) {
-    console.warn(`[Recording v2] Session ${sessionId}: segment ${segments[0].id} (${segments[0].started_at.toISOString()}) is older than the current generation content — appended out of order`);
-  }
-
   // Current generation file (must exist when generation > 0, otherwise earlier video would be dropped).
   let prevFile: string | null = null;
   let prevDuration = 0;
   let prevPackets: number | null = 0;
-  const ref: Ref = { size: null, codec: null };
+  let prevDims: { width: number; height: number; codec: string } | null = null;
   if (session.generation > 0) {
     if (!session.file_path || !fs.existsSync(session.file_path)) {
       throw new Error(`generation ${session.generation} file missing on disk (${session.file_path}) — refusing to build over it`);
@@ -667,8 +979,15 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
     if (!p.ok || p.durationMs === 0) throw new Error(`generation ${session.generation} file is not readable (${prevFile}) — refusing to build over it`);
     prevDuration = p.durationMs; // measured: a stale duration_ms in the DB must not make every join look short
     prevPackets = p.packets;
-    const d = await probeDims(prevFile);
-    if (d) { ref.size = { w: d.width, h: d.height }; ref.codec = d.codec; }
+    prevDims = await probeDims(prevFile);
+  }
+  let basePieces: Piece[] = [];
+  if (prevFile) {
+    if (manifest) basePieces = manifest.items.map((i) => ({ abs: path.join(dir, i.file), segmentId: i.segmentId, firstSeq: i.firstSeq, startMs: i.startMs, durationMs: i.durationMs, packets: i.packets, fresh: false }));
+    else {
+      const first = await prisma.recordingSegment.findFirst({ where: { session_id: sessionId, state: 'assembled' }, orderBy: { started_at: 'asc' }, select: { started_at: true } });
+      basePieces = [{ abs: prevFile, segmentId: null, firstSeq: 0, startMs: (first?.started_at ?? session.created_at).getTime(), durationMs: prevDuration, packets: prevPackets, fresh: false }];
+    }
   }
 
   const next = session.generation + 1;
@@ -678,30 +997,98 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
 
   try {
     // 1. prepare every segment on its own; a bad one is flagged (chunks untouched) and the others carry on
-    const items: Item[] = [];
+    const prepared: Item[] = [];
     const empty: SegInfo[] = [];
     const problems: Problem[] = [];
     for (const seg of segments) {
       if (seg.chunks.length === 0) { empty.push(seg); continue; } // nothing unpurged left in it
-      const r = await prepareSegment(seg, dir, ts, temps, ref, session.assembly_attempts);
+      let r = await prepareSegment(seg, dir, ts, temps, session.assembly_attempts);
+      if ('problem' in r && seg.late) {
+        console.warn(`[Recording v2] Segment ${seg.id}: whole-segment rebuild failed (${r.problem}) — trying the late chunks alone`);
+        r = await prepareSegment({ ...seg, chunks: seg.late, late: undefined }, dir, ts, temps, session.assembly_attempts);
+      }
       if ('problem' in r) {
         problems.push({ seg, problem: r.problem });
         console.warn(`[Recording v2] Segment ${seg.id} unreadable: ${r.problem} — chunks kept on disk`);
-      } else items.push(r);
+      } else prepared.push(r);
     }
 
-    // 2. join [previous generation, new segments…], copy only. If the whole list will not join, split it in halves
-    //    on top of the last good file so one bad segment cannot hold back the others. A lone culprit gets one
-    //    per-segment re-encode to the generation's codec/size and one more try before it is flagged. At most
-    //    MAX_JOIN_STRIKES such culprits per run: beyond that the rest is left assemblable (a retry with backoff),
-    //    never mass-flagged.
+    // A whole-segment rebuild that plays less than the parts it would replace (rotten kept files) is not used: the late chunks go in alone.
+    for (let k = 0; k < prepared.length; k++) {
+      const it = prepared[k];
+      const old = manifest?.items.filter((i) => i.segmentId === it.seg.id) ?? [];
+      if (!it.seg.late || rebuildKeepsVideo(old, it)) continue;
+      console.warn(`[Recording v2] Segment ${it.seg.id}: the whole-segment rebuild plays ${it.durationMs} ms, the parts it would replace ${old.reduce((a, p) => a + p.durationMs, 0)} ms — keeping them, using the late chunks alone`);
+      const tailSeg = { ...it.seg, chunks: it.seg.late, late: undefined };
+      const r = await prepareSegment(tailSeg, dir, ts, temps, session.assembly_attempts);
+      if ('problem' in r) {
+        problems.push({ seg: tailSeg, problem: r.problem });
+        console.warn(`[Recording v2] Segment ${it.seg.id} unreadable: ${r.problem} — chunks kept on disk`);
+        prepared.splice(k--, 1);
+      } else prepared[k] = r;
+    }
+
+    // 2. the reference size: what the day already is, else the size with the most video (never just the first segment's)
+    const ref: Ref = { size: null, codec: null };
+    const sized = prepared.filter((i) => (i.dims?.width ?? i.seg.width) && (i.dims?.height ?? i.seg.height))
+      .map((i) => ({ w: (i.dims?.width ?? i.seg.width)!, h: (i.dims?.height ?? i.seg.height)!, codec: i.dims?.codec ?? 'vp8', ms: i.durationMs }));
+    const choice = chooseRef(prevDims ? { w: prevDims.width, h: prevDims.height, codec: prevDims.codec, ms: prevDuration } : null, sized);
+    if (choice.ref) { ref.size = { w: choice.ref.w, h: choice.ref.h }; ref.codec = choice.ref.codec; }
+    let rebase = choice.rebase;
+    if (rebase) {
+      // the day so far is smaller than 640 wide and the new material clearly is not: re-encode its pieces once
+      const redone: Piece[] = [];
+      for (const b of basePieces) {
+        const out = path.join(dir, `.tmp-${ts}-rebase${redone.length}.webm`);
+        temps.push(out);
+        const enc = await ffmpegRun(['-y', '-i', b.abs, '-vf', scaleFilter(ref.size!), ...reencodeArgs(ref.codec ?? 'vp8'), '-f', 'webm', out], out, reencodeTimeoutMs(b.durationMs));
+        const back = enc.ok ? await probeFile(out) : null;
+        if (!back || !back.ok || !reencodeKeptVideo(b.durationMs, back.durationMs)) { redone.length = 0; break; }
+        redone.push({ ...b, abs: out, durationMs: back.durationMs, packets: back.packets, fresh: true });
+      }
+      if (redone.length === basePieces.length) basePieces = redone;
+      else {
+        console.warn(`[Recording v2] Session ${sessionId}: the earlier video could not be re-encoded to ${ref.size!.w}x${ref.size!.h} — the new material is scaled to it instead`);
+        rebase = false;
+        ref.size = { w: prevDims!.width, h: prevDims!.height };
+        ref.codec = prevDims!.codec;
+      }
+    }
+    const items: Item[] = [];
+    for (const it of prepared) {
+      const r = await normalizeItem(it, ref, dir, ts, temps);
+      if ('problem' in r) problems.push({ seg: it.seg, problem: r.problem });
+      else items.push(r);
+    }
+    items.sort(byStart);
+
+    // 3. join, copy only. If the whole list will not join it is split in halves on top of the last good file so one bad
+    //    segment cannot hold back the others. A lone culprit gets one per-segment re-encode to the generation's
+    //    codec/size and one more try before it is flagged. At most MAX_JOIN_STRIKES such culprits per run: beyond that
+    //    the rest is left assemblable (a retry with backoff), never mass-flagged.
     const state = { file: prevFile, dur: prevDuration, packets: prevPackets };
-    const joined: Item[] = [];
+    let joined: Item[] = [];
     const joinBad: Problem[] = [];
     const deferred: SegInfo[] = [];
     const joinOutputs = new Set<string>(); // each is a whole copy of the day: drop the superseded one at once (disk)
     let joins = 0;
     let strikes = 0;
+    const concatVerify = async (inputs: string[], want: { ms: number; packets: number | null }): Promise<{ out: string; ms: number; packets: number | null } | null> => {
+      const out = path.join(dir, `.tmp-${ts}-join${joins++}.webm`);
+      const list = `${out}.txt`;
+      temps.push(out, list);
+      await fs.promises.writeFile(list, inputs.map(concatListEntry).join('\n') + '\n');
+      const r = await ffmpegRun(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-f', 'webm', out], out, COPY_TIMEOUT_MS);
+      if (r.timedOut) throw new Error('ffmpeg concat timed out');
+      if (!r.ok) return null;
+      const p = await probeFile(out);
+      if (!p.ok || !joinVerified(want, { ms: p.durationMs, packets: p.packets })) {
+        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${want.ms - 2000}ms packets=${p.packets} need>=${want.packets}`);
+        await rm(out);
+        return null;
+      }
+      return { out, ms: p.durationMs, packets: p.packets };
+    };
     const tryJoin = async (group: Item[]): Promise<boolean> => {
       const inputs = [...(state.file ? [state.file] : []), ...group.map((i) => i.file)];
       const want = {
@@ -710,24 +1097,13 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
       };
       if (inputs.length === 1) { state.file = inputs[0]; state.dur = want.ms; state.packets = want.packets; joined.push(...group); return true; }
       if (testHooks.failJoin?.(group.map((i) => ({ id: i.seg.id, reencoded: i.reencoded })))) return false;
-      const out = path.join(dir, `.tmp-${ts}-join${joins++}.webm`);
-      const list = `${out}.txt`;
-      temps.push(out, list);
-      await fs.promises.writeFile(list, inputs.map(concatListEntry).join('\n') + '\n');
-      const r = await ffmpegRun(['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-f', 'webm', out], out, COPY_TIMEOUT_MS);
-      if (r.timedOut) throw new Error('ffmpeg concat timed out');
-      if (!r.ok) return false;
-      const p = await probeFile(out);
-      if (!p.ok || !joinVerified(want, { ms: p.durationMs, packets: p.packets })) {
-        console.warn(`[Recording v2] Verification failed for ${sessionId} g${next}: ok=${p.ok} duration=${p.durationMs}ms need>=${want.ms - 2000}ms packets=${p.packets} need>=${want.packets}`);
-        await rm(out);
-        return false;
-      }
+      const r = await concatVerify(inputs, want);
+      if (!r) return false;
       if (state.file && joinOutputs.has(state.file)) await rm(state.file);
-      joinOutputs.add(out);
-      state.file = out;
-      state.dur = p.durationMs;
-      state.packets = p.packets;
+      joinOutputs.add(r.out);
+      state.file = r.out;
+      state.dur = r.ms;
+      state.packets = r.packets;
       joined.push(...group);
       return true;
     };
@@ -751,40 +1127,91 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
       }
       joinBad.push({ seg: it.seg, problem: 'could not be joined onto the video (ffmpeg concat failed)' });
     };
-    if (items.length) await joinInto(items);
-    if (!prevFile && items.length > 1 && joined.length === 1) {
+
+    // Time order: a segment that started before something already in the day, or a rebuilt one that replaces its own part,
+    // means the whole day is concatenated again from its parts in start order. Anything else is appended to the generation.
+    const replaced = new Set(items.filter((i) => i.seg.late).map((i) => i.seg.id));
+    const keptBase = basePieces.filter((b) => !(b.segmentId && replaced.has(b.segmentId)));
+    const newPieces = items.map(pieceOf);
+    let finalPieces: Piece[] = [...basePieces, ...newPieces];
+    let collapse = false; // true: the manifest ends up as the generation alone
+    const needOrdered = items.length > 0 && (rebase || replaced.size > 0 || newPieces.some((p) => keptBase.some((b) => p.startMs < b.startMs)));
+    let appendItems = items;
+    if (needOrdered) {
+      const everything = [...keptBase, ...newPieces].sort(byStart);
+      const want = { ms: everything.reduce((a, p) => a + p.durationMs, 0), packets: everything.every((p) => p.packets !== null) ? everything.reduce((a, p) => a + p.packets!, 0) : null };
+      const r = testHooks.failJoin?.(items.map((i) => ({ id: i.seg.id, reencoded: i.reencoded }))) ? null : await concatVerify(everything.map((p) => p.abs), want);
+      if (r) {
+        state.file = r.out; state.dur = r.ms; state.packets = r.packets; joinOutputs.add(r.out);
+        joined = [...items];
+        finalPieces = everything;
+        appendItems = [];
+      } else {
+        if (rebase) throw new Error('the day could not be re-joined after re-encoding its earlier video; nothing was changed');
+        // fall back to appending to the current generation; its parts are collapsed. A rebuilt segment must then bring only its late chunks.
+        console.warn(`[Recording v2] Session ${sessionId}: ordered join of the parts failed — appending to the generation instead`);
+        collapse = true;
+        appendItems = [];
+        for (const it of items) {
+          if (!it.seg.late) { appendItems.push(it); continue; }
+          const r2 = await prepareSegment({ ...it.seg, chunks: it.seg.late, late: undefined }, dir, ts, temps, session.assembly_attempts);
+          const n2 = 'problem' in r2 ? r2 : await normalizeItem(r2, ref, dir, ts, temps);
+          if ('problem' in n2) problems.push({ seg: it.seg, problem: n2.problem });
+          else appendItems.push(n2);
+        }
+        appendItems.sort(byStart);
+      }
+    }
+    if (appendItems.length) await joinInto(appendItems);
+    if (!prevFile && appendItems.length > 1 && joined.length === 1) {
       // Nothing joined onto the first segment: it is the odd one out, not all the others. Publish the LONGEST segment
       // alone (normal commit: only its own chunks are marked / purged) and do not flag the rest: they stay assemblable
       // (the run ends in recordFailure) and the next run joins them on top of it.
-      const keep = items.reduce((a, b) => (b.durationMs > a.durationMs ? b : a));
-      for (const i of items) if (i !== keep && !deferred.includes(i.seg)) deferred.push(i.seg);
+      const keep = appendItems.reduce((a, b) => (b.durationMs > a.durationMs ? b : a));
+      for (const i of appendItems) if (i !== keep && !deferred.includes(i.seg)) deferred.push(i.seg);
       const k = deferred.indexOf(keep.seg);
       if (k >= 0) deferred.splice(k, 1);
       joinBad.length = 0;
       state.file = keep.file;
       state.dur = keep.durationMs;
       state.packets = keep.packets;
-      joined.length = 0;
-      joined.push(keep);
+      joined = [keep];
     }
     problems.push(...joinBad);
+    if (appendItems.length && !collapse) finalPieces = [...basePieces, ...joined.map(pieceOf)];
 
-    // 3. publish: fsync + rename, then one DB transaction (only what really went into the video is marked / purged)
+    // 4. publish: fsync + rename, then the parts (moved next to the generation, not yet referenced), then one DB transaction
+    //    (only what really went into the video is marked / purged). A crash before the commit leaves the old manifest and
+    //    every file it names untouched; new parts that were already moved are removed by the sweep after an hour.
     let published: string | null = null;
+    let parts: PartsManifest | undefined;
+    const obsolete: string[] = [];
     if (joined.length) {
       await fsyncFile(state.file!);
-      await fs.promises.rename(state.file!, finalPath);
+      if (joinOutputs.has(state.file!)) await fs.promises.rename(state.file!, finalPath);
+      else { // a single segment is the whole day: its file is also its part, so the generation is a second name (or copy) of it
+        await rm(finalPath);
+        await fs.promises.link(state.file!, finalPath).catch(() => fs.promises.copyFile(state.file!, finalPath));
+      }
       published = finalPath;
+      const refOut = ref.size && ref.codec ? { w: ref.size.w, h: ref.size.h, codec: ref.codec } : null;
+      const placed = collapse ? null : await placeParts(dir, finalPieces.sort(byStart), next, prevFile);
+      const startMs = Math.min(...finalPieces.map((p) => p.startMs));
+      parts = { ref: refOut, items: placed ?? [{ file: path.basename(finalPath), segmentId: null, firstSeq: 0, startMs, durationMs: state.dur, packets: state.packets }] };
+      const keep = new Set(parts.items.map((i) => path.join(dir, i.file)));
+      for (const b of basePieces) if (!keep.has(b.abs)) obsolete.push(b.abs);
+      for (const i of manifest?.items ?? []) if (!keep.has(path.join(dir, i.file))) obsolete.push(path.join(dir, i.file));
     }
+    await testHooks.beforeCommit?.();
     const short = joined.filter((i) => i.short).map((i) => ({ seg: i.seg, problem: i.short! }));
     const full = [...joined.filter((i) => !i.short).map((i) => i.seg), ...empty];
-    const issues = [...broken, ...problems.map((p) => `segment ${p.seg.id}: ${p.problem}`), ...short.map((s) => `segment ${s.seg.id}: ${s.problem}`),
+    const issues = [...broken, ...problems.map((p) => `segment ${p.seg.id}: ${p.problem}`), ...short.filter((s) => /^only /.test(s.problem)).map((s) => `segment ${s.seg.id}: ${s.problem}`),
       ...deferred.map((d) => `segment ${d.id}: not joined this run, will retry`)];
     const error = issues.length ? issues.join('; ').slice(0, 900) : null;
-    const loggedOutAdd = joined.flatMap((i) => i.seg.chunks).reduce((a, c) => a + (c.logged_out ? (c.duration_ms ?? 0) : 0), 0);
+    const loggedOutAdd = joined.flatMap((i) => i.seg.late ?? i.seg.chunks).reduce((a, c) => a + (c.logged_out ? (c.duration_ms ?? 0) : 0), 0);
     await commitGeneration({
       session, generation: published ? next : session.generation, finalPath: published, durationMs: state.dur,
-      loggedOutAdd, full, short, unreadable: problems, prevFile, error,
+      loggedOutAdd, full, short, unreadable: problems, prevFile, error, parts, obsolete,
     });
     if (broken.length || deferred.length) await recordFailure(sessionId, error!); // transient (missing chunk file / join budget used up): retry later with backoff
     console.log(published
@@ -795,18 +1222,20 @@ async function assembleSessionV2Inner(sessionId: string): Promise<void> {
   }
 }
 
-/** DB commit, then purge (after commit only). Chunk files go only for segments whose frames are in the committed video. */
+/** DB commit, then purge (after commit only). Chunk files go only for segments whose frames are in the committed video and that nothing can still add to. */
 async function commitGeneration(c: {
   session: { id: string; logged_out_ms: number };
   generation: number;
   finalPath: string | null; // null: this run added no video — generation, duration and the retry counters stay as they are
   durationMs: number;
   loggedOutAdd: number;
-  full: SegInfo[]; // fully covered: rows purged, files deleted
-  short: Problem[]; // in the video but short: rows purged (not pending again), files KEPT
+  full: SegInfo[]; // in the video: rows purged; their files are deleted when keptFilesDeletable says so
+  short: Problem[]; // in the video but short or grafted: rows purged (not pending again), files KEPT
   unreadable: Problem[]; // not in the video: state 'unreadable', chunks untouched
   prevFile: string | null;
   error: string | null;
+  parts?: PartsManifest; // the manifest of the new generation (committed with it)
+  obsolete: string[]; // files the old generation / manifest named that the new one does not: deleted after the commit
 }) {
   const included = [...c.full, ...c.short.map((s) => s.seg)];
   const chunkIds = included.flatMap((s) => s.chunks.map((x) => x.id));
@@ -817,7 +1246,7 @@ async function commitGeneration(c: {
       data: c.finalPath
         ? {
             generation: c.generation, file_path: c.finalPath, duration_ms: c.durationMs, logged_out_ms: c.session.logged_out_ms + c.loggedOutAdd,
-            assembly_error: c.error, assembly_attempts: 0, assembly_next_at: null,
+            assembly_error: c.error, assembly_attempts: 0, assembly_next_at: null, parts: c.parts as any,
           }
         : { assembly_error: c.error },
     }),
@@ -827,9 +1256,9 @@ async function commitGeneration(c: {
     prisma.recordingChunk.updateMany({ where: { id: { in: chunkIds } }, data: { purged_at: new Date() } }),
   ]);
 
-  // Purge only after the commit. Only the chunks that went into this generation and are fully covered by it.
-  for (const s of c.full) for (const ch of s.chunks) await deleteFile(ch.file_path);
-  for (const s of c.full) if (s.chunks.length) await fs.promises.rmdir(path.dirname(s.chunks[0].file_path)).catch(() => {});
+  // Delete only after the commit, and only what keptFilesDeletable allows (agent-closed, complete, nothing pending, no problem).
+  for (const s of c.full) await deleteKeptFilesIfDone(s.id);
+  for (const f of c.obsolete) await deleteFile(f);
   if (c.prevFile && c.finalPath && c.prevFile !== c.finalPath) await deleteFile(c.prevFile);
 
   // Chunks that arrived after the snapshot were not purged: their segment is pending again.
@@ -849,10 +1278,124 @@ async function commitGeneration(c: {
   for (const f of fresh) await reviveSegment(f.id);
 }
 
+/** Deletes a segment's kept chunk files when nothing can still need them (see keptFilesDeletable). Returns how many files went. */
+async function deleteKeptFilesIfDone(segmentId: string, now = Date.now()): Promise<number> {
+  const seg = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, select: { state: true, problem: true, agent_closed_at: true, last_seq: true, lost_seqs: true } });
+  if (!seg) return 0;
+  const rows = await prisma.recordingChunk.findMany({ where: { segment_id: segmentId }, select: { seq: true, purged_at: true, uploaded_at: true, file_path: true } });
+  if (!keptFilesDeletable(seg, rows, now)) return 0;
+  for (const r of rows) await deleteFile(r.file_path);
+  await fs.promises.rmdir(path.dirname(rows[0].file_path)).catch(() => {});
+  return rows.length;
+}
+
+/** Window of sessions the housekeeping looks at (kept files and parts older than this are retention's business). */
+const HOUSEKEEPING_DAYS = 45;
+async function recentSessions<T extends Record<string, boolean>>(select: T) {
+  const since = dateOnly(new Date(Date.now() + 5 * 3600_000 - HOUSEKEEPING_DAYS * 86_400_000).toISOString().slice(0, 10));
+  return prisma.recordingSession.findMany({ where: { recording_date: { gte: since }, generation: { gt: 0 }, dir_path: { not: null } }, select: { id: true, dir_path: true, ...select } });
+}
+
+/** Sweep: deletes kept chunk files whose segment the agent has closed since, or that nobody closed for 16 days. Returns the number of files deleted. */
+export async function cleanKeptFiles(): Promise<number> {
+  let n = 0;
+  for (const s of await recentSessions({})) {
+    const segDir = path.join(s.dir_path!, 'segments');
+    const ids = await fs.promises.readdir(segDir).catch(() => [] as string[]); // only segments whose folder still exists have kept files
+    for (const id of ids) {
+      n += await deleteKeptFilesIfDone(id);
+      await fs.promises.rmdir(path.join(segDir, id)).catch(() => {}); // only succeeds when empty
+    }
+  }
+  if (n) console.log(`[Sweeper v2] deleted ${n} kept chunk file(s) of closed / long idle segments`);
+  return n;
+}
+
+/** Sweep: parts of a day older than RECORDING_PARTS_KEEP_DAYS (or on a low disk) collapse into the generation file. Returns the number of sessions collapsed. */
+export async function collapseParts(opts: { keepDays?: number } = {}): Promise<number> {
+  const keepDays = opts.keepDays ?? (Number(process.env.RECORDING_PARTS_KEEP_DAYS ?? PARTS_KEEP_DAYS) || PARTS_KEEP_DAYS);
+  let n = 0;
+  for (const s of await recentSessions({ file_path: true, generation: true, recording_date: true, parts: true, duration_ms: true })) {
+    const m = parseManifest(s.parts);
+    if (!m || (m.items.length === 1 && m.items[0].segmentId === null && path.join(s.dir_path!, m.items[0].file) === s.file_path)) continue;
+    if (!(partsExpired(dateStr(s.recording_date!), Date.now(), keepDays) || !(await partsAllowed(s.dir_path!)))) continue;
+    if (!s.file_path || !fs.existsSync(s.file_path)) continue; // never drop parts when the generation they build is not there
+    const collapsed: PartsManifest = { ref: m.ref, items: [{ file: path.relative(s.dir_path!, s.file_path).replace(/\\/g, '/'), segmentId: null, firstSeq: 0, startMs: Math.min(...m.items.map((i) => i.startMs)), durationMs: s.duration_ms ?? m.items.reduce((a, i) => a + i.durationMs, 0), packets: m.items.every((i) => i.packets !== null) ? m.items.reduce((a, i) => a + i.packets!, 0) : null }] };
+    const done = await prisma.recordingSession.updateMany({ where: { id: s.id, generation: s.generation }, data: { parts: collapsed as any } }); // not if a run committed meanwhile
+    if (!done.count) continue;
+    for (const i of m.items) if (path.join(s.dir_path!, i.file) !== s.file_path) await deleteFile(path.join(s.dir_path!, i.file));
+    n++;
+  }
+  if (n) console.log(`[Sweeper v2] collapsed the parts of ${n} session(s) into their generation file`);
+  return n;
+}
+
+/** Sweep: files in parts/ that no manifest names and that are older than an hour (left by a crash before the commit). */
+export async function removeUnknownParts(): Promise<number> {
+  let n = 0;
+  for (const s of await recentSessions({ parts: true })) {
+    const dir = path.join(s.dir_path!, 'parts');
+    const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
+    if (!names.length) continue;
+    const known = new Set((parseManifest(s.parts)?.items ?? []).map((i) => path.basename(i.file)));
+    for (const name of names) {
+      if (known.has(name)) continue;
+      const st = await fs.promises.stat(path.join(dir, name)).catch(() => null);
+      if (st && Date.now() - st.mtimeMs > 3600_000) { await deleteFile(path.join(dir, name)); n++; }
+    }
+  }
+  if (n) console.log(`[Sweeper v2] removed ${n} unreferenced part file(s)`);
+  return n;
+}
+
+/** Stage 1 flagged late chunks without a header as unreadable; they can be grafted now. Called once per boot. Returns how many were made pending again. */
+export async function reviveHeaderlessUnreadable(): Promise<number> {
+  const segs = await prisma.recordingSegment.findMany({ where: { state: 'unreadable', problem: { startsWith: 'late chunks without their header' } }, select: { id: true, session_id: true } });
+  for (const s of segs) await reviveSegment(s.id);
+  if (segs.length) {
+    await prisma.recordingSession.updateMany({ where: { id: { in: [...new Set(segs.map((s) => s.session_id))] } }, data: { assembly_next_at: null } });
+    console.log(`[Sweeper v2] ${segs.length} segment(s) flagged for a missing header are assemblable again (headers can be borrowed now)`);
+  }
+  return segs.length;
+}
+
 /** New data arrived for an unreadable segment: it gets another try. */
 async function reviveSegment(segmentId: string) {
   await prisma.recordingSegment.updateMany({ where: { id: segmentId, state: 'unreadable' }, data: { state: 'closed', problem: null } });
   await recomputeSegmentState(segmentId);
+}
+
+/**
+ * Admin retry / repair: every unreadable segment that still has unpurged chunk rows goes back into the queue, and the
+ * session's attempts, backoff and error are cleared. Builds nothing itself. Returns how many segments were revived.
+ */
+export async function reviveUnreadable(sessionId: string): Promise<number> {
+  const segs = await prisma.recordingSegment.findMany({ where: { session_id: sessionId, state: 'unreadable', chunks: { some: { purged_at: null } } }, select: { id: true } });
+  for (const s of segs) await reviveSegment(s.id);
+  await prisma.recordingSession.update({ where: { id: sessionId }, data: { assembly_attempts: 0, assembly_next_at: null, assembly_error: null } });
+  return segs.length;
+}
+
+/** POST /sessions/:id/retry-assembly. 404 for an unknown or legacy session, 409 while a run is going; otherwise the build starts in the background. */
+export async function retryAssembly(sessionId: string): Promise<{ revived: number; pending: number }> {
+  const { requestAssembly, isAssembling } = await import('./recording.service');
+  const s = await prisma.recordingSession.findUnique({ where: { id: sessionId }, select: { recording_date: true } });
+  if (!s?.recording_date) throw new HttpError(404, 'Session not found');
+  if (isAssembling(sessionId)) throw new HttpError(409, 'already_assembling');
+  const revived = await reviveUnreadable(sessionId);
+  const pending = await prisma.recordingSegment.count({ where: { session_id: sessionId, state: { in: ASSEMBLABLE } } });
+  requestAssembly(sessionId).catch(console.error);
+  return { revived, pending };
+}
+
+/** Chunk rows were added by hand (repair script): the same follow-up as a stored chunk — a fresh try for the session, the segment re-evaluated (revived or re-opened when it had given up or was assembled). */
+export async function chunkRowsAdded(segmentId: string): Promise<void> {
+  const seg = await prisma.recordingSegment.findUnique({ where: { id: segmentId }, select: { state: true, session_id: true } });
+  if (!seg) return;
+  await prisma.recordingSession.update({ where: { id: seg.session_id }, data: { assembly_next_at: null, assembly_attempts: 0 } });
+  if (seg.state === 'assembled') await reopenAssembledSegment(segmentId, 'repair: chunk row added');
+  else if (seg.state === 'unreadable') await reviveSegment(segmentId);
+  else await recomputeSegmentState(segmentId);
 }
 
 // ─────────────────────────────────────────
@@ -862,6 +1405,15 @@ async function reviveSegment(segmentId: string) {
 /** Backoff after failed assembly: 2^attempts * 5 min, capped at 6 h. */
 export function assemblyBackoffMs(attempts: number): number {
   return Math.min(Math.pow(2, attempts) * 5 * 60_000, 6 * 3600_000);
+}
+
+/**
+ * Is a session with pending segments due? Idle for 30 min, or the recording day is over (+30 min) AND the last chunk is at least
+ * 5 min old: while a backlog of a finished day is still being uploaded every chunk would otherwise start a rebuild of the whole day.
+ */
+export function assemblyDue(now: number, lastChunkAt: number, dayEndsAt: number): boolean {
+  const idle = now - lastChunkAt;
+  return idle >= IDLE_ASSEMBLE_MS || (now >= dayEndsAt + DAY_OVER_GRACE_MS && idle >= DAY_OVER_SETTLE_MS);
 }
 
 export interface AssemblyCandidate { id: string; attempts: number; nextAt: Date | null; lastChunkAt: Date }
@@ -891,10 +1443,8 @@ async function pumpOnce(): Promise<number> {
   for (const s of rows) {
     if (isAssembling(s.id) || (s.assembly_next_at && s.assembly_next_at.getTime() > now)) continue;
     const lastChunkAt = s.last_chunk_at ?? s.created_at;
-    // idle >= 30 min, or the recording day is over + 30 min
-    const ready = now - lastChunkAt.getTime() >= IDLE_ASSEMBLE_MS
-      || now >= recordingDayEndsAt(dateStr(s.recording_date!), await ruleForUser(s.user_id)).getTime() + DAY_OVER_GRACE_MS;
-    if (ready) due.push({ id: s.id, attempts: s.assembly_attempts, nextAt: s.assembly_next_at, lastChunkAt });
+    const dayEnd = recordingDayEndsAt(dateStr(s.recording_date!), await ruleForUser(s.user_id)).getTime();
+    if (assemblyDue(now, lastChunkAt.getTime(), dayEnd)) due.push({ id: s.id, attempts: s.assembly_attempts, nextAt: s.assembly_next_at, lastChunkAt });
   }
   const ids = pickAssemblies(due, now, free);
   for (const id of ids) requestAssembly(id).catch((err) => console.error(`[Recording v2] assembly request failed for ${id}: ${err.message}`));
@@ -925,6 +1475,8 @@ export async function pumpAssemblies(): Promise<number> {
 }
 
 let sweepingV2 = false;
+let revivedHeaderless = false;
+let lastHousekeeping = Date.now(); // the first pass runs 30 min after boot
 export async function sweepV2(): Promise<void> {
   if (sweepingV2) return;
   sweepingV2 = true;
@@ -940,6 +1492,15 @@ export async function sweepV2(): Promise<void> {
       data: { state: 'incomplete' },
     });
     if (stuck.count) console.warn(`[Sweeper v2] ${stuck.count} segment(s) idle > 48h marked incomplete`);
+
+    // Once per boot: segments stage 1 flagged for a missing header can be grafted now
+    if (!revivedHeaderless) { revivedHeaderless = true; await reviveHeaderlessUnreadable().catch((err) => console.error('[Sweeper v2] revive pass failed:', err.message)); }
+
+    // Every 30 min: kept chunk files of closed / long idle segments, expired parts, parts a crash left behind
+    if (now - lastHousekeeping >= 30 * 60_000) {
+      lastHousekeeping = now;
+      for (const job of [cleanKeptFiles, collapseParts, removeUnknownParts]) await job().catch((err) => console.error(`[Sweeper v2] ${job.name} failed:`, err.message));
+    }
 
     // S4: finish segments nobody closed (agent crashed) so they become assemblable
     await closeAbandonedSegments().catch((err) => console.error('[Sweeper v2] abandoned-segment pass failed:', err.message));

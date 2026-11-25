@@ -12,7 +12,7 @@ import path from 'path';
 import assert from 'assert';
 import { spawnSync } from 'child_process';
 import { assembleChunkFiles } from './services/recording.service';
-import { probeDims, reencodeArgs } from './services/recording-v2.service';
+import { probeDims, reencodeArgs, initFromChunks, remuxChunks, remuxTail, decodesClean } from './services/recording-v2.service';
 
 const ffmpeg: string = require('ffmpeg-static');
 
@@ -90,6 +90,35 @@ async function main() {
     assert.strictEqual(rn.status, 0, `normalise failed: ${rn.stderr?.toString().slice(-300)}`);
     const dNorm = await probeDims(norm);
     assert.deepStrictEqual([dNorm?.codec, dNorm?.width, dNorm?.height], ['vp9', 320, 240]);
+
+
+    // Realistic MediaRecorder-like WebM: VP9, live (unknown-size Segment, no Cues), 1 s clusters, a keyframe every 5 s,
+    // cut at arbitrary bytes. A tail without seq 0 (chunks 3..5) gets the header of chunk 0 and must play.
+    const live = path.join(srcDir, 'live.webm');
+    const rl = spawnSync(ffmpeg, ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=24:size=320x180:rate=15', '-pix_fmt', 'yuv420p', '-c:v', 'libvpx-vp9', '-b:v', '200k', '-g', '75',
+      '-deadline', 'realtime', '-cpu-used', '8', '-f', 'webm', '-live', '1', '-cluster_time_limit', '1000', live]);
+    assert.strictEqual(rl.status, 0, `live generate failed: ${rl.stderr?.toString().slice(-300)}`);
+    const liveBuf = fs.readFileSync(live);
+    const cuts = [0, 1, 70_001, 151_003, 233_777, 301_234, 367_891, liveBuf.length]; // chunk 0 is ONE byte (a still screen): the header continues in chunk 1
+    const lp = cuts.slice(0, -1).map((c, i) => { const p = path.join(srcDir, `live-${i}.part`); fs.writeFileSync(p, liveBuf.subarray(c, cuts[i + 1])); return p; });
+    const init = initFromChunks([fs.readFileSync(lp[0]), fs.readFileSync(lp[1])]);
+    assert.ok(init && init.length > 100 && init.length < 2000, 'init bytes from chunk 0');
+    const temps: string[] = [];
+    const noHdr = await remuxChunks(lp.slice(4), 12_000, outDir, 'nohdr', temps);
+    assert.strictEqual(noHdr, null, 'a tail without any header must not be accepted');
+    const grafted = await remuxTail(lp.slice(4), 12_000, outDir, 'graft', temps, init!);
+    assert.ok(grafted, 'tail + init must remux');
+    assert.ok((grafted!.probe.packets ?? 0) > 100, `grafted packets ${grafted!.probe.packets}`);
+    assert.ok(await decodesClean(grafted!.file), 'grafted tail decodes 3 s without errors');
+    assert.ok(grafted!.probe.durationMs > 8000 && grafted!.probe.durationMs < 16000, `grafted duration ${grafted!.probe.durationMs} ms`);
+    // a tail that starts INSIDE the header (first stored chunk is seq 1: rest of the header, then clusters): the header must not be put in front of it twice
+    const inside = await remuxTail(lp.slice(1), 25_000, outDir, 'inside', temps, init!);
+    assert.ok(inside, 'tail that starts inside the header must remux');
+    assert.ok((inside!.probe.packets ?? 0) > 340, `whole stream from seq 1: ${inside!.probe.packets} packets`);
+    assert.ok(await decodesClean(inside!.file), 'decodes cleanly');
+    for (const t of temps) fs.rmSync(t, { force: true });
+    console.log(`PASS graft: a tail starting inside the header (seq 1) = ${inside!.probe.packets} packets`);
+    console.log(`PASS graft: VP9 live, 1 s clusters, cut at arbitrary bytes: tail chunks 4..6 + init (${init!.length} B) = ${grafted!.probe.packets} packets, ${Math.round(grafted!.probe.durationMs / 100) / 10} s`);
 
     console.log(`PASS probe+normalise vp8 160x120 -> vp9 320x240`);
     console.log(`PASS two-run: runs=2 duration=${d2.toFixed(2)}s | single-run: runs=1 duration=${d1.toFixed(2)}s`);

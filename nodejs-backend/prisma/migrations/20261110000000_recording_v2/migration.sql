@@ -98,3 +98,15 @@ ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS "problem" TEXT;
 -- statement
 -- Earliest next assembly attempt of a session (failure backoff; NULL = due now).
 ALTER TABLE "recording_sessions" ADD COLUMN IF NOT EXISTS "assembly_next_at" TIMESTAMP(3);
+
+-- statement
+-- Stage 2: the bytes of seq 0 before its first Cluster (EBML header, Info, Tracks). Lets late chunks be decoded without seq 0.
+ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS "init_data" BYTEA;
+
+-- statement
+-- Stage 2: when the agent closed the segment. Chunk files are deleted only for closed, complete, fully covered segments.
+ALTER TABLE "recording_segments" ADD COLUMN IF NOT EXISTS "agent_closed_at" TIMESTAMP(3);
+
+-- statement
+-- Stage 2: manifest of the day's part files { ref, items[] }; the day's video is rebuilt copy-only from them in time order.
+ALTER TABLE "recording_sessions" ADD COLUMN IF NOT EXISTS "parts" JSONB;

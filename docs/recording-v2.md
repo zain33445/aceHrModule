@@ -64,6 +64,7 @@ produces the client.
 - `last_chunk_at TIMESTAMP NULL`
 - `assembly_error TEXT NULL`, `assembly_attempts INT NOT NULL DEFAULT 0`
 - `assembly_next_at TIMESTAMP NULL` — earliest next assembly attempt (failure backoff); NULL = due now
+- `parts JSONB NULL` — manifest of the day's part files `{ ref:{w,h,codec}, items:[{file, segmentId|null, firstSeq, startMs, durationMs, packets}] }` (file names relative to the session folder, items in time order; `segmentId` null = a base, an older generation). See §7 "Stage 2"
 - unique index `(user_id, recording_date)` (NULLs allowed for legacy rows)
 - index `(user_id, status)`
 
@@ -77,10 +78,12 @@ produces the client.
   (`unreadable`: assembly could not use the segment's chunks; they stay on disk, unpurged, and the queue ignores it)
 - `problem TEXT NULL` — why a segment's chunks are not (fully) in the video (`unreadable`, or `assembled` but short)
 - `generation INT NULL` (generation that included it)
+- `init_data BYTEA NULL` — the stream's bytes before its first Cluster, taken from chunks 0, 1, 2, … in order (a still screen can make seq 0 a single byte, the header then continues in seq 1; the Cluster id may be cut between two chunks); starts with the EBML magic, at most 64 KB, a known-size Segment is made unknown-size. Stored when a chunk with seq <= 5 is ingested while it is NULL, for older segments at assembly while those chunk files exist
+- `agent_closed_at TIMESTAMP NULL` — when the agent closed the segment (set by every close, also one that arrives after assembly)
 - `screen SMALLINT NULL` — multi-monitor: which screen the segment recorded
   (1 = primary, 2..N = the others left to right; NULL = unknown/old agent).
   Added by an idempotent `ALTER TABLE … ADD COLUMN IF NOT EXISTS` at the end of the migration
-  (so are `problem` and `recording_sessions.assembly_next_at`).
+  (so are `problem`, `init_data`, `agent_closed_at` and `recording_sessions.assembly_next_at` / `parts`).
 - `created_at`, `updated_at`; index `(session_id, state)`
 
 `recording_chunks` — new columns:
@@ -102,7 +105,8 @@ produces the client.
 ```
 <RECORDINGS_DIR>/<recording_date>/<userId>-<safeName>_(<sessionId>)/
     recording-g<N>.webm                 current generation (only one kept)
-    segments/<segmentId>/<seq>.webm     chunks until assembled (then deleted)
+    parts/<segmentId|base>-<firstSeq>-g<N>.webm   the pieces the day is built from (§7 Stage 2; removed after RECORDING_PARTS_KEEP_DAYS)
+    segments/<segmentId>/<seq>.webm     chunks until assembled and the segment is closed and complete (§7 Stage 2)
     collisions/...                      conflicting duplicate uploads (kept)
 ```
 
@@ -177,7 +181,7 @@ inside a committed video; a bad segment never fails the day.**
 1. Take segments in `complete`/`incomplete` state not yet assembled, ordered by `started_at`. A segment whose chunk
    *file* is missing on disk is skipped for this run (transient: the session backs off, see below).
 2. Prepare each segment on its own (`prepareSegment`), returning a file or a problem, never throwing for bad media:
-   - first unpurged chunk is not seq 0 → `late chunks without their header` (stage 2 will graft a header);
+   - first unpurged chunk is not seq 0 and does not start with its own EBML header → a header is borrowed (§7 Stage 2); no usable one → `late chunks without a usable header (own or donor)`;
    - concat the chunks → `ffmpeg -c copy`. Failure or **zero video packets** → one retry with
      `-fflags +genpts+discardcorrupt -err_detect ignore_err`; still nothing → `no readable video`. Raw bytes are never
      used as a fallback. If the first remux plays less than the chunks claim, the tolerant remux is tried too and the
@@ -206,8 +210,8 @@ inside a committed video; a bad segment never fails the day.**
    `logged_out_ms`, marks `assembled` only the segments actually joined, `unreadable` the rest, and sets `purged_at`
    only on the chunk rows that were joined (the snapshot taken at the start; a chunk that arrived meanwhile stays
    unpurged and its segment is re-opened).
-5. After commit: delete the chunk files of **fully covered** segments (not the short ones) and the previous
-   generation file (ignore EBUSY; a cleanup pass retries).
+5. After commit: delete the chunk files of segments that `keptFilesDeletable` allows (§7 Stage 2, not the short or grafted ones)
+   and the previous generation file / replaced parts (ignore EBUSY; a cleanup pass retries).
 A run in which nothing could be used commits no generation and does not touch `generation`, `duration_ms`,
 `assembly_attempts` or `assembly_next_at`; `assembly_error` keeps the reasons. A new chunk for an `unreadable`
 segment puts it back to `closed` (and recomputes `complete`/`incomplete`), clearing `problem`.
@@ -227,8 +231,70 @@ the 4th run they are that segment's problem (`unreadable`, `problem = ffmpeg: <t
 gets through. For the previous generation's probe and for joins they always throw. A timeout counts as a failure of that input.
 `RECORDING_FFMPEG_PATH` overrides the bundled ffmpeg binary (the e2e test points it at a bogus path).
 
+### Stage 4 — retry and repair
+
+- `POST /api/recording/sessions/:id/retry-assembly` (**admin/superadmin only**, an HR grant is not enough) puts every `unreadable`
+  segment that still has unpurged chunk rows back through `reviveSegment` (state `closed`, problem cleared, then recomputed to
+  `complete`/`incomplete`), sets the session's `assembly_attempts` 0, `assembly_next_at` and `assembly_error` NULL, and starts the
+  build in the background (`requestAssembly`). `202 { revived, pending }` (`pending` = segments now waiting). `404` for an unknown or
+  legacy session, `409 { error: 'already_assembling' }` while a run is going (nothing is changed then). No chunk is touched.
+- `npm run repair-recordings -- [--dry-run] [--apply --yes] [--session <id>] [--user <id>]` (`src/repair-recordings.ts`). **Dry run is
+  the default.** `--apply` is refused unless `--yes` is given too; both modes first print the database host and `RECORDINGS_DIR` it
+  will use. For every v2 session: (a) the same revive as the retry (without starting ffmpeg: the running server's queue builds it);
+  (b) a chunk file `segments/<segmentId>/<seq>.webm` without a chunk row, for a segment the session knows, gets its row (sha256 and size
+  of the file; the file is never touched) — unless it was modified in the last 10 minutes (the running server may be between the file and its row; it is only counted) and the segment is re-evaluated like after a stored chunk (`complete`, revived or re-opened);
+  folders of unknown segments are only reported; (c) reported, never changed: collision files, a generation file that is missing, and a
+  day whose `duration_ms` is more than 2 min shorter than the chunks of its assembled segments (each capped at 60 s) — "shorter than
+  recorded, cannot be repaired from the server". One line per session with something to say, then a `Total:` line. **Nothing is deleted.**
+  Always pass `--session`/`--user` first when trying it on a real database.
+
+### Stage 2 — kept files, late chunks, parts, time order, size
+
+**Chunk files are kept while the segment may still grow.** `purged_at` now means "this chunk is in the video", no longer "its file is
+gone". At commit the rows get `purged_at`, but the files are deleted only when `keptFilesDeletable` says so: the segment is
+`assembled`, has no `problem`, every row is purged (a chunk that arrived meanwhile keeps all of them), and either
+`agent_closed_at` is set and every seq `0..last_seq` is stored or declared lost, or the agent never closed it and its last chunk is
+older than 16 days (the agent keeps its spool 15 days). `closeSegment` always records `agent_closed_at`; on an already assembled
+(or unreadable) segment it changes nothing else but a larger `last_seq` and more lost seqs. The sweep (every 30 min, first pass 30 min
+after boot) deletes the kept files of segments whose close arrived later, found by listing `segments/` of the last 45 days'
+sessions (only segments whose folder still exists have kept files). Short and grafted segments keep their files (their `problem` is set).
+
+**Late chunk for an assembled segment** (re-opened as before). At assembly: if the segment has a part of its own in the manifest
+(`firstSeq 0`) and *all* its earlier chunk files are still on disk, every row of the segment is used and the whole segment is rebuilt;
+its parts are replaced and the day is concatenated again. (The brief sets `purged_at = NULL` on the rows at ingest; the decision is
+taken at assembly instead, so a chunk arriving while the files are being deleted can never leave a half-deleted segment.) Otherwise
+the late chunks alone are a tail: if the first one starts with an EBML header it is used as it is; else the segment's `init_data`, then
+the headers of up to 5 donor segments (same user, mime, width, height, nearest `started_at`; `init_data` or their first chunk files on disk, contiguous from seq 0) are put
+in front of the tail, which is first cut at its own first Cluster id (it may start inside the header, e.g. at seq 1, or mid-cluster; no Cluster at all = no graft), the remux is accepted only if it plays and its first 3 s decode without a single error. Frames before the tail's first keyframe
+are dropped by the remux, so coverage allows 15 s more and the tail's chunk files are KEPT (`problem` = "late chunks joined onto their
+own header / a donor header; frames before their first keyframe are not in the video"). A tail starts at segment start + the durations of
+the chunks before it (a missing one counts 10 s). If a whole-segment rebuild cannot be read, or plays less than the parts it would replace (`rebuildKeepsVideo`: duration >= sum of the replaced parts - 2 s, and packets >= their sum when both are known: rotten kept files), the old parts stay and the late chunks alone are tried.
+
+**Parts and time order.** After a commit each included segment's final file is moved to `parts/<segmentId>-<firstSeq>-g<N>.webm` (the
+generation is in the name so a replaced part never overwrites a file the committed manifest still names) and `sessions.parts` is
+committed with the generation. The day is built from the parts copy-only: when every new piece starts after everything already in the day
+the pieces are appended to the current generation (stage-1 join with bisect); when a piece starts before something already there, or a
+rebuilt segment replaces its part, ALL parts are concatenated in `startMs` order and verified like any join. If that ordered join does not
+verify, the pieces are appended to the current generation (a rebuilt segment then brings only its late chunks), the manifest collapses
+to the generation alone and the part files are deleted after the commit. A session with a generation but no manifest (stage 1) is
+treated as one base item (the generation file, `startMs` = its earliest segment); when a base item has to stay, the old generation file
+is hard-linked into `parts/base-0-g<N-1>.webm` before the commit. New parts are moved and their mtime set to now *before* the commit;
+the old files are deleted *after* it. A crash in between leaves unreferenced files in `parts/`, which the sweep removes when no manifest
+names them and they are older than 1 h. Parts collapse into the generation (manifest = one base item, part files deleted) when the
+recording day is older than `RECORDING_PARTS_KEEP_DAYS` (default 4) or free disk is below `RECORDING_PARTS_MIN_FREE_GB` (default 20);
+below that threshold no parts are created at all. The `parts` manifest is not returned by `/sessions` or `/sessions/:id`.
+
+**Reference size.** At the first generation every segment is remuxed first, then the size with the largest total duration wins (tie:
+larger area; sizes under 640 wide only when there is nothing else); only then are the others re-encoded (one segment per ffmpeg call).
+With a base: the base's size, except a base under 640 wide that is shorter than the new material of a proper size: the new majority size
+wins and the base's pieces are re-encoded once (if that fails the new material is scaled to the base as before; if the ordered join
+fails after the base was re-encoded the run throws and changes nothing).
+
+**Boot.** Once per process start (first sweep) segments with `problem` starting "late chunks without their header" (stage 1) are made
+assemblable again (their session's backoff is cleared); a graft that fails now says "late chunks without a usable header", which is not retried.
+
 Queue (`pickAssemblies` / `pumpAssemblies`): the 5-min sweep only calls `pumpAssemblies()` and never waits for a run.
-A session is *due* when it has an assemblable segment, is idle ≥ 30 min (or its recording day is over + 30 min),
+A session is *due* when it has an assemblable segment, is idle ≥ 30 min, or its recording day is over (+ 30 min) and its last chunk is at least 5 min old (`assemblyDue`: a finished day that is still receiving a backlog is not rebuilt chunk by chunk),
 `assembly_next_at` is null or past, and is not running. Due sessions are ordered by `assembly_attempts` ascending,
 then `last_chunk_at` ascending, so an untried day always beats a failing one; up to
 `RECORDING_MAX_CONCURRENT_ASSEMBLIES` (default 1) runs are active, and when a run ends the pump runs again at once.
@@ -239,7 +305,7 @@ Session status for v2 sessions (keeps the existing admin UI working):
 assembly) → `assembled` (generation covers every closed segment).
 
 Assembly triggers: session idle ≥ 30 min with unassembled complete segments;
-recording day over (boundary passed + 30 min); `GET /sessions/:id/file` when
+recording day over (boundary passed + 30 min) and quiet for 5 min; `GET /sessions/:id/file` when
 there is unassembled data (assemble in background, serve last good generation).
 The Phase 0 sweeper (every 5 min) drives this; legacy sessions keep Phase 0 rules.
 
@@ -326,7 +392,9 @@ Local retention (sweep at start and every 10 min):
   START_RECORDING for v2 agents.
 - new `nodejs-backend/src/test-recording-day.ts`: `recordingDateFor` cases.
 - `npm run test-recording-queue` (no DB): queue order, backoff, starvation simulation, ffmpeg timeout.
-- `npm run test-recording-edge-e2e` S17–S29: bad media never blocks a day or loses bytes (see `recording-edge-cases.md`).
+- `npm run test-recording-edge-e2e` S17–S41: bad media never blocks a day or loses bytes; late chunks, grafts, parts, order, size, crash safety (see `recording-edge-cases.md`). Start the server and run the test with the same `RECORDINGS_DIR` and `RECORDING_PARTS_MIN_FREE_GB=0` (this PC has less than 20 GB free).
+- S39 (retry endpoint: auth, 404, 409, rebuild), S40 (`/days` problem fields, legacy rows) and S41 (`repair-recordings`: dry run, `--yes`, apply, `--session`) are in the same file.
+- `npm run test-recording-assembly` also grafts a header onto a MediaRecorder-like tail (VP9, live, 1 s clusters, cut at arbitrary bytes).
 - new `frontend/electron/recording-day.check.mjs` + spool retention checks.
 
 ---
@@ -442,8 +510,16 @@ Lifecycle:
   (recording access) → `{ items: Day[], total, page, pageSize }`,
   `Day = { sessionId, userId, name, department, recordingDate, createdAt,
   legacy, status, generation, durationMs, loggedOutMs, segments,
-  screens, incompleteSegments, openSegments, assembling, lastChunkAt, hasFile }`
-  (`screens` = distinct non-null segment screens; 0/1 = single screen),
+  screens, incompleteSegments, openSegments, assembling, lastChunkAt, hasFile,
+  assemblyRunning, chunksNotInVideo, chunksWaiting, problems, problemCount,
+  assemblyError, assemblyAttempts, nextAttemptAt }`
+  (`screens` = distinct non-null segment screens; 0/1 = single screen;
+  `assembling` is true whenever a segment waits, `assemblyRunning` only while a build really runs;
+  `chunksNotInVideo` = unpurged chunk rows in `unreadable` segments, `chunksWaiting` = unpurged rows in `complete`/`incomplete` ones,
+  `problems` = up to 10 `{ segmentId, startedAt, state, problem, chunks }` of segments with a `problem` (oldest first, `chunks` =
+  all its chunk rows), `problemCount` = how many there are, `assemblyError`/`assemblyAttempts`/`nextAttemptAt` = the session's
+  `assembly_error`/`assembly_attempts`/`assembly_next_at`; the counts come from one grouped query per page; legacy rows: zeros,
+  empty, null),
   newest first. Legacy sessions: `legacy:true`, `recordingDate:null`, filtered
   by `created_at`.
 - `POST /api/recording/sessions/:id/playback-token` (recording access) →
@@ -451,6 +527,7 @@ Lifecycle:
   base), valid 10 minutes, so a `<video src>` can stream with Range without an
   Authorization header. `pt` is accepted only by the file route and only for
   that session.
+- `POST /api/recording/sessions/:id/retry-assembly` (admin only) — see "Stage 4" in section 7. `GET /sessions/:id` segments also carry `problem`.
 - `GET /api/recording/live-presence` (recording access) → `Agent[]` as in
   `LIVE_PRESENCE` (first paint and polling fallback).
 - Existing: `GET/PUT /api/recording/settings`, `GET /agents-status`.
@@ -471,7 +548,7 @@ Lifecycle:
    nobody is live.
 2. **Recordings** — table from `GET /days`: employee, day, duration,
    "includes Xh Ym logged out" when `loggedOutMs > 0`, status (`Recording`,
-   `Assembling`, `Ready`, `Incomplete`), **Play** (in-app `<video>` with the
+   `Assembling` (a build is running), `Waiting`, `Retrying` + "next try HH:MM" (a failed build backs off), `Ready`, `Incomplete`), **Play** (in-app `<video>` with the
    playback-token URL, seekable) and **Download** (authenticated blob as in
    Phase 0). Filters: date range (default last 7 days), employee. Legacy
    sessions carry a "legacy" tag.
@@ -488,6 +565,10 @@ the choice lives in the tile's state, survives resubscribes, and the focus view
 shows the same switch bound to the tile's stream. In Recordings, a day with
 `screens > 1` shows an "N screens" badge that expands the segment list
 (`GET /sessions/:id`: time range, duration, "Screen N" or "—").
+A day with `chunksNotInVideo > 0`, an `assemblyError` or `problemCount > 0` shows an amber button (same expand mechanism, `aria-expanded`): "N chunks not in video", else "Build problem", else "N notes" (segments that are in the video but short or grafted). The
+expanded row lists the flagged segments (time, reason in plain words, chunks), the last assembly error, "Next try HH:MM" while the
+backoff is ahead, and — for admins/superadmins only, when chunks are missing or a build error is set (not for notes only) — a **Retry** button (`POST …/retry-assembly`; disabled while sending; "Retry
+started" / "Already being built" / the error text inline; the list reloads). Older backends without these fields show none of it.
 
 The old Start/Stop buttons and LivePlayer modal are removed (recording is
 always-on). HR users with the `recording` grant get the same tab (Live +

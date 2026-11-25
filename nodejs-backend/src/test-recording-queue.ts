@@ -3,8 +3,12 @@
  * (Importing the service opens the Prisma pool lazily; nothing is queried.) Run: npm run test-recording-queue
  */
 import assert from 'assert';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { spawnSync } from 'child_process';
 import { pickAssemblies, assemblyBackoffMs, AssemblyCandidate, expectedMs, shortProblem, reencodeKeptVideo, videoPackets, joinVerified, isInfraFailure, isAmbiguousFailure, ambiguousIsTransient } from './services/recording-v2.service';
+import { assemblyDue, rebuildKeepsVideo, extractInit, initFromChunks, firstClusterAt, keptFilesDeletable, chooseRef, tailStartMs, parseManifest, partsExpired } from './services/recording-v2.service';
 import { runFfmpeg, DEFAULT_FFMPEG_TIMEOUT_MS } from './services/recording.service';
 
 const NOW = Date.UTC(2026, 10, 25, 12, 0, 0);
@@ -91,6 +95,103 @@ async function main() {
   eq('ambiguous: throws for the first 3 attempts, from the 4th run it is that segment\'s problem', [0, 1, 2, 3, 4].map(ambiguousIsTransient), [true, true, true, false, false]);
   eq('invalid media is not', isInfraFailure({ code: 1, stderr: 'Invalid data found when processing input' }), false);
   eq('no explicit timeout means 3 h, never forever', DEFAULT_FFMPEG_TIMEOUT_MS, 3 * 3600_000);
+
+  // ── stage 2: init bytes (EBML header .. first Cluster) ──
+  const EBML = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x84, 0x42, 0x82, 0x84, 0x77, 0x65, 0x62, 0x6d]);
+  const SEG_UNKNOWN = Buffer.from([0x18, 0x53, 0x80, 0x67, 0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+  const INFO = Buffer.from([0x15, 0x49, 0xa9, 0x66, 0x83, 1, 2, 3]);
+  const CLUSTER = Buffer.from([0x1f, 0x43, 0xb6, 0x75, 0x84, 9, 9, 9, 9]);
+  const head = Buffer.concat([EBML, SEG_UNKNOWN, INFO]);
+  eq('init = the bytes before the first Cluster', extractInit(Buffer.concat([head, CLUSTER, Buffer.alloc(50, 7)]))?.equals(head), true);
+  eq('not a WebM start → no init', extractInit(Buffer.concat([Buffer.alloc(20, 1), CLUSTER])), null);
+  eq('no Cluster in the chunk → no init', extractInit(Buffer.concat([head, Buffer.alloc(100, 3)])), null);
+  eq('a Cluster beyond 64 KB → no init', extractInit(Buffer.concat([EBML, SEG_UNKNOWN, Buffer.alloc(70_000, 1), CLUSTER])), null);
+  const knownSeg = Buffer.concat([EBML, Buffer.from([0x18, 0x53, 0x80, 0x67, 0x40, 0x28]), INFO]); // Segment with a known size (2-byte size field)
+  const fixed = extractInit(Buffer.concat([knownSeg, CLUSTER]))!;
+  eq('a known-size Segment becomes unknown-size (grafted clusters must not fall outside it)', fixed.subarray(EBML.length, EBML.length + SEG_UNKNOWN.length).equals(SEG_UNKNOWN) && fixed.subarray(EBML.length + SEG_UNKNOWN.length).equals(INFO), true);
+
+  // ── when a session is due: idle 30 min, or the day is over AND the last chunk is 5 min old (a backlog upload is not rebuilt per chunk) ──
+  const END = NOW - 60 * MIN; // the recording day ended 60 min ago (grace 30 min is over)
+  eq('idle for 30 min → due, whatever the day', [assemblyDue(NOW, NOW - 31 * MIN, NOW + 5 * 3600_000), assemblyDue(NOW, NOW - 29 * MIN, NOW + 5 * 3600_000)], [true, false]);
+  eq('day over, but a chunk arrived 1 min ago → not due (the backlog is still coming)', assemblyDue(NOW, NOW - 1 * MIN, END), false);
+  eq('day over, 4 min 59 s without a chunk → not due; 5 min → due', [assemblyDue(NOW, NOW - 299_000, END), assemblyDue(NOW, NOW - 5 * MIN, END)], [false, true]);
+  eq('day ended only 10 min ago (grace not over): needs the 30 min idle', assemblyDue(NOW, NOW - 10 * MIN, NOW - 10 * MIN), false);
+  eq('a starving backlog: a chunk every minute for a finished day never makes it due', Array.from({ length: 120 }, (_, i) => assemblyDue(NOW + i * MIN, NOW + i * MIN - MIN, END)).some(Boolean), false);
+
+  // ── a rebuilt segment never replaces its old parts with less video ──
+  const part = (durationMs: number, packets: number | null) => ({ durationMs, packets });
+  eq('rebuild as long as the parts it replaces → ok', rebuildKeepsVideo([part(8000, 80)], part(8000, 80)), true);
+  eq('rebuild 2 s shorter → ok (the slack), 2.001 s shorter → not', [rebuildKeepsVideo([part(8000, null)], part(6000, null)), rebuildKeepsVideo([part(8000, null)], part(5999, null))], [true, false]);
+  eq('the sum of several replaced parts counts', rebuildKeepsVideo([part(4000, 40), part(5000, 50)], part(6999, null)), false);
+  eq('fewer packets than the parts it replaces → not ok, when both are known', rebuildKeepsVideo([part(8000, 80)], part(8000, 60)), false);
+  eq('packets unknown on either side → the duration decides', [rebuildKeepsVideo([part(8000, null)], part(8000, 1)), rebuildKeepsVideo([part(8000, 80)], part(8000, null))], [true, true]);
+
+  // ── stage 2: the header may be spread over several chunks (a still screen: seq 0 can be 1 byte) ──
+  const whole = Buffer.concat([head, CLUSTER, Buffer.alloc(50, 7)]);
+  const edge = head.length; // the Cluster id starts here
+  let splitsOk = true;
+  for (let o = 1; o < whole.length; o++) if (!initFromChunks([whole.subarray(0, o), whole.subarray(o)])?.equals(head)) splitsOk = false;
+  eq('the header is found whatever byte the two chunks are cut at (also inside the Cluster id)', splitsOk, true);
+  eq('1-byte seq 0, header continues in seq 1', initFromChunks([whole.subarray(0, 1), whole.subarray(1)])?.equals(head), true);
+  eq('three chunks: 1 byte, then up to inside the Cluster id, then the rest', initFromChunks([whole.subarray(0, 1), whole.subarray(1, edge + 2), whole.subarray(edge + 2)])?.equals(head), true);
+  eq('the Cluster only in the third chunk', initFromChunks([whole.subarray(0, 5), whole.subarray(5, edge - 1), whole.subarray(edge - 1)])?.equals(head), true);
+  eq('no Cluster in any chunk → null', initFromChunks([head.subarray(0, 1), head.subarray(1)]), null);
+  eq('no chunks → null', initFromChunks([]), null);
+  eq('chunks that are not the start of a WebM → null', initFromChunks([Buffer.alloc(1, 9), whole.subarray(1)]), null);
+  eq('more than 64 KB before a Cluster → null', initFromChunks([EBML, SEG_UNKNOWN, Buffer.alloc(40_000, 1), Buffer.alloc(40_000, 1), CLUSTER]), null);
+
+  // a tail (chunks from seq k) is cut at its first Cluster id, wherever the chunk boundaries fall
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-q-'));
+  try {
+    const tailBytes = Buffer.concat([Buffer.alloc(40, 5), CLUSTER, Buffer.alloc(30, 6)]); // mid-cluster garbage, then a Cluster
+    const at = tailBytes.indexOf(CLUSTER);
+    let cutsOk = true;
+    for (let o = 0; o <= tailBytes.length; o++) {
+      const parts = [tailBytes.subarray(0, o), tailBytes.subarray(o)].filter((b) => b.length);
+      const files = parts.map((b, i) => { const p = path.join(tmp, `t${o}-${i}`); fs.writeFileSync(p, b); return p; });
+      const r = await firstClusterAt(files);
+      const global = r ? parts.slice(0, r.index).reduce((a, b) => a + b.length, 0) + r.offset : -1;
+      if (global !== at) cutsOk = false;
+    }
+    eq('the first Cluster id of a tail is located at every chunk boundary (also inside the id)', cutsOk, true);
+    const none = path.join(tmp, 'none'); fs.writeFileSync(none, Buffer.alloc(100, 3));
+    eq('a tail without any Cluster id → null', await firstClusterAt([none]), null);
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+
+  // ── stage 2: when kept chunk files may be deleted ──
+  const DAYMS = 86_400_000;
+  const seg0 = { state: 'assembled', problem: null as string | null, agent_closed_at: new Date(NOW) as Date | null, last_seq: 2 as number | null, lost_seqs: [] as number[] };
+  const rows = (seqs: number[], purged = true, ageDays = 1) => seqs.map((seq) => ({ seq, purged_at: purged ? new Date(NOW) : null, uploaded_at: new Date(NOW - ageDays * DAYMS) }));
+  eq('agent-closed, complete, all purged, no problem → delete', keptFilesDeletable(seg0, rows([0, 1, 2]), NOW), true);
+  eq('an unpurged row (late chunk) → keep', keptFilesDeletable(seg0, [...rows([0, 1]), ...rows([2], false)], NOW), false);
+  eq('a missing seq that is not lost → keep', keptFilesDeletable(seg0, rows([0, 2]), NOW), false);
+  eq('a missing seq that the agent declared lost → delete', keptFilesDeletable({ ...seg0, lost_seqs: [1] }, rows([0, 2]), NOW), true);
+  eq('a problem text (short / grafted) keeps the files', keptFilesDeletable({ ...seg0, problem: 'only 1.0 of 2.0 min readable' }, rows([0, 1, 2]), NOW), false);
+  eq('state other than assembled → keep', keptFilesDeletable({ ...seg0, state: 'unreadable' }, rows([0, 1, 2]), NOW), false);
+  eq('agent closed without a last_seq → keep', keptFilesDeletable({ ...seg0, last_seq: null }, rows([0, 1, 2]), NOW), false);
+  eq('never closed by the agent: kept for 16 days after its last chunk', [keptFilesDeletable({ ...seg0, agent_closed_at: null }, rows([0, 1, 2], true, 15), NOW), keptFilesDeletable({ ...seg0, agent_closed_at: null }, rows([0, 1, 2], true, 17), NOW)], [false, true]);
+  eq('never closed but a chunk is still unpurged → keep even after 16 days', keptFilesDeletable({ ...seg0, agent_closed_at: null }, [...rows([0, 1], true, 20), ...rows([2], false, 20)], NOW), false);
+  eq('no rows → nothing to delete', keptFilesDeletable(seg0, [], NOW), false);
+
+  // ── stage 2: reference size ──
+  const sz = (w: number, h: number, ms: number, codec = 'vp8') => ({ w, h, codec, ms });
+  eq('no base: the size with the most video wins, not the first one', chooseRef(null, [sz(320, 180, 3000), sz(640, 360, 2000), sz(640, 360, 2000)]).ref, { w: 640, h: 360, codec: 'vp8' });
+  eq('no base: a big size beats a longer small one (sizes under 640 wide only if nothing else)', chooseRef(null, [sz(320, 180, 9000), sz(1280, 720, 1000)]).ref, { w: 1280, h: 720, codec: 'vp8' });
+  eq('no base: only small sizes → the longest of them', chooseRef(null, [sz(160, 90, 1000), sz(320, 180, 3000)]).ref, { w: 320, h: 180, codec: 'vp8' });
+  eq('no base: tie → larger area', chooseRef(null, [sz(800, 450, 2000), sz(1280, 720, 2000)]).ref, { w: 1280, h: 720, codec: 'vp8' });
+  eq('no base, no material → nothing', chooseRef(null, []), { ref: null, rebase: false });
+  eq('a base keeps its size even when the new material differs', chooseRef(sz(1280, 720, 5000), [sz(640, 360, 9000)]), { ref: { w: 1280, h: 720, codec: 'vp8' }, rebase: false });
+  eq('a base under 640 wide and shorter than the new material of a proper size → new size, base re-encoded', chooseRef(sz(320, 180, 4000), [sz(640, 360, 3000), sz(640, 360, 3000)]), { ref: { w: 640, h: 360, codec: 'vp8' }, rebase: true });
+  eq('…not when the new material is not longer than the base', chooseRef(sz(320, 180, 8000), [sz(640, 360, 3000)]), { ref: { w: 320, h: 180, codec: 'vp8' }, rebase: false });
+  eq('…not when the new material is small too', chooseRef(sz(320, 180, 4000), [sz(480, 270, 9000)]), { ref: { w: 320, h: 180, codec: 'vp8' }, rebase: false });
+
+  // ── stage 2: where a tail sits in time, manifest shape, expiry ──
+  eq('tail start = segment start + earlier chunk durations (missing / null = 10 s)', tailStartMs(new Date(1000), [{ seq: 0, duration_ms: 2000 }, { seq: 1, duration_ms: null }], 3), 1000 + 2000 + 10_000 + 10_000);
+  eq('a head (first seq 0) starts with the segment', tailStartMs(new Date(1000), [], 0), 1000);
+  const item = { file: 'parts/a-0-g1.webm', segmentId: 'a', firstSeq: 0, startMs: 5, durationMs: 1000, packets: 10 };
+  eq('manifest: valid shape is returned', parseManifest({ ref: { w: 640, h: 360, codec: 'vp8' }, items: [item, { ...item, segmentId: null, packets: null }] })?.items.length, 2);
+  eq('manifest: garbage → null (the session then falls back to its generation file)', [parseManifest(null), parseManifest('x'), parseManifest({ items: 'no' }), parseManifest({ ref: null, items: [{ file: 1 }] }), parseManifest({ ref: null, items: [{ ...item, startMs: 'x' }] })], [null, null, null, null, null]);
+  eq('parts expire when the recording day is older than the keep days (today 2026-11-25, keep 4)', [partsExpired('2026-11-21', NOW, 4), partsExpired('2026-11-20', NOW, 4)], [false, true]);
 
   // ── ffmpeg timeout: a 20 s real-time job is killed after 1 s ──
   const t0 = Date.now();
