@@ -902,6 +902,68 @@ async function main() {
     check('S32 the tail is in the video via the donor header (generation 2, 1.2-4.5 s longer)', ok32 && r32.generation === 2 && dur32b > dur32a + 1.2 && dur32b < dur32a + 4.5, `ok=${ok32} gen=${r32.generation} ${dur32a}s->${dur32b}s`);
     check('S32 …the segment says it used a donor header and its tail files are kept', s32?.state === 'assembled' && /donor/.test(s32.problem ?? '') && (await Promise.all([2, 3].map(async (i) => fs.existsSync((await chunkRow(seg32, i))!.file_path)))).every(Boolean), `problem=${s32?.problem}`);
 
+    console.log('S32b donors that really have a header: the nearest one may be further away than 8 header-less neighbours on each side; else another user\'s');
+    const mime32 = 'video/webm;codecs=vp8';
+    const ghostSession = async (userId: string) => track((await prisma.recordingSession.create({ data: { user_id: userId, created_by: adminRow.id, status: 'stopped' } })).id);
+    const ghostSeg = (sess: string, userId: string, at: Date, w: number, h: number, init: Buffer | null) =>
+      prisma.recordingSegment.create({ data: { id: newSeg('ghost'), session_id: sess, user_id: userId, started_at: at, state: 'assembled', width: w, height: h, mime: mime32, init_data: init } });
+    /** A closed two-chunk segment, built (generation 1), whose own header is then forgotten: its chunks 2 and 3 will be a tail. */
+    const tailOnly = async (tag: string, w: number, h: number, back: number) => {
+      const seg = newSeg(tag), L = makeLive(8, `${w}x${h}`, null, 4), at = daysAgo(back);
+      const sess = track((await register(agentTok, seg, at, { width: w, height: h })).data.sessionId as string);
+      for (let i = 0; i < 2; i++) await putChunk(agentTok, seg, i, L[i], { 'X-Duration-Ms': '2000' });
+      await close(agentTok, seg, 1);
+      await runOk(sess);
+      const hdr = Buffer.from((await segRow(seg))!.init_data!);
+      await prisma.recordingSegment.update({ where: { id: seg }, data: { init_data: null } });
+      return { seg, L, at, sess, hdr, dur: durOf((await sessionRow(sess))!) };
+    };
+    const addTail = async (t: { seg: string; L: Buffer[] }) => { for (const i of [2, 3]) await putChunk(agentTok, t.seg, i, t.L[i], { 'X-Duration-Ms': '2000' }); };
+    const grafted = async (t: { seg: string; sess: string; dur: number }, ok: boolean) => {
+      const r = (await sessionRow(t.sess))!, s = await segRow(t.seg);
+      return { good: ok && r.generation === 2 && durOf(r) > t.dur + 1.2 && durOf(r) < t.dur + 4.5 && s?.state === 'assembled' && /donor/.test(s.problem ?? ''), info: `ok=${ok} gen=${r.generation} ${t.dur}s->${durOf(r)}s state=${s?.state} problem=${s?.problem}` };
+    };
+
+    const t55 = await tailOnly('s32b', 320, 240, 48);
+    const near55 = await ghostSession(empId);
+    for (let i = 1; i <= 9; i++) { // 9 header-less neighbours on each side of the tail, all nearer than the donor
+      await ghostSeg(near55, empId, new Date(t55.at.getTime() - i * 60_000), 320, 240, null);
+      await ghostSeg(near55, empId, new Date(t55.at.getTime() + i * 60_000), 320, 240, null);
+    }
+    await ghostSeg(near55, empId, new Date(t55.at.getTime() - 3 * 3600_000), 320, 240, t55.hdr); // the donor, 3 h away
+    await addTail(t55);
+    const g55 = await grafted(t55, await runOk(t55.sess));
+    check('S32b the donor 3 h away is found past 18 header-less neighbours (tail grafted, generation 2 longer by 1.2-4.5 s)', g55.good, g55.info);
+
+    const t56 = await tailOnly('s32c', 336, 192, 49); // a size only this scenario uses: no donor of the same user exists
+    await ghostSeg(await ghostSession(other.id), other.id, new Date(t56.at.getTime() - 3600_000), 336, 192, t56.hdr); // another user's header
+    await addTail(t56);
+    const g56 = await grafted(t56, await runOk(t56.sess));
+    check('S32c no donor of the same user: another user\'s header (same mime and size) is used', g56.good, g56.info);
+
+    const t57 = await tailOnly('s32d', 352, 208, 55); // a size nobody else has, no header anywhere
+    await addTail(t57);
+    await runOk(t57.sess);
+    const s57 = await segRow(t57.seg);
+    check('S32d no header fits anywhere: the segment is unreadable with the plain, final text', s57?.state === 'unreadable' && s57.problem === 'late chunks: no header fits', `state=${s57?.state} problem=${s57?.problem}`);
+    await reviveHeaderlessUnreadable();
+    const s57b = await segRow(t57.seg);
+    check('S32d …and a boot-time revive pass leaves it alone (it would only fail again, forever)', s57b?.state === 'unreadable' && s57b.problem === 'late chunks: no header fits', `state=${s57b?.state} problem=${s57b?.problem}`);
+
+    const t58 = await tailOnly('s32e', 320, 240, 56);
+    await prisma.recordingSegment.update({ where: { id: t58.seg }, data: { init_data: t58.hdr } });
+    await addTail(t58);
+    await prisma.recordingSegment.update({ where: { id: t58.seg }, data: { state: 'unreadable', problem: 'late chunks without a usable header (own or donor)' } }); // flagged by the previous release
+    const dur58 = durOf((await sessionRow(t58.sess))!);
+    const rev58 = await reviveHeaderlessUnreadable();
+    const s58 = await segRow(t58.seg);
+    check('S32e a tail flagged "without a usable header" by the previous release is pending again, problem cleared', rev58 >= 1 && ['closed', 'complete', 'incomplete'].includes(s58?.state ?? '') && s58?.problem === null, `revived=${rev58} state=${s58?.state} problem=${s58?.problem}`);
+    await runOk(t58.sess);
+    const r58 = (await sessionRow(t58.sess))!;
+    check('S32e …and now its tail is grafted (generation 2 longer by 1.2-4.5 s)', r58.generation === 2 && durOf(r58) > dur58 + 1.2 && durOf(r58) < dur58 + 4.5 && (await segRow(t58.seg))?.state === 'assembled', `gen=${r58.generation} ${dur58}s->${durOf(r58)}s`);
+    const rev58b = await reviveHeaderlessUnreadable();
+    check('S32e …a second pass leaves it alone (assembled, not revived again)', (await segRow(t58.seg))?.state === 'assembled', `revived=${rev58b}`);
+
     console.log('S33 an older segment that arrives later sits before the newer ones');
     const d33 = daysAgo(33), seg33 = ['red', 'blue', 'green'].map((c) => newSeg(`s33${c}`));
     const addColor = async (seg: string, color: string, at: Date) => { await register(agentTok, seg, at); await putChunk(agentTok, seg, 0, makeLive(2, '320x240', color, 1)[0], { 'X-Duration-Ms': '2000' }); await close(agentTok, seg, 0); };

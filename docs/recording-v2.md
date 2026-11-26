@@ -181,7 +181,7 @@ inside a committed video; a bad segment never fails the day.**
 1. Take segments in `complete`/`incomplete` state not yet assembled, ordered by `started_at`. A segment whose chunk
    *file* is missing on disk is skipped for this run (transient: the session backs off, see below).
 2. Prepare each segment on its own (`prepareSegment`), returning a file or a problem, never throwing for bad media:
-   - first unpurged chunk is not seq 0 and does not start with its own EBML header → a header is borrowed (§7 Stage 2); no usable one → `late chunks without a usable header (own or donor)`;
+   - first unpurged chunk is not seq 0 and does not start with its own EBML header → a header is borrowed (§7 Stage 2); none fits → `late chunks: no header fits`;
    - concat the chunks → `ffmpeg -c copy`. Failure or **zero video packets** → one retry with
      `-fflags +genpts+discardcorrupt -err_detect ignore_err`; still nothing → `no readable video`. Raw bytes are never
      used as a fallback. If the first remux plays less than the chunks claim, the tolerant remux is tried too and the
@@ -264,7 +264,7 @@ sessions (only segments whose folder still exists have kept files). Short and gr
 its parts are replaced and the day is concatenated again. (The brief sets `purged_at = NULL` on the rows at ingest; the decision is
 taken at assembly instead, so a chunk arriving while the files are being deleted can never leave a half-deleted segment.) Otherwise
 the late chunks alone are a tail: if the first one starts with an EBML header it is used as it is; else the segment's `init_data`, then
-the headers of up to 5 donor segments (same user, mime, width, height, nearest `started_at`; `init_data` or their first chunk files on disk, contiguous from seq 0) are put
+the headers of up to 5 different donor segments (same width and height, same mime or none; nearest `started_at` first; in this order: the same user's with `init_data`, the same user's whose first chunk files are on disk (contiguous from seq 0), then both kinds of any other user, 8 per side of the tail for each query: a header holds no picture data and a graft is only accepted as below) are put
 in front of the tail, which is first cut at its own first Cluster id (it may start inside the header, e.g. at seq 1, or mid-cluster; no Cluster at all = no graft), the remux is accepted only if it plays and its first 3 s decode without a single error. Frames before the tail's first keyframe
 are dropped by the remux, so coverage allows 15 s more and the tail's chunk files are KEPT (`problem` = "late chunks joined onto their
 own header / a donor header; frames before their first keyframe are not in the video"). A tail starts at segment start + the durations of
@@ -291,7 +291,7 @@ wins and the base's pieces are re-encoded once (if that fails the new material i
 fails after the base was re-encoded the run throws and changes nothing).
 
 **Boot.** Once per process start (first sweep) segments with `problem` starting "late chunks without their header" (stage 1) are made
-assemblable again (their session's backoff is cleared); a graft that fails now says "late chunks without a usable header", which is not retried.
+assemblable again (their session's backoff is cleared); so are those the first stage-2 release flagged "late chunks without a usable header" (its donor search was too narrow). A graft that fails now says "late chunks: no header fits", which is not revived at boot (the search already ran; the admin Retry still tries again).
 
 Queue (`pickAssemblies` / `pumpAssemblies`): the 5-min sweep only calls `pumpAssemblies()` and never waits for a run.
 A session is *due* when it has an assemblable segment, is idle ≥ 30 min, or its recording day is over (+ 30 min) and its last chunk is at least 5 min old (`assemblyDue`: a finished day that is still receiving a backlog is not rebuilt chunk by chunk),

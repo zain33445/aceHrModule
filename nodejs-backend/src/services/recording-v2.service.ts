@@ -11,6 +11,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import prisma from '../prisma';
+import type { Prisma } from '@prisma/client';
 import {
   HttpError,
   RECORDINGS_DIR,
@@ -812,23 +813,34 @@ export async function remuxTail(files: string[], expected: number, dir: string, 
   return remuxChunks([rest, ...files.slice(cut.index + 1)], expected, dir, tag, temps, header);
 }
 
-/** Headers to try for a tail without seq 0: its own init_data, then those of the same user's segments with the same mime and size (nearest in time first). */
+/**
+ * Headers to try for a tail without seq 0: its own init_data, then at most MAX_DONORS different donor headers (nearest in time first) of segments with the same size
+ * and mime (or none): the same user's with init_data, the same user's whose first chunk files are still on disk, then the same two kinds of any other user.
+ * A WebM header holds no picture data and a graft is accepted only if it plays and decodes, so a stranger's header is safe.
+ */
 async function headerCandidates(seg: SegInfo): Promise<{ kind: 'own' | 'donor'; bytes: Buffer }[]> {
   const out: { kind: 'own' | 'donor'; bytes: Buffer }[] = [];
   if (seg.init_data) out.push({ kind: 'own', bytes: Buffer.from(seg.init_data) });
   if (!seg.width || !seg.height) return out;
-  const where = { user_id: seg.user_id, id: { not: seg.id }, width: seg.width, height: seg.height, mime: seg.mime };
+  const base = { id: { not: seg.id }, width: seg.width, height: seg.height, ...(seg.mime ? { OR: [{ mime: seg.mime }, { mime: null }] } : {}) };
   const select = { id: true, started_at: true, init_data: true };
-  const [before, after] = await Promise.all([
-    prisma.recordingSegment.findMany({ where: { ...where, started_at: { lte: seg.started_at } }, orderBy: { started_at: 'desc' }, take: 8, select }),
-    prisma.recordingSegment.findMany({ where: { ...where, started_at: { gt: seg.started_at } }, orderBy: { started_at: 'asc' }, take: 8, select }),
-  ]);
   const near = (p: { started_at: Date }) => Math.abs(p.started_at.getTime() - seg.started_at.getTime());
-  let donors = 0;
-  for (const p of [...before, ...after].sort((a, b) => near(a) - near(b))) {
-    if (donors >= MAX_DONORS) break;
-    const bytes = p.init_data ? Buffer.from(p.init_data) : await readInitOfSegment(p.id);
-    if (bytes) { out.push({ kind: 'donor', bytes }); donors++; }
+  const nearest = async (where: Prisma.RecordingSegmentWhereInput) => {
+    const [before, after] = await Promise.all([
+      prisma.recordingSegment.findMany({ where: { ...where, started_at: { lte: seg.started_at } }, orderBy: { started_at: 'desc' }, take: 8, select }),
+      prisma.recordingSegment.findMany({ where: { ...where, started_at: { gt: seg.started_at } }, orderBy: { started_at: 'asc' }, take: 8, select }),
+    ]);
+    return [...before, ...after].sort((a, b) => near(a) - near(b));
+  };
+  const same = { ...base, user_id: seg.user_id }, others = { ...base, user_id: { not: seg.user_id } };
+  const withInit = { init_data: { not: null } }, fromFiles = { init_data: null, chunks: { some: { seq: 0 } } };
+  const seen = new Set<string>(); // the same header twice is the same attempt
+  for (const where of [{ ...same, ...withInit }, { ...same, ...fromFiles }, { ...others, ...withInit }, { ...others, ...fromFiles }]) {
+    for (const p of seen.size < MAX_DONORS ? await nearest(where) : []) {
+      if (seen.size >= MAX_DONORS) break;
+      const bytes = p.init_data ? Buffer.from(p.init_data) : await readInitOfSegment(p.id);
+      if (bytes && !seen.has(bytes.toString('latin1'))) { seen.add(bytes.toString('latin1')); out.push({ kind: 'donor', bytes }); }
+    }
   }
   return out;
 }
@@ -863,7 +875,7 @@ async function prepareSegmentInner(seg: SegInfo, dir: string, ts: number, temps:
         break;
       }
     }
-    if (!rx) return { problem: 'late chunks without a usable header (own or donor)' };
+    if (!rx) return { problem: 'late chunks: no header fits' }; // not revived at boot (reviveHeaderlessUnreadable): the search already ran
   } else {
     rx = await remuxChunks(files, expected, dir, `${ts}-${seg.id}`, temps);
     if (!rx) return { problem: 'no readable video' };
@@ -1348,9 +1360,9 @@ export async function removeUnknownParts(): Promise<number> {
   return n;
 }
 
-/** Stage 1 flagged late chunks without a header as unreadable; they can be grafted now. Called once per boot. Returns how many were made pending again. */
+/** Stage 1 flagged late chunks without a header as unreadable ("without their header"), and the first stage-2 release when its donor search found none ("without a usable header"); they can be grafted now. Called once per boot. Returns how many were made pending again. */
 export async function reviveHeaderlessUnreadable(): Promise<number> {
-  const segs = await prisma.recordingSegment.findMany({ where: { state: 'unreadable', problem: { startsWith: 'late chunks without their header' } }, select: { id: true, session_id: true } });
+  const segs = await prisma.recordingSegment.findMany({ where: { state: 'unreadable', OR: [{ problem: { startsWith: 'late chunks without their header' } }, { problem: { startsWith: 'late chunks without a usable header' } }] }, select: { id: true, session_id: true } });
   for (const s of segs) await reviveSegment(s.id);
   if (segs.length) {
     await prisma.recordingSession.updateMany({ where: { id: { in: [...new Set(segs.map((s) => s.session_id))] } }, data: { assembly_next_at: null } });

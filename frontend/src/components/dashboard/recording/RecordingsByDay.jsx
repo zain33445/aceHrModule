@@ -100,7 +100,7 @@ function dayLabel(d) {
 
 // The backend's reason, in plain words. Unknown texts are shown as they are.
 function reasonText(p) {
-  if (/^late chunks without/.test(p)) return 'Chunks arrived without the start of their recording';
+  if (/^late chunks(: no header fits| without)/.test(p)) return 'Chunks arrived without the start of their recording';
   if (/^no readable video/.test(p)) return 'No video could be read from them';
   const m = /^only ([\d.]+) of ([\d.]+) min readable/.exec(p);
   if (m) return `Only ${m[1]} of ${m[2]} min could be read`;
